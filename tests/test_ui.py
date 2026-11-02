@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""The app's screens and buttons with no screen (SDL's dummy driver), fake
+boards and the fake esptool. Screenshots go to $SHOTS (default: a temp dir).
+    python3 tests/test_ui.py
+"""
+import os
+import sys
+import tempfile
+import time
+import unittest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+os.environ["PROVISIONER_ESPTOOL"] = os.path.join(ROOT, "tests", "fake_esptool.py")
+from provisioner.ui import app as A  # noqa: E402
+from provisioner.ui.gamepad import Gamepad  # noqa: E402
+from provisioner.ui.sdl import Display, write_png  # noqa: E402
+
+SHOTS = os.environ.get("SHOTS") or tempfile.mkdtemp(prefix="provisioner-shots-")
+DISPLAY = None
+
+
+def display():
+    global DISPLAY
+    if DISPLAY is None:
+        DISPLAY = Display(os.path.join(ROOT, "assets", "cockpit_font.bin"), headless=True)
+    return DISPLAY
+
+
+def port(name, usb, chip):
+    return {"port": name, "usb": usb, "usb_chip": chip, "product": "", "serial": "1", "native": False}
+
+
+class Screens(unittest.TestCase):
+    def app(self, ports, users=None):
+        self.ports = ports
+        a = A.App(display(), version="0.1.0", ports_fn=lambda: [dict(p) for p in self.ports],
+                  users_fn=lambda p: (users or {}).get(p, []))
+        a.scan()
+        return a
+
+    def shot(self, a, name):
+        a.draw()
+        w, h, px = a.d.snapshot()
+        write_png(os.path.join(SHOTS, name + ".png"), w, h, px)
+
+    def wait(self, a):
+        end = time.time() + 20
+        while not a.task.done and time.time() < end:
+            time.sleep(0.05)
+        self.assertTrue(a.task.done)
+
+    def setUp(self):
+        for k in ("FAKE_FAIL", "FAKE_TABLE", "FAKE_APP_SLOT_KB", "FAKE_CALLS"):
+            os.environ.pop(k, None)
+
+    def test_nothing_plugged_in(self):
+        a = self.app([])
+        self.shot(a, "01-empty")
+        a.handle("a")
+        self.assertEqual(a.screen, "boards")
+
+    def test_identify_then_flash_wled_on_a_classic_esp32(self):
+        os.environ["FAKE_BOARD"] = "esp32"
+        a = self.app([port("/dev/ttyUSB0", "10c4:ea60", "CP210x USB-serial")])
+        self.shot(a, "02-boards")
+        a.handle("a")                                   # identify
+        self.assertEqual(a.screen, "run")
+        self.wait(a)
+        self.shot(a, "03-identified")
+        a.handle("a")
+        self.assertEqual(a.screen, "jobs")
+        self.shot(a, "04-jobs-esp32")
+        self.assertEqual([r.get("entry", {}).get("id", r["kind"]) for r in a.jobs()],
+                         ["wled-16.0.1-esp32", "micropython-1.29.0-esp32", "log", "erase"])
+        a.handle("a")                                   # WLED: asks first, Yes highlighted (app only)
+        self.assertEqual((a.confirm["title"], a.confirm["choice"]), ("Flash WLED 16.0.1?", 1))
+        self.shot(a, "05-confirm-app")
+        a.handle("a")
+        self.assertEqual(a.screen, "run")
+        time.sleep(0.15)
+        self.shot(a, "06-flashing")
+        self.wait(a)
+        self.assertTrue(a.task.ok, a.task.msg)
+        self.shot(a, "07-flashed")
+        a.handle("a")
+        self.assertEqual(a.screen, "jobs")
+
+    def test_a_full_erase_defaults_to_no(self):
+        os.environ["FAKE_BOARD"] = "esp32"
+        a = self.app([port("/dev/ttyUSB0", "10c4:ea60", "CP210x USB-serial")])
+        a.handle("a")
+        self.wait(a)
+        a.handle("a")
+        a.handle("down")
+        a.handle("a")                                   # MicroPython: full install
+        self.assertEqual(a.confirm["choice"], 0)        # No, unless you move to Yes
+        self.shot(a, "08-confirm-full")
+        a.handle("a")
+        self.assertIsNone(a.confirm)
+        self.assertEqual(a.screen, "jobs")              # nothing ran
+
+    def test_heltec_offers_rnode_coming_and_a_busy_port_asks_first(self):
+        os.environ["FAKE_BOARD"] = "heltec"
+        a = self.app([port("/dev/ttyUSB0", "10c4:ea60", "CP210x USB-serial")],
+                     users={"/dev/ttyUSB0": [(812, "stump_pc.py")]})
+        self.shot(a, "09-busy")
+        a.handle("a")
+        self.assertIn("stump_pc.py is using this board", a.confirm["title"])
+        self.assertEqual(a.confirm["choice"], 0)
+        self.shot(a, "10-busy-confirm")
+        a.handle("b")
+        self.assertEqual(a.screen, "boards")
+        a.handle("a")
+        a.handle("right")
+        a.handle("a")                                   # use it anyway
+        self.wait(a)
+        a.handle("a")
+        self.assertEqual(a.known["/dev/ttyUSB0"]["board"]["id"], "heltec_v3")
+        self.shot(a, "11-jobs-heltec")
+        a.handle("a")                                   # RNode: coming, nothing happens
+        self.assertEqual(a.screen, "jobs")
+        self.assertIn("Coming", a.toast_text)
+
+    def test_s3_with_psram_lists_the_adapter_as_coming(self):
+        os.environ["FAKE_BOARD"] = "s3"
+        a = self.app([port("/dev/ttyACM0", "303a:1001", "ESP32-S3/C3 native USB")])
+        a.handle("a")
+        self.wait(a)
+        a.handle("a")
+        self.shot(a, "12-jobs-s3")
+        self.assertEqual(a.known["/dev/ttyACM0"]["info"]["psram_mb"], 8)
+        self.assertEqual(a.jobs()[0]["entry"]["id"], "s3-usb-wifi")
+
+    def test_a_failure_says_what_to_do(self):
+        os.environ.update(FAKE_BOARD="esp32", FAKE_FAIL="connect")
+        a = self.app([port("/dev/ttyUSB0", "10c4:ea60", "CP210x USB-serial")])
+        a.handle("a")
+        self.wait(a)
+        self.assertFalse(a.task.ok)
+        self.assertIn("hold BOOT", a.task.msg)
+        self.shot(a, "13-failed")
+        a.handle("b")
+        self.assertEqual(a.screen, "boards")
+
+    def test_unplugged_while_on_its_jobs(self):
+        os.environ["FAKE_BOARD"] = "esp32"
+        a = self.app([port("/dev/ttyUSB0", "10c4:ea60", "CP210x USB-serial")])
+        a.handle("a")
+        self.wait(a)
+        a.handle("a")
+        self.ports = []
+        a.next_scan = 0
+        a.scan()
+        self.assertEqual(a.screen, "boards")
+        self.assertIn("unplugged", a.toast_text)
+        self.assertEqual(a.known, {})
+
+    def test_serial_log_of_a_port_that_isnt_there(self):
+        a = self.app([port("/dev/ttyNOPE0", "10c4:ea60", "CP210x USB-serial")])
+        a.handle("y")
+        time.sleep(0.3)
+        self.assertEqual(a.screen, "log")
+        self.assertIn("Can't open", a.log.error)
+        self.shot(a, "14-log-error")
+        a.handle("b")
+        self.assertEqual(a.screen, "boards")
+        self.assertIsNone(a.log)
+
+    def test_quit(self):
+        a = self.app([])
+        a.handle("quit")
+        self.assertFalse(a.running)
+
+
+class Buttons(unittest.TestCase):
+    def test_r36max_codes(self):
+        g = Gamepad([])
+        self.assertEqual(g.decode(1, 305, 1), ["a"])
+        self.assertEqual(g.decode(1, 304, 1), ["b"])
+        self.assertEqual(g.decode(1, 305, 0), [])                 # release
+        self.assertEqual(g.decode(1, 545, 2), ["down"])           # D-pad repeat
+        self.assertEqual(g.decode(1, 305, 2), [])                 # no A repeat
+        self.assertEqual(g.decode(3, 16, -1), ["left"])
+        self.assertEqual(g.decode(3, 17, 1), ["down"])
+        self.assertEqual(g.decode(1, 30, 1), [])                  # a keyboard key: SDL's, not here
+        self.assertEqual(g.decode(1, 314, 1), ["select"])
+        self.assertEqual(g.decode(1, 315, 1), ["quit"])           # SELECT+START
+
+
+if __name__ == "__main__":
+    try:
+        unittest.main(verbosity=1, exit=False)
+    finally:
+        print("screenshots:", SHOTS)

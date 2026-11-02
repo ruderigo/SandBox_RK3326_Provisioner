@@ -1,0 +1,47 @@
+{
+  "firmware": [
+    {
+      "id": "s3-usb-wifi",
+      "title": "USB Wi-Fi adapter",
+      "boards": ["esp32s3"],
+      "chip": "esp32s3",
+      "status": "planned",
+      "about": "Turns the S3 into a plain USB network card for the handheld: it joins a Wi-Fi (a Stump's, for FireFly) and the handheld reaches it over usb0. Firmware in progress (Team RK3326 Provisioner memo, 2026-11-02)."
+    },
+    {
+      "id": "rnode-heltec-v3",
+      "title": "RNode (LoRa radio)",
+      "boards": ["heltec_v3"],
+      "chip": "esp32s3",
+      "status": "planned",
+      "about": "RNode firmware and the mesh's radio settings, offline. Next step: bundling the RNode release and setting it up without rnodeconf's online wizard."
+    },
+    {
+      "id": "wled-16.0.1-esp32",
+      "title": "WLED 16.0.1",
+      "boards": ["esp32"],
+      "chip": "esp32",
+      "mode": "app",
+      "offset": "0x10000",
+      "file": "official/WLED_16.0.1_ESP32.bin",
+      "sha256": "628917b0753edcfc9a8408e6387c6d1ace6a360d315441e9563d60299fef8594",
+      "about": "Addressable LED controller. Written to the app slot only: the board's partition table is checked first.",
+      "licence": "EUPL-1.2 (licenses/WLED-LICENSE.txt)",
+      "source": "https://github.com/wled/WLED/releases/tag/v16.0.1"
+    },
+    {
+      "id": "micropython-1.29.0-esp32",
+      "title": "MicroPython 1.29.0",
+      "boards": ["esp32"],
+      "chip": "esp32",
+      "mode": "full",
+      "offset": "0x1000",
+      "min_flash_mb": 4,
+      "file": "official/MicroPython_FullErase_v1.29.0.bin",
+      "sha256": "e67ad6015a0a504c1fec9aa9bbf589d0432ed28e62546f4f8dd8a147f8bd95f6",
+      "about": "Python for the classic ESP32. Erases the whole flash first.",
+      "licence": "MIT (licenses/MicroPython-LICENSE.txt)",
+      "source": "https://micropython.org/download/ESP32_GENERIC/"
+    }
+  ]
+}
