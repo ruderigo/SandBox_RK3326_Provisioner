@@ -47,24 +47,27 @@ command line) since it costs nothing extra.
 
 ## Steps
 
+Making a Stump is the Provisioner's main job (2026-11-02): it comes first.
+
 - [x] v0.1.0: the app, board detection, busy-port guard, catalogue,
       flashing with progress and read-back, erase, serial log; classic ESP32
-      (WLED 16.0.1, MicroPython 1.29.0); Heltec and S3 listed as *coming*;
-      the Ports launcher and installer; tests with a fake esptool and
-      screenshots; CI and tag releases
-- [ ] Heltec V3 → RNode, offline: bundle the RNode release for the Heltec
-      V3 (GPL-3, with its source link) and set it up without
-      `rnodeconf --autoinstall`'s online wizard; the radio settings of the
-      mesh (Team Stump's `-T` settings). Needs reading rnodeconf's
-      provisioning steps; Team Stump to confirm the parameters
-- [ ] The S3 USB Wi-Fi adapter firmware (its own repo): ESP-IDF, base on
+      (WLED, MicroPython); the Ports launcher and installer; tests; CI
+- [x] **v0.2.0: Make a Stump (Freenove CAM)**: New / Update / Settings /
+      Check as in Arborist, offline, from the gamepad; FireFly's keyboard;
+      Team Stump's release bundle, checked; this handheld's Stump shown;
+      tests on Team Stump's pretend board with the real bundle
+- [ ] **The Heltec for that CAM**, offline: needs Team Stump's answer to
+      request 2 (`docs/REQUEST_TEAM_STUMP.md`): the RNode build, its flash
+      layout and the non-interactive provisioning and settings
+- [ ] **This handheld's Stump, installed or updated from the gamepad**:
+      request 3 (the `--pc` wizard answered from a file)
+- [ ] The S3 USB Wi-Fi adapter firmware (its own repo): ESP-IDF, on
       Espressif's esp-iot-bridge (Apache-2.0): CDC-NCM (ECM fallback), NAT,
-      DHCP with option 121 and no router/DNS, the setup AP, `status.json`;
-      then it joins the catalogue
-- [ ] Your own images: `.bin` files in `/roms/ESP32-Firmware/` (app only),
-      as the flasher did
-- [ ] The full CAM Stump (MicroPython + the Stump, by Team Stump's Provisioner)
+      DHCP with option 121 and no router/DNS, the setup AP, `status.json`
+- [ ] Your own images: `.bin` files in `/roms/ESP32-Firmware/` (app only)
 - [ ] 640x480 layout tuned for the R36S (it's scaled for now)
+- [ ] The bundle from its own release file once Team Stump publishes it
+      (request 1)
 
 ## Bench (on the R36MAX)
 
@@ -75,3 +78,9 @@ command line) since it costs nothing extra.
    choosing it asks first.
 4. The Freenove S3: identified with its PSRAM; the CH343 port flashes it
    (needs the CH343's driver in dArkOS's kernel: `dmesg | tail` on plug-in).
+5. **Make a Stump** on it: the form, about five minutes, then its Wi-Fi
+   from a phone and `/admin` with the password chosen. Then Update, its
+   Settings and Check. Not proven off the bench: the board's port coming
+   back after MicroPython is written (the CH343 port should stay; the native
+   port re-enumerates), DTR/RTS held low not resetting it, and the copy's
+   speed over the hub.

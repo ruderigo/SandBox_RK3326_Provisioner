@@ -30,13 +30,16 @@ run "shell" lint
 
 step "Python"
 pyflakes_or_compile() {
-  if python3 -m pyflakes --version >/dev/null 2>&1; then python3 -m pyflakes provisioner tests
+  if python3 -m pyflakes --version >/dev/null 2>&1; then python3 -m pyflakes provisioner scripts tests/*.py
   else python3 -m compileall -q provisioner tests; fi
 }
 run "python" pyflakes_or_compile
 
 step "Core: detection, catalogue, flashing (fake esptool)"
 run "core" python3 -W error::ResourceWarning tests/test_core.py
+
+step "Making a Stump (Team Stump's pretend board, the real bundle)"
+run "stump" python3 -W error::ResourceWarning tests/test_stump.py
 
 step "Screens and buttons (no screen: SDL's dummy driver)"
 if python3 -c "import ctypes, ctypes.util; ctypes.CDLL(ctypes.util.find_library('SDL2') or 'libSDL2-2.0.so.0')" 2>/dev/null; then
@@ -55,7 +58,8 @@ from provisioner.ui.sdl import load_fonts
 fonts = load_fonts("assets/cockpit_font.bin")
 have = set.intersection(*(set(f["glyphs"]) for f in fonts))
 missing = {}
-for path in ("provisioner/ui/app.py", "provisioner/flasher.py", "firmware/catalog.json"):
+for path in ("provisioner/ui/app.py", "provisioner/ui/keyboard.py", "provisioner/stump.py", "provisioner/flasher.py",
+             "firmware/catalog.json"):
     src = open(path, encoding="utf-8").read()
     for i, line in enumerate(src.splitlines(), 1):
         for c in line:

@@ -1,8 +1,10 @@
 """The Provisioner's screens: the boards on the hub, what each can be given,
-asking first, flashing with progress, and a board's serial log.
+asking first, flashing with progress, a board's serial log, and making a
+Stump (a form, FireFly's keyboard).
 
     BOARDS  --A-->  (identify)  -->  JOBS  --A-->  ask  -->  RUN  --B-->  JOBS
-       \\--Y--> LOG                       \\--> LOG
+       \\--Y--> LOG                       |\\--> LOG
+                                         \\--> FORM (a Stump's answers) --> ask --> RUN
 
 Nothing touches a board until you choose it: identifying a board resets it,
 so a port another program has open (the Stump and its Heltec) asks first.
@@ -11,14 +13,18 @@ so a port another program has open (the Stump and its Heltec) asks first.
 import threading
 import time
 
-from .. import boards, catalog, flasher
+from .. import boards, catalog, flasher, stump
 from ..seriallog import SerialLog
+from .keyboard import Keyboard
 from .sdl import F16, F20, F24, F30B, W, rgb
 
 BG, PANEL, PANEL2, BORDER = rgb("1b1512"), rgb("2a2119"), rgb("221b15"), rgb("493c2e")
 EMBER, EMBER_BRIGHT, TEXT, MUTED = rgb("d97a3a"), rgb("f0a050"), rgb("ecdfc8"), rgb("9c8d76")
 ERROR, OK = rgb("e07a5a"), rgb("9cb876")
 TOP = 96                                   # under the header
+THEME = {"BG": BG, "PANEL": PANEL, "PANEL2": PANEL2, "BORDER": BORDER, "EMBER": EMBER, "TEXT": TEXT, "MUTED": MUTED}
+CHAINS = [("none", "No chain"), ("first", "First Stump of a chain"), ("member", "Joins another Stump")]
+RADIOS = [("ap", "Heltec on its own Wi-Fi"), ("lan", "Heltec on the home Wi-Fi"), ("none", "No LoRa radio")]
 
 
 class Task:
@@ -45,6 +51,29 @@ class Task:
     def tail(self, n):
         with self._lock:
             return self.lines[-n:]
+
+
+def here_status():
+    """This handheld's own Stump (the R36MAX runs one), from its public
+    /node.json and /chain.json on localhost: {release, name, chain}, or
+    {"none": True}."""
+    import json
+    import urllib.request
+    op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    for port in (80, 8080):
+        try:
+            n = json.load(op.open("http://127.0.0.1:%d/node.json" % port, timeout=1))
+        except Exception:
+            continue
+        chain = ""
+        try:
+            c = json.load(op.open("http://127.0.0.1:%d/chain.json" % port, timeout=1))
+            if c.get("enabled"):
+                chain = "chain %s" % (c.get("role") or "")
+        except Exception:
+            pass
+        return {"release": n.get("release"), "name": n.get("name"), "chain": chain.strip()}
+    return {"none": True}
 
 
 def wrap(d, fid, text, width):
@@ -78,12 +107,32 @@ class App:
         self.toast_text, self.toast_until = "", 0.0
         self.next_scan = 0.0
         self.running = True
+        self.bundle_dir = None
+        self._bundle = False            # loaded on first use (None: there's none)
+        self.form = None                # {"mode": "new"|"settings", "a": answers, "sel": row}
+        self.kb = None                  # the keyboard, while typing (and the field it fills)
+        self.kb_key = None
+        self.open_link = lambda port: stump.SerialLink(port)
+        self.here = None                # this handheld's own Stump: {release, name, chain} or {"none": True}
+        self.here_fn = here_status
+        self.next_here = 0.0
+
+    def bundle(self):
+        if self._bundle is False:
+            try:
+                self._bundle = stump.find_bundle(self.bundle_dir)
+            except Exception:
+                self._bundle = None
+        return self._bundle
 
     # -- state --
     def toast(self, text, secs=2.5):
         self.toast_text, self.toast_until = text, time.time() + secs
 
     def scan(self):
+        if self.here_fn and time.time() >= self.next_here:
+            self.next_here = time.time() + 10
+            threading.Thread(target=lambda: setattr(self, "here", self.here_fn()), daemon=True).start()
         if time.time() < self.next_scan:
             return
         self.next_scan = time.time() + 1.0
@@ -106,7 +155,10 @@ class App:
     def jobs(self):
         """The rows of the JOBS screen for the current board."""
         b = self.known.get(self.cur["port"], {}).get("board", {})
-        rows = [{"kind": "fw", "entry": e} for e in catalog.for_board(self.entries, b)]
+        rows = []
+        if b.get("id") == "esp32s3":           # the Freenove CAM: a Stump
+            rows += [{"kind": k} for k in ("stump_new", "stump_update", "stump_settings", "stump_check")]
+        rows += [{"kind": "fw", "entry": e} for e in catalog.for_board(self.entries, b)]
         rows.append({"kind": "log"})
         rows.append({"kind": "erase"})
         return rows
@@ -116,6 +168,23 @@ class App:
         if act == "quit":
             self.stop_log()
             self.running = False
+            return
+        if self.kb:
+            if act in ("kx", "ky", "kq"):               # a keyboard's letters arrive as text too
+                return
+            r = self.kb.handle(act)
+            if r == "ok":
+                self.form["a"][self.kb_key] = self.kb.text
+                self.kb = None
+            elif r == "cancel":
+                self.kb = None
+            return
+        # A keyboard's keys, outside the on-screen keyboard: Enter is A, Esc is B.
+        act = {"enter": "a", "escape": "b", "backspace": "b", "kx": "x", "ky": "y", "kq": "quit"}.get(act, act)
+        if isinstance(act, tuple) or act in ("start", "select"):
+            return
+        if act == "quit":
+            self.handle("quit")
             return
         if self.confirm:
             c = self.confirm
@@ -183,7 +252,9 @@ class App:
             self.open_log()
         elif act == "a":
             r = rows[self.jsel]
-            if r["kind"] == "log":
+            if r["kind"].startswith("stump_"):
+                self.stump_job(r["kind"])
+            elif r["kind"] == "log":
                 self.open_log()
             elif r["kind"] == "erase":
                 self.ask_erase()
@@ -248,10 +319,181 @@ class App:
                 self.toast("Working: it can't be stopped halfway safely")
             return
         if act in ("a", "b"):
-            if t.ok and getattr(t, "after", "") == "jobs":
+            if t.ok and getattr(t, "after", "") == "form" and t.result is not None:
+                self.open_form("settings", stump.answers_from(t.result))
+            elif t.ok and getattr(t, "after", "") == "jobs":
                 self.open_jobs()
             else:
                 self.screen = "jobs" if self.cur and self.cur["port"] in self.known else "boards"
+
+    # -- a Stump --
+    def link_for(self, port):
+        return lambda: self.open_link(port)
+
+    def stump_job(self, kind):
+        b = self.bundle()
+        if not b:
+            self.toast("No Stump bundle here (firmware/stump/): reinstall the Provisioner", 4)
+            return
+        port = self.cur["port"]
+        if kind == "stump_new":
+            self.open_form("new", {"name": "", "pw": "", "ssid": "", "wpass": "", "hotspot": "", "chain": "none",
+                                   "radio": "ap", "secret": "", "upSsid": b.default_ssid, "subnet": "5", "hhost": "",
+                                   "features": list(stump.FEATURES[:3])})
+        elif kind == "stump_update":
+            self.ask("Update its Stump to %s?" % b.release,
+                     ["Copies the new release onto the Stump on this board.",
+                      "Its settings, its identity on the mesh and its card stay.", "About 4 minutes."],
+                     "Update it", lambda: self.run_stump("Updating the Stump", lambda t: stump.make(
+                         b, {}, self.link_for(port), None, self._step(t), self._pct(t), t.line, update=True)))
+        elif kind == "stump_settings":
+            def work(t):
+                t.step = "Reading its settings (it restarts after)"
+                c = stump.read_job(self.link_for(port), t.line)
+                if c is None:
+                    return False, "There's no Stump on this board (no config.py): Make a Stump first.", None
+                return True, "Read from \u201c%s\u201d." % (c.get("NODE_NAME") or "its Stump"), c
+            self.task = Task("Reading its settings", work)
+            self.task.after = "form"
+            self.screen = "run"
+        elif kind == "stump_check":
+            self.run_stump("Checking it starts", lambda t: stump.check_job(self.link_for(port), self._step(t), t.line))
+
+    def _step(self, t):
+        def step(s):
+            t.step, t.pct = s, (0 if s.startswith(("Copying", "Erasing")) else None)
+        return step
+
+    def _pct(self, t):
+        def pct(p):
+            t.pct = p
+        return pct
+
+    def run_stump(self, title, fn):
+        def work(t):
+            ok, msg = fn(t)
+            return ok, msg, None
+        self.task = Task(title, work)
+        self.task.after = "jobs"
+        self.screen = "run"
+
+    def open_form(self, mode, a):
+        self.form = {"mode": mode, "a": a, "sel": 0}
+        self.screen = "form"
+
+    def form_rows(self):
+        f, a = self.form, self.form["a"]
+        keep = f["mode"] == "settings"
+        b = self.bundle()
+        rows = [{"key": "name", "label": "Its name", "kind": "text", "max": 20, "blank": "needed"},
+                {"key": "pw", "label": "Admin password", "kind": "secret", "max": 64,
+                 "blank": "keeps the one it has" if keep else "needed (4+ characters)"},
+                {"key": "ssid", "label": "Home Wi-Fi (optional)", "kind": "text", "max": 32, "blank": "none"},
+                {"key": "wpass", "label": "Home Wi-Fi password", "kind": "secret", "max": 63,
+                 "blank": "keeps the one it has" if keep else "none"},
+                {"key": "hotspot", "label": "Its own Wi-Fi's name", "kind": "text", "max": 32,
+                 "blank": b.default_ssid if b else "the default"},
+                {"key": "chain", "label": "Chain", "kind": "choice", "choices": CHAINS}]
+        if a.get("chain") == "member":
+            rows += [{"key": "upSsid", "label": "Joins (its Wi-Fi)", "kind": "text", "max": 32},
+                     {"key": "subnet", "label": "Its number (5-254)", "kind": "text", "max": 3}]
+        if a.get("chain") in ("first", "member"):
+            rows += [{"key": "secret", "label": "The chain's secret", "kind": "text", "max": 64, "blank": "none (open)"}]
+        rows += [{"key": "radio", "label": "LoRa", "kind": "choice", "choices": RADIOS}]
+        if a.get("radio") == "lan":
+            rows += [{"key": "hhost", "label": "The Heltec's address", "kind": "text", "max": 15}]
+        rows += [{"key": "go", "label": "Make the Stump" if f["mode"] == "new" else "Save its settings", "kind": "button"}]
+        return rows
+
+    def on_form(self, act):
+        rows = self.form_rows()
+        f = self.form
+        f["sel"] = min(f["sel"], len(rows) - 1)
+        r = rows[f["sel"]]
+        if act in ("up", "down"):
+            f["sel"] = (f["sel"] + (1 if act == "down" else -1)) % len(rows)
+        elif act in ("left", "right") and r["kind"] == "choice":
+            keys = [k for k, _ in r["choices"]]
+            i = keys.index(f["a"].get(r["key"], keys[0])) if f["a"].get(r["key"]) in keys else 0
+            f["a"][r["key"]] = keys[(i + (1 if act == "right" else -1)) % len(keys)]
+        elif act == "b":
+            self.form, self.screen = None, "jobs"
+        elif act == "a":
+            if r["kind"] in ("text", "secret"):
+                self.kb = Keyboard(r["label"], f["a"].get(r["key"]) or "", r["max"], secret=r["kind"] == "secret",
+                                   hint=("Blank: " + r["blank"]) if r.get("blank") else "")
+                self.kb_key = r["key"]
+            elif r["kind"] == "choice":
+                self.on_form("right")
+            elif r["kind"] == "button":
+                self.submit_form()
+
+    def submit_form(self):
+        f, b, port = self.form, self.bundle(), self.cur["port"]
+        a = dict(f["a"], pw2=f["a"].get("pw", ""))
+        if f["mode"] == "settings":
+            a["keepWifiPass"] = True
+        s = stump.settings_from(dict(a, requireAdmin=f["mode"] == "new"))
+        if s.get("error"):
+            self.toast(s["error"], 4)
+            return
+        if f["mode"] == "new":
+            info = self.known[port]["info"]
+            lines = ["Erases everything on the board: a Stump on it now loses its identity.",
+                     "Stump %s, MicroPython %s. About 5 minutes." % (b.release, b.micropython)]
+            if not info.get("psram_mb"):
+                lines.append("esptool didn't report PSRAM: the Stump needs the octal-PSRAM board (Freenove N16R8).")
+            self.ask("Make a Stump on this board?", lines + s["warn"], "Make it", lambda: self.run_stump(
+                "Making the Stump", lambda t: stump.make(
+                    b, a, self.link_for(port),
+                    lambda img: flasher.write_image(port, "esp32s3", img, "0x0", t.line, self._pct(t)),
+                    self._step(t), self._pct(t), t.line)), danger=True)
+        else:
+            self.ask("Save its settings?", ["Written by the Stump's own settings.py, as /admin does.",
+                                            "Its config.py is kept as config.py.bak. It restarts."] + s["warn"],
+                     "Save", lambda: self.run_stump("Saving its settings", lambda t: stump.save_job(
+                         a, self.link_for(port), self._step(t), t.line)))
+
+    def draw_form(self):
+        d, f = self.d, self.form
+        if self.kb:
+            return
+        a, rows = f["a"], self.form_rows()
+        d.text(F16, 16, TOP + 4, "A NEW STUMP" if f["mode"] == "new" else "ITS SETTINGS", EMBER)
+        rh, vis = 56, 9
+        first = max(0, min(f["sel"] - (vis - 2), len(rows) - vis))
+        if first > 0:
+            d.text(F16, W - 90, TOP + 4, "↑ more", MUTED)
+        if first + vis < len(rows):
+            d.text(F16, W - 90, TOP + 28 + vis * rh - 4, "↓ more", MUTED)
+        for k, r in enumerate(rows[first:first + vis]):
+            i = first + k
+            y = TOP + 28 + k * rh
+            sel = i == f["sel"]
+            if r["kind"] == "button":
+                d.fill_rrect(12, y + 4, W - 24, rh - 8, 8, EMBER if sel else BORDER)
+                d.text(F24, W // 2 - d.text_width(F24, r["label"]) // 2, y + 13, r["label"], BG if sel else TEXT)
+                continue
+            if sel:
+                d.stroke_rrect(12, y, W - 24, rh - 6, 8, EMBER, PANEL)
+            v = a.get(r["key"])
+            if r["kind"] == "choice":
+                val = dict(r["choices"]).get(v, r["choices"][0][1])
+                val = "◀ %s ▶" % val if sel else val
+                vc = TEXT
+            elif r["kind"] == "secret":
+                val = ("•" * min(len(v), 12) + "  (%d)" % len(v)) if v else "blank: " + r.get("blank", "")
+                vc = TEXT if v else MUTED
+            else:
+                val = v if v else "blank: " + r.get("blank", "")
+                vc = TEXT if v else MUTED
+            d.text(F20, 26, y + 13, r["label"], EMBER_BRIGHT if sel else TEXT, 300)
+            vw = min(d.text_width(F20, val), W - 360)
+            d.text(F20, W - 28 - vw, y + 13, val, vc, W - 360)
+        if a.get("radio") != "none":
+            d.text(F16, 16, 656, "LoRa: 868.8 MHz · 125 kHz · SF8 · CR 4/5 · 22 dBm (the mesh's)",
+                   MUTED, W - 32)
+        self.hints([("A", "type / choose"), ("←→", "choice"), ("↑↓", "move"), ("B", "back")])
 
     def open_log(self):
         self.stop_log()
@@ -276,6 +518,10 @@ class App:
     # -- drawing --
     def draw(self):
         d = self.d
+        if self.kb:
+            self.kb.draw(d, THEME)
+            d.present()
+            return
         d.clear(BG)
         self.draw_header()
         getattr(self, "draw_" + self.screen)()
@@ -293,7 +539,9 @@ class App:
         v = "RK3326 · v%s" % self.version if self.version else "RK3326"
         d.text(F16, W - 14 - d.text_width(F16, v), 16, v, MUTED)
         crumbs = {"boards": "Boards on the hub", "jobs": "Boards  ›  %s" % self.board_name(),
-                  "run": self.task.title if self.task else "", "log": "Serial log  ·  %s  ·  115200"
+                  "run": self.task.title if self.task else "",
+                  "form": "%s  ›  %s" % (self.board_name(), "A new Stump" if self.form and self.form["mode"] == "new"
+                                         else "Its settings"), "log": "Serial log  ·  %s  ·  115200"
                   % (self.cur["port"] if self.cur else "")}[self.screen]
         d.text(F20, 16, 52, crumbs, TEXT, W - 32)
         d.fill(0, 86, W, 1, BORDER)
@@ -324,6 +572,7 @@ class App:
                 d.text(F16, 24, TOP + 160 + i * 24, s, MUTED, W - 48)
             self.hints([("SELECT+START", "quit")])
             return
+        self.draw_here(TOP + 4)
         d.text(F16, 16, TOP + 4, "BOARDS ON THE HUB", EMBER)
         rh = 84
         first = max(0, min(self.sel - 5, len(self.ports) - 6))
@@ -350,6 +599,20 @@ class App:
         self.hints([("A", "choose"), ("X", "identify again"), ("Y", "serial log"), ("↑↓", "move"),
                     ("SELECT+START", "quit")])
 
+    def draw_here(self, y):
+        """This handheld's own Stump, on one line at the top right."""
+        h = self.here
+        if not h:
+            return
+        if h.get("none"):
+            s, c = "This handheld: no Stump (R36MAX-Stump installs it)", MUTED
+        else:
+            s, c = "This handheld: Stump %s · %s%s" % (h.get("release", "?"), h.get("name", "?"),
+                                                      " · " + h["chain"] if h.get("chain") else ""), OK
+        d = self.d
+        w = min(d.text_width(F16, s), W - 260)
+        d.text(F16, W - 16 - w, y, s, c, W - 260)
+
     def draw_jobs(self):
         d = self.d
         k = self.known[self.cur["port"]]
@@ -360,13 +623,27 @@ class App:
                " · PSRAM %d MB" % inf["psram_mb"] if inf["psram_mb"] else "", inf["mac"]), MUTED, W - 52)
         d.text(F16, 16, TOP + 72, "WHAT IT CAN BE GIVEN", EMBER)
         rows = self.jobs()
-        rh = 78
-        for i, r in enumerate(rows[:6]):
-            y = TOP + 96 + i * rh
+        rh = 72
+        first = max(0, min(self.jsel - 6, len(rows) - 7))
+        for k, r in enumerate(rows[first:first + 7]):
+            i = first + k
+            y = TOP + 96 + k * rh
             sel = i == self.jsel
             if sel:
                 d.stroke_rrect(12, y, W - 24, rh - 6, 8, EMBER, PANEL)
-            if r["kind"] == "fw":
+            b = self.bundle()
+            if r["kind"].startswith("stump_"):
+                rel = b.release if b else "?"
+                title, about, tag, tc = {
+                    "stump_new": ("Make a Stump", "Erases it, writes MicroPython and the Stump %s, asks its name, "
+                                  "password, Wi-Fi, chain, radio." % rel, "erases", ERROR),
+                    "stump_update": ("Update its Stump", "To %s; its settings, identity and card stay." % rel,
+                                     "keeps settings", OK),
+                    "stump_settings": ("Its Stump's settings", "Read them, change them, save (as /admin does).", "", MUTED),
+                    "stump_check": ("Check it starts", "Restarts it and listens: release, serving, problems.", "", MUTED),
+                }[r["kind"]]
+                ready = b is not None
+            elif r["kind"] == "fw":
                 e = r["entry"]
                 ready = e["status"] == "ready"
                 title, about = e["title"], e.get("about", "")
@@ -403,13 +680,19 @@ class App:
         elif not t.done:
             x = int((time.time() * 240) % (W - 140))
             d.fill_rrect(22 + x, bar_y + 2, 96, 22, 7, EMBER)
+        y = TOP + 104
         if t.done:
-            d.fill_rrect(20, TOP + 104, W - 40, 72, 8, PANEL)
-            for i, s in enumerate(wrap(d, F20, t.msg, W - 80)[:2]):
-                d.text(F20, 36, TOP + 114 + i * 28, s, OK if t.ok else ERROR, W - 72)
-        d.text(F16, 20, TOP + 194, "ESPTOOL", EMBER)
-        for i, s in enumerate(t.tail(18)):
-            d.text(F16, 20, TOP + 218 + i * 20, s, MUTED, W - 40)
+            msg = wrap(d, F20, t.msg, W - 80)[:4]
+            d.fill_rrect(20, y, W - 40, 20 + 28 * len(msg), 8, PANEL)
+            for i, s in enumerate(msg):
+                d.text(F20, 36, y + 10 + i * 28, s, OK if t.ok else ERROR, W - 72)
+            y += 20 + 28 * len(msg) + 18
+        else:
+            y += 18
+        d.text(F16, 20, y, "LOG", EMBER)
+        n = (676 - (y + 24)) // 20
+        for i, s in enumerate(t.tail(n)):
+            d.text(F16, 20, y + 24 + i * 20, s, MUTED, W - 40)
         self.hints([("A", "continue"), ("B", "back")] if t.done else [("", "working: leave it plugged in")])
 
     def draw_log(self):

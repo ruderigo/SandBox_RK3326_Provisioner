@@ -185,6 +185,33 @@ def flash(port, entry, board, on_line=None, on_step=None, on_progress=None):
     return True, "%s written and verified" % entry["title"]
 
 
+def write_image(port, chip, path, offset="0x0", on_line=None, on_progress=None):
+    """Erases the whole flash and writes one image (MicroPython for a Stump),
+    then reads it back. (ok, message)."""
+    prog = on_progress or (lambda p: None)
+
+    def lines(line):
+        if on_line:
+            on_line(line)
+        pct = progress_of(line)
+        if pct is not None:
+            prog(pct)
+    ok, out = run(["--chip", chip, "--port", port, "--baud", str(BAUD), "erase_flash"], lines, timeout=180)
+    if not ok:
+        return False, explain(out)
+    args = ["--chip", chip, "--port", port, "--baud", str(BAUD), "write_flash", "--flash_mode", "keep",
+            "--flash_size", "keep", offset, path]
+    ok, out = run(args, lines, timeout=600)
+    if not ok and BAUD != SLOW_BAUD:
+        ok, out = run(args[:5] + [str(SLOW_BAUD)] + args[6:], lines, timeout=900)
+    if not ok:
+        return False, explain(out)
+    ok, out = run(["--chip", chip, "--port", port, "--baud", str(BAUD), "verify_flash", offset, path], lines, timeout=300)
+    if not ok or not ("verify ok" in out.lower() or "digest matched" in out.lower()):
+        return False, "Written, but the read-back differs: " + explain(out)
+    return True, "written and verified"
+
+
 def erase(port, chip, on_line=None):
     ok, out = run(["--chip", chip, "--port", port, "--baud", str(BAUD), "erase_flash"], on_line, timeout=180)
     return ok, ("Flash erased" if ok else explain(out))

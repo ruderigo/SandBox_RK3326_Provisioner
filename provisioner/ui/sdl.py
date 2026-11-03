@@ -25,11 +25,14 @@ SDL_RENDERER_SOFTWARE = 1
 SDL_RENDERER_ACCELERATED = 2
 SDL_PIXELFORMAT_ABGR8888 = 0x16762004          # bytes R, G, B, A in memory (little-endian)
 SDL_BLENDMODE_BLEND = 1
-SDL_QUIT, SDL_KEYDOWN = 0x100, 0x300
+SDL_QUIT, SDL_KEYDOWN, SDL_TEXTINPUT = 0x100, 0x300, 0x303
 
-SDLK = {13: "a", 0x4000_0058: "a", 27: "b", 8: "b", 120: "x", 121: "y", 32: "x",
+# A keyboard's keys (a USB keyboard on the handheld, a computer's). Letters
+# get their own names (kx...) so typing a "y" never means the Y button; what
+# they type arrives separately, as ("text", "y").
+SDLK = {13: "enter", 0x4000_0058: "enter", 27: "escape", 8: "backspace", 120: "kx", 121: "ky", 113: "kq",
         0x4000_0052: "up", 0x4000_0051: "down", 0x4000_0050: "left", 0x4000_004F: "right",
-        9: "r", 113: "quit", 0x4000_004B: "l", 0x4000_004E: "r"}
+        9: "r", 0x4000_004B: "l", 0x4000_004E: "r"}
 
 
 class Rect(C.Structure):
@@ -100,6 +103,7 @@ class Display:
         if self.out_size != (W, H):
             sdl.SDL_RenderSetLogicalSize(self.ren, W, H)   # the 720x720 layout, scaled to fit
         sdl.SDL_ShowCursor(0)
+        sdl.SDL_StartTextInput()
         sdl.SDL_SetRenderDrawBlendMode(self.ren, SDL_BLENDMODE_BLEND)
         self.fonts = load_fonts(font_path)
         self._atlases = [self._atlas(f) for f in self.fonts]
@@ -229,6 +233,10 @@ class Display:
                 act = SDLK.get(sym)
                 if act:
                     out.append(act)
+            elif etype == SDL_TEXTINPUT:
+                txt = bytes(ev[12:44]).split(b"\0", 1)[0].decode("utf-8", "replace")
+                if txt:
+                    out.append(("text", txt))
         return out
 
     def snapshot(self):

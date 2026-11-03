@@ -11,6 +11,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "tests"))
 os.environ["PROVISIONER_ESPTOOL"] = os.path.join(ROOT, "tests", "fake_esptool.py")
 from provisioner.ui import app as A  # noqa: E402
 from provisioner.ui.gamepad import Gamepad  # noqa: E402
@@ -31,11 +32,13 @@ def port(name, usb, chip):
     return {"port": name, "usb": usb, "usb_chip": chip, "product": "", "serial": "1", "native": False}
 
 
-class Screens(unittest.TestCase):
+class Base(unittest.TestCase):
     def app(self, ports, users=None):
         self.ports = ports
-        a = A.App(display(), version="0.1.0", ports_fn=lambda: [dict(p) for p in self.ports],
+        a = A.App(display(), version="0.2.0", ports_fn=lambda: [dict(p) for p in self.ports],
                   users_fn=lambda p: (users or {}).get(p, []))
+        a.here_fn = None
+        a.here = {"release": "1.0.0-beta.47", "name": "R36MAX", "chain": "chain member"}
         a.scan()
         return a
 
@@ -54,6 +57,8 @@ class Screens(unittest.TestCase):
         for k in ("FAKE_FAIL", "FAKE_TABLE", "FAKE_APP_SLOT_KB", "FAKE_CALLS"):
             os.environ.pop(k, None)
 
+
+class Screens(Base):
     def test_nothing_plugged_in(self):
         a = self.app([])
         self.shot(a, "01-empty")
@@ -130,7 +135,9 @@ class Screens(unittest.TestCase):
         a.handle("a")
         self.shot(a, "12-jobs-s3")
         self.assertEqual(a.known["/dev/ttyACM0"]["info"]["psram_mb"], 8)
-        self.assertEqual(a.jobs()[0]["entry"]["id"], "s3-usb-wifi")
+        kinds = [r["kind"] for r in a.jobs()]
+        self.assertEqual(kinds[:4], ["stump_new", "stump_update", "stump_settings", "stump_check"])
+        self.assertEqual(a.jobs()[4]["entry"]["id"], "s3-usb-wifi")
 
     def test_a_failure_says_what_to_do(self):
         os.environ.update(FAKE_BOARD="esp32", FAKE_FAIL="connect")
@@ -167,10 +174,173 @@ class Screens(unittest.TestCase):
         self.assertEqual(a.screen, "boards")
         self.assertIsNone(a.log)
 
+    def test_this_handhelds_stump_from_its_own_pages(self):
+        import http.server
+        import json as J
+        import threading as T
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = {"/node.json": {"release": "1.0.0-beta.47", "name": "R36MAX"},
+                        "/chain.json": {"enabled": True, "role": "member"}}.get(self.path)
+                self.send_response(200 if body else 404)
+                self.end_headers()
+                self.wfile.write(J.dumps(body or {}).encode())
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+        T.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            import urllib.request
+            real = urllib.request.OpenerDirector.open
+            port = srv.server_address[1]
+            urllib.request.OpenerDirector.open = lambda self, url, *a, **k: real(
+                self, url.replace("127.0.0.1:80/", "127.0.0.1:%d/" % port), *a, **k)
+            try:
+                h = A.here_status()
+            finally:
+                urllib.request.OpenerDirector.open = real
+        finally:
+            srv.shutdown()
+            srv.server_close()
+        self.assertEqual(h, {"release": "1.0.0-beta.47", "name": "R36MAX", "chain": "chain member"})
+
     def test_quit(self):
         a = self.app([])
         a.handle("quit")
         self.assertFalse(a.running)
+
+
+class MakeAStumpOnScreen(Base):
+    """The Stump's jobs through the screens and buttons, on the pretend board."""
+
+    def setUp(self):
+        super().setUp()
+        import shutil
+        from provisioner import stump
+        from test_stump import PipeLink
+        os.environ.update(FAKE_BOARD="s3", FAKE_MPY="6.3")
+        self.root = tempfile.mkdtemp(prefix="board-")
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.links = []
+        self.addCleanup(lambda: [l.close() for l in self.links])
+        b = stump.find_bundle()
+        keep = [n for n in sorted(b.files) if n.startswith("app/")][:3] + ["micropython.bin"]
+        b.files = {n: b.files[n] for n in keep}            # three files: quick
+        self.small = b
+        self.PipeLink = PipeLink
+
+    def board(self):
+        a = self.app([port("/dev/ttyUSB1", "1a86:55d3", "CH343 USB-serial")])
+        a._bundle = self.small
+        a.open_link = lambda p: self.links.append(self.PipeLink(self.root)) or self.links[-1]
+        a.handle("a")
+        self.wait(a)
+        a.handle("a")
+        return a
+
+    def type_in(self, a, text):
+        a.handle("a")                                   # the field: the keyboard opens
+        self.assertIsNotNone(a.kb)
+        a.handle(("text", text))                        # a USB keyboard's typing
+        a.handle("start")                               # OK
+
+    def test_make_a_stump_with_the_gamepad(self):
+        a = self.board()
+        self.shot(a, "20-jobs-freenove")
+        a.handle("a")                                   # Make a Stump
+        self.assertEqual(a.screen, "form")
+        self.shot(a, "21-form-new")
+        a.handle("down")
+        a.handle("down")
+        a.handle("down")
+        a.handle("down")
+        a.handle("down")
+        a.handle("down")                                # LoRa
+        a.handle("down")                                # the button
+        a.handle("a")
+        self.assertIn("name", a.toast_text)             # no name: refused, nothing touched
+        self.assertIsNone(a.confirm)
+        a.form["sel"] = 0
+        a.handle("a")                                   # the name, with the gamepad: Y then A types a capital
+        a.kb.row, a.kb.col = 1, 3                       # "r"
+        a.handle("y")
+        a.handle("a")
+        a.kb.row, a.kb.col = 1, 7                       # "i"
+        a.handle("a")
+        self.shot(a, "22-keyboard")
+        a.handle(("text", "verside"))
+        a.handle("start")
+        self.assertEqual(a.form["a"]["name"], "Riverside")
+        a.form["sel"] = 1
+        self.type_in(a, "pass1234")
+        a.form["sel"] = 5                               # Chain: right twice -> joins another Stump
+        a.handle("right")
+        a.handle("right")
+        self.assertEqual(a.form["a"]["chain"], "member")
+        rows = [r["key"] for r in a.form_rows()]
+        self.assertEqual(rows[5:9], ["chain", "upSsid", "subnet", "secret"])
+        a.form["sel"] = 8
+        self.type_in(a, "s3cret")
+        self.shot(a, "23-form-filled")
+        a.form["sel"] = len(rows) - 1
+        a.handle("a")
+        self.assertEqual((a.confirm["title"], a.confirm["choice"]), ("Make a Stump on this board?", 0))
+        self.shot(a, "24-confirm-make")
+        a.handle("right")
+        a.handle("a")
+        self.assertEqual(a.screen, "run")
+        self.wait(a)
+        self.shot(a, "25-made")
+        self.assertTrue(a.task.ok, a.task.msg)
+        with open(os.path.join(self.root, "config.py")) as f:
+            cfg = f.read()
+        for want in ("NODE_NAME = 'Riverside'", "AUTH_ADMIN_PASSWORD = 'pass1234'", "CHAIN_ENABLED = True",
+                     "CHAIN_SUBNET = 5", "CHAIN_SECRET = 's3cret'", "'192.168.5.2'"):
+            self.assertIn(want, cfg)
+
+        # Its settings, read back into the form, one changed, saved.
+        a.handle("a")
+        a.jsel = 2
+        a.handle("a")
+        self.wait(a)
+        a.handle("a")
+        self.assertEqual((a.screen, a.form["mode"], a.form["a"]["name"]), ("form", "settings", "Riverside"))
+        self.assertEqual(a.form["a"]["pw"] if "pw" in a.form["a"] else "", "")
+        self.shot(a, "26-form-settings")
+        a.form["sel"] = 0
+        a.handle("a")
+        a.kb.text = ""
+        a.handle(("text", "Riverbend"))
+        a.handle("enter")
+        a.form["sel"] = len(a.form_rows()) - 1
+        a.handle("a")
+        a.handle("a")                                   # Save: Yes highlighted
+        self.wait(a)
+        self.assertTrue(a.task.ok, a.task.msg)
+        with open(os.path.join(self.root, "config.py")) as f:
+            cfg = f.read()
+        self.assertIn("NODE_NAME = 'Riverbend'", cfg)
+        self.assertIn("AUTH_ADMIN_PASSWORD = 'pass1234'", cfg)      # blank: kept
+
+        # Check it starts.
+        a.handle("a")
+        a.jsel = 3
+        a.handle("a")
+        self.wait(a)
+        self.shot(a, "27-checked")
+        self.assertTrue(a.task.ok, a.task.msg)
+
+    def test_select_cancels_the_keyboard_and_letters_dont_press_buttons(self):
+        a = self.board()
+        a.handle("a")
+        a.handle("a")
+        a.handle(("text", "xy"))
+        a.handle("kx")                                  # the x key's own name: no X (space) on top
+        a.handle("select")
+        self.assertIsNone(a.kb)
+        self.assertEqual(a.form["a"]["name"], "")
 
 
 class Buttons(unittest.TestCase):
