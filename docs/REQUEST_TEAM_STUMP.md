@@ -86,6 +86,27 @@ answered from a file, nothing asked on the terminal.
 chain) and should install or update it from the gamepad too. R36MAX-Stump's
 `install.sh` runs your wizard, which needs a terminal today.
 
+## 4. The computer wizard and the passwords (asked 2026-11-03)
+
+**Found:** `provisioner.py --pc` never asks for an /admin password, so a
+computer Stump keeps `AUTH_ADMIN_PASSWORD` from `final_firmware/config.py`.
+That file holds a real password, and so does `FSERVBOT_OP_PASSWORD` (a
+fresh install doesn't keep that one, because the wizard asks for it). The
+CAM bundles are fine: their template is blanked, and we refuse one that
+isn't.
+
+**Ask:**
+1. `final_firmware/config.py` with both passwords blank (as the bundle's template).
+2. The `--pc` wizard asks for the /admin password (4+ characters; on an
+   update, "keep it" by default), and takes it from `--answers` like the
+   rest.
+3. On "all the questions again", the passwords already set stay unless new
+   ones are given (today `config.py` is rebuilt from the repo's).
+
+**Until then:** R36MAX-Stump's `install.sh` (v2.4.0-r36max) sets the
+/admin password after the wizard with your `settings.write_config`, and the
+RK3326 Provisioner sends the passwords again when it installs again.
+
 ## Not asked
 
 Nothing in the firmware changes. We follow your releases: a new bundle is

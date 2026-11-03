@@ -323,13 +323,7 @@ class MakeAStumpOnScreen(Base):
         a.handle("a")                                   # Make a Stump
         self.assertEqual(a.screen, "form")
         self.shot(a, "21-form-new")
-        a.handle("down")
-        a.handle("down")
-        a.handle("down")
-        a.handle("down")
-        a.handle("down")
-        a.handle("down")                                # LoRa
-        a.handle("down")                                # the button
+        a.form["sel"] = len(a.form_rows()) - 1          # the button
         a.handle("a")
         self.assertIn("name", a.toast_text)             # no name: refused, nothing touched
         self.assertIsNone(a.confirm)
@@ -346,13 +340,16 @@ class MakeAStumpOnScreen(Base):
         self.assertEqual(a.form["a"]["name"], "Riverside")
         a.form["sel"] = 1
         self.type_in(a, "pass1234")
-        a.form["sel"] = 5                               # Chain: right twice -> joins another Stump
+        a.form["sel"] = 2                               # the fserv operator's
+        self.type_in(a, "oper4567")
+        a.form["sel"] = 6                               # Chain: right twice -> joins another Stump
         a.handle("right")
         a.handle("right")
         self.assertEqual(a.form["a"]["chain"], "member")
         rows = [r["key"] for r in a.form_rows()]
-        self.assertEqual(rows[5:9], ["chain", "upSsid", "subnet", "secret"])
-        a.form["sel"] = 8
+        self.assertEqual(rows[:3], ["name", "pw", "opw"])
+        self.assertEqual(rows[6:10], ["chain", "upSsid", "subnet", "secret"])
+        a.form["sel"] = 9
         self.type_in(a, "s3cret")
         self.shot(a, "23-form-filled")
         a.form["sel"] = len(rows) - 1
@@ -367,7 +364,8 @@ class MakeAStumpOnScreen(Base):
         self.assertTrue(a.task.ok, a.task.msg)
         with open(os.path.join(self.root, "config.py")) as f:
             cfg = f.read()
-        for want in ("NODE_NAME = 'Riverside'", "AUTH_ADMIN_PASSWORD = 'pass1234'", "CHAIN_ENABLED = True",
+        for want in ("NODE_NAME = 'Riverside'", "AUTH_ADMIN_PASSWORD = 'pass1234'", "FSERVBOT_OP_PASSWORD = 'oper4567'",
+                     "CHAIN_ENABLED = True",
                      "CHAIN_SUBNET = 5", "CHAIN_SECRET = 's3cret'", "'192.168.5.2'"):
             self.assertIn(want, cfg)
 
@@ -731,6 +729,10 @@ class ThisHandheld(Base):
                                                        "chain": "chain member"}
         a.here_fn = lambda: a.here
         a.firefly_fn = lambda: ""
+        self.pw_state = "SET"
+        a.password_state_fn = lambda folder, key="AUTH_ADMIN_PASSWORD": self.pw_state
+        self.pw_set = []
+        a.set_password_fn = lambda folder, key, pw, line: self.pw_set.append((key, pw)) or (True, "set")
         a.marks_fn = lambda: {}
         online = online or {}
 
@@ -867,7 +869,12 @@ class ThisHandheld(Base):
         a.choose_file(path)
         self.assertEqual((a.screen, a.form["mode"]), ("form", "handheld"))
         self.assertEqual(a.hh_inst["version"], "2.3.0-r36max")
+        self.assertEqual([r["key"] for r in a.form_rows()][:3], ["name", "pw", "opw"])
         a.form["a"].update(name="R36-Test", chain="member", parent="192.168.1.20", secret="s3cret-test")
+        a.form["sel"] = len(a.form_rows()) - 1
+        a.handle("a")
+        self.assertIn("admin password is needed", a.toast_text)
+        a.form["a"].update(pw="admin-pw-1", opw="oper-pw-1")
         a.form["sel"] = len(a.form_rows()) - 1
         a.handle("a")
         self.assertEqual(a.confirm["title"], "Install this handheld's Stump?")
@@ -877,8 +884,48 @@ class ThisHandheld(Base):
         inst, ans = self.runs[0]
         self.assertTrue(inst["path"].endswith("handheld/install.sh"))
         self.assertEqual((ans["node name"], ans["that stump's address"]), ("R36-Test", "192.168.1.20"))
+        self.assertEqual((ans["_admin password"], ans["fserv bot operator password"]), ("admin-pw-1", "oper-pw-1"))
+        self.assertEqual(self.pw_set, [])               # the installer set it (its state: SET)
+        # An installer that left it as the repo's: the Provisioner sets it after.
+        self.pw_state = "DEFAULT"
+        a.run_handheld("Installing this handheld's Stump", ans)
+        self.wait(a)
+        self.assertEqual(self.pw_set, [("AUTH_ADMIN_PASSWORD", "admin-pw-1")])
+        self.assertIn("admin password is set", a.task.msg)
         a.handle("a")
         self.assertEqual(a.screen, "product")
+
+    def test_its_passwords(self):
+        a = self.handheld_app(installed=True)
+        self.pw_state = "DEFAULT"
+        self.assertIn("isn't its own", a.installed_line("handheld")[0])
+        a.open_product("handheld")
+        kinds = [r["kind"] for r in a.product_rows()]
+        self.assertEqual(kinds.count("hh_pw"), 2)
+        a.psel = kinds.index("hh_pw")
+        self.shot(a, "76-handheld-passwords")
+        a.handle("a")
+        self.assertEqual(a.kb.title, "Its admin password")
+        a.handle(("text", "new-admin"))
+        a.handle("start")
+        a.handle(("text", "new-admin"))
+        a.handle("start")
+        self.assertEqual(a.confirm["title"], "Set its admin password?")
+        a.handle("a")
+        self.wait(a)
+        self.assertEqual(self.pw_set, [("AUTH_ADMIN_PASSWORD", "new-admin")])
+        a.handle("a")
+        a.psel = kinds.index("hh_pw") + 1                # the fserv operator's: typed differently twice
+        a.handle("a")
+        a.handle(("text", "oper-1"))
+        a.handle("start")
+        a.handle(("text", "oper-2"))
+        a.handle("start")
+        self.assertIsNone(a.confirm)
+        self.assertIn("differ", a.toast_text)
+        # Install again with its admin password still the repo's: it's asked for.
+        a.psel = 0
+        self.pw_state = "DEFAULT"
 
     def test_the_handhelds_stump_update_and_check(self):
         a = self.handheld_app(installed=True)

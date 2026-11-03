@@ -72,20 +72,38 @@ def state(home=None, euid=None, which=shutil.which):
 
 def form_defaults(here=None):
     here = here or {}
-    return {"name": "" if here.get("none") else (here.get("name") or ""), "hotspot": "", "storage": "2048",
+    return {"name": "" if here.get("none") else (here.get("name") or ""), "pw": "", "opw": "", "hotspot": "",
+            "storage": "2048",
             "chain": "none", "parent": "", "secret": "", "heltec": "usb", "tavern": "no", "rnfs": "no"}
 
 
 IPV4 = re.compile(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$")
 
 
-def answers(a, folder, again=False):
+def current_passwords(folder):
+    """Its passwords now, to send again when it's installed again (the wizard
+    then rebuilds config.py from SandBox_Stump_On's, theirs included)."""
+    cfg = os.path.join(folder, "config.py")
+    return {"pw": _value_in(cfg, "AUTH_ADMIN_PASSWORD") or "", "opw": _value_in(cfg, "FSERVBOT_OP_PASSWORD") or ""}
+
+
+def answers(a, folder, again=False, admin_state="SET", current=None):
     """The form's answers -> SandBox_Stump_On's wizard's answers file
     (`provisioner.py --pc --answers`: keys are its questions to their '?').
     {"error": why} when the form isn't complete."""
     name = (a.get("name") or "").strip()
     if not name:
         return {"error": "Its name is needed"}
+    pw, opw = a.get("pw") or "", a.get("opw") or ""
+    if again and admin_state == "SET" and current:      # blank: its own, kept (sent again: the wizard rebuilds config.py)
+        pw = pw or current.get("pw", "")
+        opw = opw or current.get("opw", "")
+    if pw and not 4 <= len(pw) <= 64:
+        return {"error": "The admin password: 4 to 64 characters"}
+    if not pw and (not again or admin_state != "SET"):
+        return {"error": "Its admin password is needed (4+ characters): /admin asks for it"}
+    if opw and not 4 <= len(opw) <= 64:
+        return {"error": "The fserv operator password: 4 to 64 characters"}
     try:
         mb = int(a.get("storage") or 2048)
     except ValueError:
@@ -100,10 +118,14 @@ def answers(a, folder, again=False):
                           "none": "None"}[a.get("heltec") or "usb"],
            "install rnfs": a.get("rnfs") == "yes", "install tavern": a.get("tavern") == "yes",
            "start this stump automatically when you log in": True,
+           # The fserv bot's operator (editing its dialogue from the chat): the wizard asks it.
+           "fserv bot operator password": opw,
            # Questions with no default of their own (the --answers-template values)
            "identity requirement": "open", "how should file sharing work": "Free", "theme": "Amber",
            # The chain check after a new chain: carry on (the installer checks the Stump at its end)
            "fix it, then check again": False}
+    if pw:
+        out["_admin password"] = pw          # the wizard doesn't ask it: install.sh sets it (v2.4.0-r36max on)
     if again:
         out["change something"] = "a"                   # an existing Stump: all the questions again
     if a.get("heltec") == "usb":
@@ -170,3 +192,92 @@ def run(installer, ans, line, step, home=None, popen=subprocess.Popen):
             return True, "The Stump is up: %s. Its cockpit: Ports -> LaBuche_Stump." % up
         return True, "Installed, but the Stump isn't answering yet: see ~/Stump/stump.log."
     return False, last_x or ("The installer stopped (%d): %s" % (rc, " / ".join(tail[-2:])))
+
+
+# -- its passwords ---------------------------------------------------------------
+PASSWORDS = {"AUTH_ADMIN_PASSWORD": "admin", "FSERVBOT_OP_PASSWORD": "fserv operator"}
+# Team Stump's computer wizard leaves SandBox_Stump_On's final_firmware/config.py
+# values in place where it doesn't ask: compared with that file (cloned by
+# install.sh), so "still the repo's" is told apart from "its own".
+REPO_CONFIG = os.path.join("SandBox_Stump_On", "final_firmware", "config.py")
+
+
+def _value_in(path, key):
+    import ast
+    try:
+        with open(path, encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+    except (OSError, SyntaxError, ValueError):
+        return None
+    found = None
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == key for t in node.targets):
+            try:
+                found = ast.literal_eval(node.value)
+            except ValueError:
+                found = None
+    return found
+
+
+def password_state(folder, key="AUTH_ADMIN_PASSWORD", home=None):
+    """SET (its own), DEFAULT (still SandBox_Stump_On's), EMPTY, or NONE (no Stump)."""
+    cfg = os.path.join(folder, "config.py")
+    if not os.path.isfile(cfg):
+        return "NONE"
+    v = _value_in(cfg, key)
+    if not v:
+        return "EMPTY"
+    repo = _value_in(os.path.join(home or os.path.expanduser("~"), REPO_CONFIG), key)
+    from . import stump
+    known = [x.strip("'") for x in stump.FORBIDDEN_IN_TEMPLATE if x.startswith("'") or "_" in x]
+    return "DEFAULT" if (repo and v == repo) or v in known else "SET"
+
+
+SET_CODE = r"""
+import os, shutil, sys
+key, pw = sys.argv[1], sys.stdin.readline().rstrip("\n")
+sys.path.insert(0, os.getcwd())
+import settings
+shutil.copy2("config.py", "config.py.bak")
+if not settings.write_config({key: pw}, "config.py"):
+    sys.exit("config.py wasn't written")
+try:
+    compile(open("config.py").read(), "config.py", "exec")
+except SyntaxError:
+    shutil.copy2("config.py.bak", "config.py")
+    sys.exit("the new config.py wasn't Python: put back as it was")
+print("SET")
+"""
+
+
+def set_password(folder, key, pw, line, run=subprocess.run):
+    """Sets one of its passwords with the Stump's own settings.write_config
+    (what /admin uses; config.py.bak kept), then restarts it. (ok, message).
+    The password goes by stdin: never on a command line or in a log."""
+    if key not in PASSWORDS:
+        return False, "not one of its passwords"
+    if not 4 <= len(pw) <= 64:
+        return False, "4 to 64 characters"
+    py = os.path.join(folder, "venv", "bin", "python")
+    if not os.path.isfile(os.path.join(folder, "config.py")) or not os.path.exists(py):
+        return False, "No Stump in %s" % folder
+    p = run([py, "-c", SET_CODE, key], input=pw + "\n", cwd=folder, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, universal_newlines=True)
+    if "SET" not in (p.stdout or ""):
+        return False, "Not set: %s" % ((p.stdout or "").strip()[-200:] or "the Stump's settings.py said no")
+    line("its %s password is set (config.py.bak kept)" % PASSWORDS[key])
+    return True, "Its %s password is set. %s" % (PASSWORDS[key], restart(line, run))
+
+
+def restart(line, run=subprocess.run):
+    """Restarts the handheld's Stump (its user service, or install.sh's system one)."""
+    user = os.environ.get("USER") or ""
+    for cmd in (["systemctl", "--user", "restart", "stump"], ["sudo", "-n", "systemctl", "restart", "stump-%s" % user]):
+        try:
+            p = run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if p.returncode == 0:
+            line(" ".join(cmd))
+            return "The Stump restarted with it."
+    return "Restart the Stump for it to apply (Update does, or a reboot)."

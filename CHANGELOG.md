@@ -10,6 +10,29 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.10
+
+- **The handheld's Stump gets its own passwords.** Team Stump's computer
+  wizard never asks for an /admin password: the Stump kept the one in
+  SandBox_Stump_On's `config.py`, not yours (found on the bench). Now:
+  - the form asks for the **admin password** (needed for a new Stump) and the
+    **fserv operator password** (blank: its dialogue isn't editable from the
+    chat);
+  - its page has **Its admin password** and **Its fserv operator password**:
+    typed twice, set with the Stump's own `settings.write_config` (as
+    /admin does; `config.py.bak` kept), then the Stump restarts;
+  - the page says (in red) when the admin password isn't the Stump's own;
+  - installing again resends the passwords already set (the wizard rebuilds
+    `config.py` from the repo's and would put theirs back); an installer
+    before v2.4.0-r36max is followed by setting the admin password here.
+- **The CAM's form asks for the fserv operator password too** (its
+  settings already kept it; the field was missing).
+- docs/REQUEST_TEAM_STUMP.md: request 4 (blank passwords in their
+  `config.py`, the wizard asks for one).
+- Tests: the passwords through Team Stump's real wizard (new, again, update),
+  setting one by stdin (never on a command line), the pages, the CAM's
+  form.
+
 ## v0.3.0-beta.9
 
 - **install.sh stops on anything that isn't the handheld, before touching
