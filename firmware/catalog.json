@@ -2,15 +2,15 @@
   "firmware": [
     {
       "id": "s3-usb-wifi",
-      "title": "USB Wi-Fi adapter 0.1.0",
+      "title": "USB Wi-Fi adapter 0.2.0",
       "boards": ["esp32s3"],
       "chip": "esp32s3",
       "mode": "full",
       "offset": "0x0",
       "min_flash_mb": 4,
-      "file": "s3_usb_wifi/s3-usb-wifi-0.1.0.bin",
-      "sha256": "8b52558574c96383ef1fdd37bc57c04424c4bca391fc95d67e747b8fa72d2dbb",
-      "about": "A USB network card for the handheld: plugged into the board's native USB port, it's usb0 at 10.77.0.2, and it joins a Wi-Fi by itself (the one saved on its setup page, else an open Stump hotspot). Flash it through the board's UART (CH343) port. First build: bench test pending.",
+      "file": "s3_usb_wifi/s3-usb-wifi-0.2.0.bin",
+      "sha256": "42b7184c00215d9a84117b5e7b5a00ab91658d3c601bac025f74b9e08c8545ed",
+      "about": "The S3 becomes the handheld's Wi-Fi card: plugged into the board's native USB port, it gives the handheld its internet, and you pick networks and type passwords on the Provisioner's S3 USB Wi-Fi page. Flash it through the board's UART (CH343) port. Bench test pending.",
       "licence": "MIT; built on ESP-IDF, esp_tinyusb (Apache-2.0), TinyUSB (MIT), lwIP (BSD-3) (licenses/S3-USB-WiFi-NOTICE.txt)",
       "source": "s3_usb_wifi/ in this repository"
     },

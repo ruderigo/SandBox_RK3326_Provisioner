@@ -1,9 +1,12 @@
 /*
- * The Wi-Fi side: joins the saved network by itself (credentials in NVS),
- * else an open hotspot that answers as a Stump (GET /node.json with an
- * "lxmf" key), and keeps at it. The setup AP, FireFly-S3-xxxx (open), opens
- * when there's nothing to join for a while, when no network is saved, or
- * when BOOT is pressed just after power-up.
+ * The Wi-Fi side. It remembers up to 8 networks (in NVS, most recent first)
+ * and joins whichever of them is in range, else an open hotspot that answers
+ * as a Stump (GET /node.json with an "lxmf" key), and keeps at it. A network
+ * asked for (the Provisioner's Wi-Fi page, the setup page) is tried first,
+ * and why it failed is kept for the asker.
+ *
+ * The setup AP, FireFly-S3-xxxx (open), opens when nothing is saved, after
+ * a while with no network, or when BOOT is pressed just after power-up.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -29,20 +32,23 @@ static const char *TAG = "wifi_link";
 
 #define BIT_IP      BIT0
 #define BIT_DISC    BIT1
-#define BIT_WAKE    BIT2      /* credentials changed, or setup asked for */
+#define BIT_WAKE    BIT2      /* a join asked for, a network forgotten, or setup asked for */
 
-#define JOIN_SAVED_MS       20000
+#define JOIN_MS             20000
 #define JOIN_OPEN_MS        12000
 #define NO_LINK_SETUP_MS    120000
 #define SETUP_CLOSE_MS      60000
 #define BLOCK_MS            (5 * 60 * 1000)
-#define SCAN_MAX            20
+#define SCAN_MAX            24
 
 static EventGroupHandle_t s_ev;
-static SemaphoreHandle_t s_lock;       /* status, credentials flags */
+static SemaphoreHandle_t s_lock;       /* s_status, s_nets, s_req */
 static SemaphoreHandle_t s_radio;      /* scanning and joining */
 static esp_netif_t *s_sta, *s_ap;
 static link_status_t s_status;
+static netlist_t s_nets;
+static char s_req[33];                 /* the network asked for, tried first */
+static volatile uint8_t s_reason;      /* the last disconnect's reason */
 static bool s_setup_open, s_setup_by_button, s_saved_since_setup;
 static volatile bool s_want_setup;
 static char s_ap_ssid[16];
@@ -61,60 +67,101 @@ static int64_t now_ms(void)
     return esp_timer_get_time() / 1000;
 }
 
-/* ---- credentials ---------------------------------------------------- */
+/* ---- the saved networks ------------------------------------------------ */
 
-static bool load_creds(char *ssid, char *pass)
+static void nets_load(void)
 {
     nvs_handle_t h;
-    if (nvs_open("s3wifi", NVS_READONLY, &h) != ESP_OK) {
-        return false;
+    memset(&s_nets, 0, sizeof(s_nets));
+    if (nvs_open("s3wifi", NVS_READWRITE, &h) != ESP_OK) {
+        return;
     }
-    size_t a = 33, b = 65;
-    bool ok = nvs_get_str(h, "ssid", ssid, &a) == ESP_OK && ssid[0];
-    if (ok && nvs_get_str(h, "pass", pass, &b) != ESP_OK) {
-        pass[0] = 0;
+    size_t len = sizeof(s_nets);
+    if (nvs_get_blob(h, "nets", &s_nets, &len) != ESP_OK || len != sizeof(s_nets) || !netlist_sane(&s_nets)) {
+        memset(&s_nets, 0, sizeof(s_nets));
+        /* 0.1.0 kept one network as "ssid" / "pass" */
+        char ssid[33], pass[65];
+        size_t a = sizeof(ssid), b = sizeof(pass);
+        if (nvs_get_str(h, "ssid", ssid, &a) == ESP_OK) {
+            if (nvs_get_str(h, "pass", pass, &b) != ESP_OK) {
+                pass[0] = 0;
+            }
+            netlist_put(&s_nets, ssid, pass);
+            nvs_set_blob(h, "nets", &s_nets, sizeof(s_nets));
+            nvs_erase_key(h, "ssid");
+            nvs_erase_key(h, "pass");
+            nvs_commit(h);
+        }
     }
     nvs_close(h);
-    return ok;
 }
 
-esp_err_t wifi_link_save(const char *ssid, const char *password)
+/* with s_lock held */
+static esp_err_t nets_store(void)
 {
-    size_t sl = strlen(ssid), pl = strlen(password);
-    if (sl < 1 || sl > 32 || (pl != 0 && (pl < 8 || pl > 63))) {
-        return ESP_ERR_INVALID_ARG;
-    }
     nvs_handle_t h;
     esp_err_t r = nvs_open("s3wifi", NVS_READWRITE, &h);
     if (r == ESP_OK) {
-        r = nvs_set_str(h, "ssid", ssid);
-        if (r == ESP_OK) {
-            r = nvs_set_str(h, "pass", password);
-        }
+        r = nvs_set_blob(h, "nets", &s_nets, sizeof(s_nets));
         if (r == ESP_OK) {
             r = nvs_commit(h);
         }
         nvs_close(h);
     }
+    return r;
+}
+
+esp_err_t wifi_link_join(const char *ssid, const char *password)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    netlist_t was = s_nets;
+    if (!netlist_put(&s_nets, ssid, password)) {
+        xSemaphoreGive(s_lock);
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t r = nets_store();
+    if (r != ESP_OK) {
+        s_nets = was;
+    } else {
+        strlcpy(s_req, ssid, sizeof(s_req));
+        s_status.error = NULL;
+        s_status.state = LINK_JOINING;
+        strlcpy(s_status.target, ssid, sizeof(s_status.target));
+    }
+    xSemaphoreGive(s_lock);
     if (r == ESP_OK) {
-        ESP_LOGI(TAG, "saved a network (%u-byte name)", (unsigned)sl);
+        ESP_LOGI(TAG, "asked to join a network (%u-byte name)", (unsigned)strlen(ssid));
         s_saved_since_setup = true;
         xEventGroupSetBits(s_ev, BIT_WAKE);
     }
     return r;
 }
 
-esp_err_t wifi_link_forget(void)
+esp_err_t wifi_link_forget(const char *ssid)
 {
-    nvs_handle_t h;
-    esp_err_t r = nvs_open("s3wifi", NVS_READWRITE, &h);
-    if (r == ESP_OK) {
-        nvs_erase_all(h);
-        r = nvs_commit(h);
-        nvs_close(h);
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    esp_err_t r = ESP_OK;
+    if (ssid) {
+        if (!netlist_remove(&s_nets, ssid)) {
+            r = ESP_ERR_NOT_FOUND;
+        }
+    } else {
+        memset(&s_nets, 0, sizeof(s_nets));
     }
+    if (r == ESP_OK) {
+        r = nets_store();
+    }
+    xSemaphoreGive(s_lock);
     xEventGroupSetBits(s_ev, BIT_WAKE);
     return r;
+}
+
+static bool is_saved(const char *ssid)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool yes = netlist_find(&s_nets, ssid) >= 0;
+    xSemaphoreGive(s_lock);
+    return yes;
 }
 
 /* ---- status ----------------------------------------------------------- */
@@ -137,26 +184,80 @@ bool adapter_setup_ap_open(void)
     return s_setup_open;
 }
 
-static void set_status(bool connected, const char *ssid, bool stump)
+static void set_joining(const char *ssid)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    if (connected) {
-        esp_netif_ip_info_t ip;
-        esp_netif_get_ip_info(s_sta, &ip);
-        s_status.connected = true;
-        strlcpy(s_status.ssid, ssid, sizeof(s_status.ssid));
-        s_status.ip = lwip_ntohl(ip.ip.addr);
-        s_status.gw = lwip_ntohl(ip.gw.addr);
-        s_status.mask = lwip_ntohl(ip.netmask.addr);
-        s_status.stump = stump;
-    } else {
-        memset(&s_status, 0, sizeof(s_status));
+    s_status.state = LINK_JOINING;
+    strlcpy(s_status.target, ssid, sizeof(s_status.target));
+    xSemaphoreGive(s_lock);
+}
+
+static void set_failed(const char *ssid, const char *why, bool asked)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_status.state = LINK_IDLE;
+    if (asked) {
+        strlcpy(s_status.target, ssid, sizeof(s_status.target));
+        s_status.error = why;
     }
     xSemaphoreGive(s_lock);
+}
+
+static void set_connected(bool connected, const char *ssid, bool stump)
+{
+    uint32_t dns = 0;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
     if (connected) {
-        netsvc_set_wifi_net(s_status.ip, s_status.mask);
+        esp_netif_ip_info_t info;
+        esp_netif_dns_info_t d = {0};
+        esp_netif_get_ip_info(s_sta, &info);
+        esp_netif_get_dns_info(s_sta, ESP_NETIF_DNS_MAIN, &d);
+        s_status.state = LINK_CONNECTED;
+        s_status.connected = true;
+        s_status.error = NULL;
+        strlcpy(s_status.ssid, ssid, sizeof(s_status.ssid));
+        strlcpy(s_status.target, ssid, sizeof(s_status.target));
+        s_status.ip = lwip_ntohl(info.ip.addr);
+        s_status.gw = lwip_ntohl(info.gw.addr);
+        s_status.mask = lwip_ntohl(info.netmask.addr);
+        s_status.dns = dns = lwip_ntohl(d.ip.u_addr.ip4.addr);
+        if (!dns) {
+            dns = s_status.gw;   /* no DNS given: most gateways answer one */
+        }
+        s_status.stump = stump;
     } else {
-        netsvc_set_wifi_net(0, 0);
+        const char *err = s_status.error;
+        char target[33];
+        strlcpy(target, s_status.target, sizeof(target));
+        memset(&s_status, 0, sizeof(s_status));
+        s_status.state = LINK_IDLE;
+        s_status.error = err;
+        strlcpy(s_status.target, target, sizeof(s_status.target));
+    }
+    xSemaphoreGive(s_lock);
+    netsvc_set_upstream_dns(dns);
+}
+
+/* Why a join failed, in a word the Provisioner shows. */
+static const char *reason_word(uint8_t r)
+{
+    switch (r) {
+    case WIFI_REASON_AUTH_FAIL:
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_MIC_FAILURE:
+    case WIFI_REASON_AUTH_EXPIRE:
+        return "wrong_password";
+    case WIFI_REASON_NO_AP_FOUND:
+    case WIFI_REASON_NO_AP_FOUND_IN_RSSI_THRESHOLD:
+        return "not_found";
+    case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY:
+    case WIFI_REASON_NO_AP_FOUND_IN_AUTHMODE_THRESHOLD:
+        return "security_mismatch";
+    case 0:
+        return "no_address";   /* associated, but no DHCP answer */
+    default:
+        return "failed";
     }
 }
 
@@ -165,6 +266,7 @@ static void set_status(bool connected, const char *ssid, bool stump)
 static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        s_reason = ((wifi_event_sta_disconnected_t *)data)->reason;
         xEventGroupClearBits(s_ev, BIT_IP);
         xEventGroupSetBits(s_ev, BIT_DISC);
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
@@ -242,10 +344,12 @@ static void leave(void)
     xEventGroupClearBits(s_ev, BIT_IP | BIT_DISC);
 }
 
-/* Joins; true once it has an address. bssid pins one AP (may be NULL). */
-static bool join(const char *ssid, const char *pass, const uint8_t *bssid, int timeout_ms)
+/* Joins; true once it has an address. bssid pins one AP (may be NULL).
+ * On failure, *why says why (may be NULL). */
+static bool join(const char *ssid, const char *pass, const uint8_t *bssid, int timeout_ms, const char **why)
 {
     leave();
+    set_joining(ssid);
     wifi_config_t wc = {0};
     strlcpy((char *)wc.sta.ssid, ssid, sizeof(wc.sta.ssid));
     strlcpy((char *)wc.sta.password, pass, sizeof(wc.sta.password));
@@ -257,13 +361,26 @@ static bool join(const char *ssid, const char *pass, const uint8_t *bssid, int t
         wc.sta.bssid_set = true;
         memcpy(wc.sta.bssid, bssid, 6);
     }
+    s_reason = 0;
     if (esp_wifi_set_config(WIFI_IF_STA, &wc) != ESP_OK || esp_wifi_connect() != ESP_OK) {
+        if (why) {
+            *why = "failed";
+        }
         return false;
     }
     EventBits_t b = xEventGroupWaitBits(s_ev, BIT_IP | BIT_DISC | BIT_WAKE, pdFALSE, pdFALSE,
                                         pdMS_TO_TICKS(timeout_ms));
     if (b & BIT_IP) {
         return true;
+    }
+    if (why) {
+        if (b & BIT_DISC) {
+            *why = reason_word(s_reason);
+        } else if (b & BIT_WAKE) {
+            *why = NULL;   /* cut short: something else was asked for */
+        } else {
+            *why = s_reason ? reason_word(s_reason) : "no_address";
+        }
     }
     leave();
     return false;
@@ -313,10 +430,21 @@ static void scan_locked(void)
     }
 }
 
-/* Connected: stays until the link drops or something changes. */
+static bool in_scan(const char *ssid)
+{
+    for (uint16_t i = 0; i < s_scan_n; i++) {
+        if (strcmp((const char *)s_scan[i].ssid, ssid) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Connected: stays until the link drops, another network is asked for, or
+ * this one is forgotten. */
 static void hold(const char *ssid, bool stump)
 {
-    set_status(true, ssid, stump);
+    set_connected(true, ssid, stump);
     ESP_LOGI(TAG, "joined %s%s", stump ? "a Stump's hotspot " : "", ssid);
     int64_t since = now_ms();
     for (;;) {
@@ -330,26 +458,29 @@ static void hold(const char *ssid, bool stump)
         }
         EventBits_t b = xEventGroupWaitBits(s_ev, BIT_DISC | BIT_WAKE, pdFALSE, pdFALSE, pdMS_TO_TICKS(1000));
         if (b & BIT_WAKE) {
-            if (s_want_setup) {
-                xEventGroupClearBits(s_ev, BIT_WAKE);
-                continue;
-            }
             xEventGroupClearBits(s_ev, BIT_WAKE);
-            ESP_LOGI(TAG, "credentials changed: leaving %s", ssid);
-            leave();
-            break;
+            xSemaphoreTake(s_lock, portMAX_DELAY);
+            bool asked = s_req[0] != 0;
+            xSemaphoreGive(s_lock);
+            if (asked || (!stump && !is_saved(ssid))) {
+                ESP_LOGI(TAG, "leaving %s (%s)", ssid, asked ? "another network asked for" : "forgotten");
+                leave();
+                break;
+            }
+            continue;   /* setup asked for, or another network forgotten */
         }
         if (b & BIT_DISC) {
             ESP_LOGI(TAG, "lost %s", ssid);
             break;
         }
     }
-    set_status(false, "", false);
+    set_connected(false, "", false);
 }
 
 static void link_task(void *arg)
 {
-    static char ssid[33], pass[65];
+    static netlist_t nets;
+    static char req[33];
     int64_t last_link = now_ms();
     for (;;) {
         if (s_want_setup) {
@@ -357,24 +488,53 @@ static void link_task(void *arg)
             setup_open(true);
         }
         xEventGroupClearBits(s_ev, BIT_WAKE);
-        bool saved = load_creds(ssid, pass);
-        if (!saved && !s_setup_open) {
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        nets = s_nets;
+        strlcpy(req, s_req, sizeof(req));
+        s_req[0] = 0;
+        xSemaphoreGive(s_lock);
+        if (nets.n == 0 && !s_setup_open) {
             setup_open(false);   /* nothing saved: offer the setup page */
         }
+
         bool joined = false;
         xSemaphoreTake(s_radio, portMAX_DELAY);
-        if (saved && join(ssid, pass, NULL, JOIN_SAVED_MS)) {
-            xSemaphoreGive(s_radio);
-            hold(ssid, false);
-            joined = true;
-        } else if (!(xEventGroupGetBits(s_ev) & BIT_WAKE)) {
-            /* auto-join: open hotspots that answer as a Stump, strongest first */
-            scan_locked();
+        scan_locked();
+
+        /* the network asked for (even if the scan missed it), then the saved
+         * ones in range, most recent first */
+        for (int i = -1; i < nets.n && !joined; i++) {
+            const char *ss = i < 0 ? req : nets.e[i].ssid;
+            if (!ss[0] || (i >= 0 && (strcmp(ss, req) == 0 || !in_scan(ss)))) {
+                continue;
+            }
+            int k = netlist_find(&nets, ss);
+            const char *pw = k >= 0 ? nets.e[k].pass : "";
+            const char *why = NULL;
+            if (join(ss, pw, NULL, JOIN_MS, &why)) {
+                xSemaphoreGive(s_radio);
+                hold(ss, false);
+                joined = true;
+            } else {
+                if (!why) {
+                    break;   /* cut short by a new request: start over */
+                }
+                ESP_LOGI(TAG, "couldn't join %s: %s", ss, why);
+                set_failed(ss, why, i < 0);
+                if (xEventGroupGetBits(s_ev) & BIT_WAKE) {
+                    break;
+                }
+            }
+        }
+
+        /* else: open hotspots that answer as a Stump, strongest first */
+        if (!joined && !(xEventGroupGetBits(s_ev) & BIT_WAKE)) {
             wifi_ap_record_t cand[SCAN_MAX];
             uint16_t nc = 0;
             for (uint16_t i = 0; i < s_scan_n; i++) {
-                if (s_scan[i].authmode == WIFI_AUTH_OPEN && s_scan[i].ssid[0]
-                        && strcmp((char *)s_scan[i].ssid, s_ap_ssid) != 0 && !blocked(s_scan[i].bssid)) {
+                const char *ss = (const char *)s_scan[i].ssid;
+                if (s_scan[i].authmode == WIFI_AUTH_OPEN && ss[0] && strcmp(ss, s_ap_ssid) != 0
+                        && netlist_find(&nets, ss) < 0 && !blocked(s_scan[i].bssid)) {
                     cand[nc++] = s_scan[i];   /* already sorted by RSSI */
                 }
             }
@@ -383,19 +543,18 @@ static void link_task(void *arg)
                     break;
                 }
                 const char *cs = (const char *)cand[i].ssid;
-                if (join(cs, "", cand[i].bssid, JOIN_OPEN_MS) && probe_stump()) {
+                if (join(cs, "", cand[i].bssid, JOIN_OPEN_MS, NULL) && probe_stump()) {
                     xSemaphoreGive(s_radio);
                     hold(cs, true);
                     joined = true;
                 } else {
                     leave();
                     block(cand[i].bssid);
+                    set_failed(cs, NULL, false);
                 }
             }
-            if (!joined) {
-                xSemaphoreGive(s_radio);
-            }
-        } else {
+        }
+        if (!joined) {
             xSemaphoreGive(s_radio);
         }
         if (joined) {
@@ -409,12 +568,12 @@ static void link_task(void *arg)
     }
 }
 
-/* ---- the setup page's list -------------------------------------------- */
+/* ---- lists for the pages ---------------------------------------------- */
 
 bool wifi_link_scan_json(char *buf, size_t cap)
 {
     if (xSemaphoreTake(s_radio, 0) == pdTRUE) {
-        if (now_ms() - s_scan_at > 10000 || s_scan_n == 0) {
+        if (now_ms() - s_scan_at > 8000 || s_scan_n == 0) {
             scan_locked();
         }
         xSemaphoreGive(s_radio);
@@ -444,8 +603,9 @@ bool wifi_link_scan_json(char *buf, size_t cap)
             return false;
         }
         size_t l = strlen(buf);
-        int w = snprintf(buf + l, cap - l, ",\"rssi\":%d,\"open\":%s}", s_scan[i].rssi,
-                         s_scan[i].authmode == WIFI_AUTH_OPEN ? "true" : "false");
+        int w = snprintf(buf + l, cap - l, ",\"rssi\":%d,\"open\":%s,\"saved\":%s}", s_scan[i].rssi,
+                         s_scan[i].authmode == WIFI_AUTH_OPEN ? "true" : "false",
+                         is_saved(ss) ? "true" : "false");
         if (w < 0 || (size_t)w >= cap - l) {
             buf[at] = 0;
             return false;
@@ -460,6 +620,25 @@ bool wifi_link_scan_json(char *buf, size_t cap)
     return true;
 }
 
+bool wifi_link_saved_json(char *buf, size_t cap)
+{
+    bool ok = true;
+    snprintf(buf, cap, "[");
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    for (int i = 0; i < s_nets.n && ok; i++) {
+        if (i && strlen(buf) + 2 < cap) {
+            strcat(buf, ",");
+        }
+        ok = json_put_str(buf, cap, s_nets.e[i].ssid);
+    }
+    xSemaphoreGive(s_lock);
+    if (!ok || strlen(buf) + 2 > cap) {
+        return false;
+    }
+    strcat(buf, "]");
+    return true;
+}
+
 /* ---- start ------------------------------------------------------------ */
 
 esp_netif_t *wifi_link_init(bool force_setup)
@@ -467,6 +646,8 @@ esp_netif_t *wifi_link_init(bool force_setup)
     s_ev = xEventGroupCreate();
     s_lock = xSemaphoreCreateMutex();
     s_radio = xSemaphoreCreateMutex();
+    nets_load();
+    ESP_LOGI(TAG, "%u saved network(s)", s_nets.n);
 
     s_sta = esp_netif_create_default_wifi_sta();
 
@@ -483,7 +664,7 @@ esp_netif_t *wifi_link_init(bool force_setup)
 
     wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&init));
-    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));   /* our NVS keys hold the network */
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));   /* our NVS keys hold the networks */
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, on_event, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, ESP_EVENT_ANY_ID, on_event, NULL));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
@@ -498,7 +679,7 @@ esp_netif_t *wifi_link_init(bool force_setup)
 void wifi_link_start(void)
 {
     ESP_ERROR_CHECK(esp_wifi_start());
-    xTaskCreate(link_task, "wifi_link", 6144, NULL, 5, NULL);
+    xTaskCreate(link_task, "wifi_link", 8192, NULL, 5, NULL);
 }
 
 void wifi_link_request_setup(void)

@@ -21,7 +21,7 @@
 </head>
 <body>
 <h1>FireFly S3 USB Wi-Fi</h1>
-<p class="dim">The network this adapter joins for the handheld. It also joins open Stump hotspots by itself.</p>
+<p class="dim">The networks this adapter joins for the handheld. With none in range, it joins an open Stump hotspot by itself.</p>
 <div id="st">Status: …</div>
 
 <p>Networks nearby <button class="plain" type="button" onclick="scan()">Refresh</button></p>
@@ -35,8 +35,11 @@
   <button class="go" type="submit">Save and join</button>
 </form>
 
-<form method="post" action="/forget" style="margin-top:24px">
-  <button class="plain" type="submit">Forget the saved network</button>
+<p style="margin-top:24px">Saved networks <span class="dim">(it joins whichever is in range, the most recent first)</span></p>
+<ul id="saved"><li class="dim">…</li></ul>
+
+<form method="post" action="/forget">
+  <button class="plain" type="submit">Forget them all</button>
 </form>
 
 <script>
@@ -45,7 +48,8 @@ function status(){
   fetch('/status.json').then(function(r){return r.json();}).then(function(s){
     document.getElementById('st').innerHTML = s.ssid
       ? 'Joined <b>'+esc(s.ssid)+'</b> ('+esc(s.rssi)+' dBm), '+esc(s.ip)+' on '+esc(s.subnet)
-      : 'Not joined to a network yet.';
+      : (s.state==='joining' ? 'Joining <b>'+esc(s.target)+'</b>…'
+        : (s.error ? 'Couldn\'t join <b>'+esc(s.target)+'</b>: '+esc(s.error.replace('_',' ')) : 'Not joined to a network yet.'));
   }).catch(function(){});
 }
 function scan(){
@@ -62,7 +66,21 @@ function scan(){
     });
   }).catch(function(){ul.innerHTML='<li class="dim">Couldn\'t list networks.</li>';});
 }
-status(); scan(); setInterval(status, 4000);
+function saved(){
+  var ul=document.getElementById('saved');
+  fetch('/networks.json').then(function(r){return r.json();}).then(function(list){
+    ul.innerHTML='';
+    if(!list.length){ul.innerHTML='<li class="dim">None yet.</li>';return;}
+    list.forEach(function(ss){
+      var li=document.createElement('li'), f=document.createElement('form'), h=document.createElement('input'), b=document.createElement('button');
+      f.method='post'; f.action='/forget';
+      h.type='hidden'; h.name='ssid'; h.value=ss;
+      b.type='submit'; b.textContent=ss+'   (forget)';
+      f.appendChild(h); f.appendChild(b); li.appendChild(f); ul.appendChild(li);
+    });
+  }).catch(function(){});
+}
+status(); scan(); saved(); setInterval(status, 4000);
 </script>
 </body>
 </html>

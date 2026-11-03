@@ -4,6 +4,19 @@ A tag `v<VERSION>` (VERSION) runs the tests and publishes a release with
 `RK3326-Provisioner-<VERSION>.tar.gz` and its `SHA256SUMS`; the section
 below is its notes.
 
+## Next (not released)
+
+- **The S3 as the handheld's Wi-Fi card.** *USB Wi-Fi adapter* 0.2.0 in the
+  catalogue (`s3_usb_wifi/`: ESP-IDF firmware, built here, its image checked
+  by the CI). Flashed onto a Freenove S3 and plugged into the handheld by its
+  USB port, it's the handheld's network card: router and DNS for it, up to 8
+  networks remembered.
+- **The S3 USB Wi-Fi page**: the adapter at the top of the boards (what it's
+  connected to). Its networks with signal bars, A to join one (a password on
+  FireFly's keyboard), Y to forget one, *Connected · internet OK* or why not.
+- Tests: the page against a pretend S3 (`tests/fake_s3.py`), flashing the
+  image.
+
 ## v0.2.0
 
 **Make a Stump, from the handheld, offline.** The Provisioner's main job:

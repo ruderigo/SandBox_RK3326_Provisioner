@@ -2,11 +2,14 @@
  * HTTP on port 80, for the USB side (10.77.0.1) and the setup AP
  * (10.77.1.1) only; the Wi-Fi the S3 joined gets a 403.
  *
- *   GET  /status.json   {"ssid","rssi","ip","gateway","subnet","firmware"}
- *   GET  /              the setup page
- *   GET  /scan.json     nearby networks
- *   POST /save          ssid=…&password=…   (form-encoded)
- *   POST /forget
+ *   GET  /status.json    {"ssid","rssi","ip","gateway","subnet","state","target",
+ *                          "error","dns","stump","firmware"}
+ *   GET  /               the setup page
+ *   GET  /scan.json      nearby networks [{"ssid","rssi","open","saved"}]
+ *   GET  /networks.json  the saved networks' names, most recent first
+ *   POST /join, /save    ssid=…[&password=…]  remember it and join it now
+ *   POST /forget         [ssid=…]  forget it (or all)
+ * (form-encoded; JSON answers with "Accept: application/json")
  *
  * SPDX-License-Identifier: MIT
  */
@@ -77,7 +80,7 @@ static esp_err_t status_get(httpd_req_t *req)
     }
     link_status_t st;
     wifi_link_status(&st);
-    char out[256] = "{\"ssid\":";
+    char out[512] = "{\"ssid\":";
     char ip[16], gw[16], net[19];
     if (st.connected) {
         json_put_str(out, sizeof(out), st.ssid);
@@ -89,6 +92,29 @@ static esp_err_t status_get(httpd_req_t *req)
                  st.rssi, ip, gw, net);
     } else {
         strlcat(out, "null,\"rssi\":null,\"ip\":null,\"gateway\":null,\"subnet\":null", sizeof(out));
+    }
+    static const char *states[] = {"idle", "joining", "connected"};
+    size_t l0 = strlen(out);
+    snprintf(out + l0, sizeof(out) - l0, ",\"state\":\"%s\",\"target\":", states[st.state]);
+    if (st.target[0]) {
+        json_put_str(out, sizeof(out), st.target);
+    } else {
+        strlcat(out, "null", sizeof(out));
+    }
+    strlcat(out, ",\"error\":", sizeof(out));
+    if (st.error) {
+        json_put_str(out, sizeof(out), st.error);
+    } else {
+        strlcat(out, "null", sizeof(out));
+    }
+    if (st.connected && st.dns) {
+        char d[16];
+        ip_str(st.dns, d);
+        l0 = strlen(out);
+        snprintf(out + l0, sizeof(out) - l0, ",\"dns\":\"%s\",\"stump\":%s", d, st.stump ? "true" : "false");
+    } else {
+        l0 = strlen(out);
+        snprintf(out + l0, sizeof(out) - l0, ",\"dns\":null,\"stump\":%s", st.stump ? "true" : "false");
     }
     strlcat(out, ",\"firmware\":", sizeof(out));
     char fw[48];
@@ -161,36 +187,91 @@ static esp_err_t page(httpd_req_t *req, const char *status, const char *msg)
     return httpd_resp_sendstr(req, out);
 }
 
-static esp_err_t save_post(httpd_req_t *req)
+static bool wants_json(httpd_req_t *req)
+{
+    char accept[64] = "";
+    httpd_req_get_hdr_value_str(req, "Accept", accept, sizeof(accept));
+    return strstr(accept, "application/json") != NULL;
+}
+
+static esp_err_t reply_json(httpd_req_t *req, const char *status, const char *error)
+{
+    httpd_resp_set_status(req, status);
+    httpd_resp_set_type(req, "application/json");
+    nocache(req);
+    char out[96] = "{\"ok\":";
+    if (error) {
+        strlcat(out, "false,\"error\":", sizeof(out));
+        json_put_str(out, sizeof(out), error);
+    } else {
+        strlcat(out, "true", sizeof(out));
+    }
+    strlcat(out, "}\n", sizeof(out));
+    return httpd_resp_sendstr(req, out);
+}
+
+/*
+ * POST /save (the setup page's form) and POST /join (the Provisioner): remember
+ * ssid and join it now. password: empty for an open network; left out, a
+ * saved network keeps its own. Answers JSON when asked (Accept), else a page.
+ */
+static esp_err_t join_post(httpd_req_t *req)
 {
     if (side_of(req) == SIDE_OTHER) {
         return refuse(req);
     }
+    bool json = wants_json(req);
     char body[256], ssid[33], pass[65];
     int n = read_body(req, body, sizeof(body));
     if (n < 0 || form_get(body, (size_t)n, "ssid", ssid, sizeof(ssid)) < 1) {
-        return page(req, "400 Bad Request", "A network name is needed.");
+        return json ? reply_json(req, "400 Bad Request", "no_ssid")
+               : page(req, "400 Bad Request", "A network name is needed.");
     }
-    if (form_get(body, (size_t)n, "password", pass, sizeof(pass)) < 0) {
-        pass[0] = 0;
-    }
-    esp_err_t r = wifi_link_save(ssid, pass);
+    bool has_pass = form_get(body, (size_t)n, "password", pass, sizeof(pass)) >= 0;
+    esp_err_t r = wifi_link_join(ssid, has_pass ? pass : NULL);
     if (r == ESP_ERR_INVALID_ARG) {
-        return page(req, "400 Bad Request", "The password is 8 to 63 characters (or empty for an open network).");
+        return json ? reply_json(req, "400 Bad Request", "bad_password")
+               : page(req, "400 Bad Request", "The password is 8 to 63 characters (or empty for an open network).");
     }
     if (r != ESP_OK) {
-        return page(req, "500 Internal Server Error", "Couldn't save it.");
+        return json ? reply_json(req, "500 Internal Server Error", "not_saved")
+               : page(req, "500 Internal Server Error", "Couldn't save it.");
     }
-    return page(req, "200 OK", "Saved. Joining it now: this page's status shows when it's in.");
+    return json ? reply_json(req, "200 OK", NULL)
+           : page(req, "200 OK", "Saved. Joining it now: this page's status shows when it's in.");
 }
 
+/* POST /forget: ssid=... forgets that network; no ssid, all of them. */
 static esp_err_t forget_post(httpd_req_t *req)
 {
     if (side_of(req) == SIDE_OTHER) {
         return refuse(req);
     }
-    wifi_link_forget();
-    return page(req, "200 OK", "Forgotten. It now joins only open Stump hotspots.");
+    bool json = wants_json(req);
+    char body[128], ssid[33];
+    int n = read_body(req, body, sizeof(body));
+    bool one = n > 0 && form_get(body, (size_t)n, "ssid", ssid, sizeof(ssid)) > 0;
+    esp_err_t r = wifi_link_forget(one ? ssid : NULL);
+    if (json) {
+        return r == ESP_OK ? reply_json(req, "200 OK", NULL)
+               : reply_json(req, r == ESP_ERR_NOT_FOUND ? "404 Not Found" : "500 Internal Server Error",
+                            r == ESP_ERR_NOT_FOUND ? "not_saved" : "not_stored");
+    }
+    return page(req, "200 OK", one ? "Forgotten." : "All forgotten. It now joins only open Stump hotspots.");
+}
+
+static esp_err_t networks_get(httpd_req_t *req)
+{
+    if (side_of(req) == SIDE_OTHER) {
+        return refuse(req);
+    }
+    char out[8 * 40 + 8];
+    if (!wifi_link_saved_json(out, sizeof(out))) {
+        strlcpy(out, "[]", sizeof(out));
+    }
+    httpd_resp_set_type(req, "application/json");
+    nocache(req);
+    return httpd_resp_sendstr(req, out);
 }
 
 /* On the setup AP, any other page leads to the setup page (captive portal). */
@@ -211,6 +292,7 @@ esp_err_t web_start(void)
     cfg.stack_size = 6144;
     cfg.lru_purge_enable = true;
     cfg.max_open_sockets = 5;
+    cfg.max_uri_handlers = 10;
     httpd_handle_t h = NULL;
     esp_err_t r = httpd_start(&h, &cfg);
     if (r != ESP_OK) {
@@ -220,8 +302,10 @@ esp_err_t web_start(void)
         {.uri = "/status.json", .method = HTTP_GET, .handler = status_get},
         {.uri = "/", .method = HTTP_GET, .handler = root_get},
         {.uri = "/scan.json", .method = HTTP_GET, .handler = scan_get},
-        {.uri = "/save", .method = HTTP_POST, .handler = save_post},
+        {.uri = "/save", .method = HTTP_POST, .handler = join_post},
+        {.uri = "/join", .method = HTTP_POST, .handler = join_post},
         {.uri = "/forget", .method = HTTP_POST, .handler = forget_post},
+        {.uri = "/networks.json", .method = HTTP_GET, .handler = networks_get},
     };
     for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {
         httpd_register_uri_handler(h, &uris[i]);

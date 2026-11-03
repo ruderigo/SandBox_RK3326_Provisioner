@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # The DHCP core against real Linux DHCP clients (dhclient, dhcpcd, busybox
-# udhcpc), over a veth pair into a network namespace: the "handheld" in the
-# namespace must get 10.77.0.2/24, a route to the S3's Wi-Fi via 10.77.0.1
-# (option 121), no default route and no DNS from us; and when the S3 moves to
-# another network, the route must follow within a lease renewal.
+# udhcpc), over a veth pair into a network namespace standing in for a
+# handheld with no Wi-Fi of its own: it must get 10.77.0.2/24, its default
+# route via 10.77.0.1 and 10.77.0.1 as its DNS, and keep them through lease
+# renewals (a short lease here, to see a few).
 #
 # Needs root (ip netns). Runs whichever of the clients are installed.
 #   sudo bash host_tests/dhcp_clients.sh
@@ -34,14 +34,8 @@ ip addr add 10.77.0.1/24 dev s3h0
 ip link set s3h0 up
 ip -n "$NS" link set lo up
 ip -n "$NS" link set usb0 up
-# a stand-in for the handheld's own Wi-Fi default route
-ip -n "$NS" link add wlan0 type veth peer name wlan0p
-ip -n "$NS" link set wlan0p up
-ip -n "$NS" addr add 192.168.1.50/24 dev wlan0
-ip -n "$NS" link set wlan0 up
-ip -n "$NS" route add default via 192.168.1.1 dev wlan0
 
-"$work/harness" s3h0 > "$work/harness.log" 2>&1 &
+"$work/harness" s3h0 12 > "$work/harness.log" 2>&1 &
 hpid=$!
 sleep 0.3
 
@@ -59,30 +53,36 @@ wait_route() {
     return 1
 }
 
+dns_is() { grep -q "^nameserver $1\$" "$work/resolv.conf" 2>/dev/null; }
+
+wait_dns() {
+    for _ in $(seq $(($1 * 2))); do dns_is "$2" && return 0; sleep 0.5; done
+    return 1
+}
+
+renewals() { grep -c "(renewing) -> ACK" "$work/harness.log"; }
+
 check_client() {
     local name=$1
     echo "== $name"
     if in_ns ip -4 addr show usb0 | grep -q "10.77.0.2/24"; then pass "10.77.0.2/24 on usb0"; else fail "no 10.77.0.2/24"; in_ns ip -4 addr show usb0; fi
-    if wait_route 5 "^192\.168\.4\.0/24 via 10\.77\.0\.1 dev usb0"; then pass "192.168.4.0/24 via 10.77.0.1 (option 121)"; else fail "no route to the S3's Wi-Fi"; routes; fi
-    if [ "$(routes | grep -c '^default')" = 1 ] && routes | grep -q "^default via 192.168.1.1 dev wlan0"; then pass "the default route is still only wlan0's"; else fail "default route changed"; routes; fi
-    if ! grep -q "10.77" "$work/resolv.conf" 2>/dev/null; then pass "no DNS from the S3"; else fail "a DNS from the S3"; fi
-
-    kill -USR2 "$hpid"   # the S3 moves to 192.168.50.0/24
-    if wait_route 50 "^192\.168\.50\.0/24 via 10\.77\.0\.1 dev usb0" && wait_route 5 "^192\.168\.4\.0/24" not; then
-        pass "after a network change: 192.168.50.0/24 via 10.77.0.1, the old route gone"
+    if wait_route 5 "^default via 10\.77\.0\.1 dev usb0"; then pass "default route via 10.77.0.1"; else fail "no default route via the S3"; routes; fi
+    if wait_dns 5 10.77.0.1; then pass "DNS 10.77.0.1"; else fail "not 10.77.0.1 as DNS"; cat "$work/resolv.conf"; fi
+    # renewals (12 s leases: one every ~6 s) are ACKed and change nothing
+    local r0 t
+    r0=$(renewals)
+    for t in $(seq 40); do [ "$(renewals)" -ge $((r0 + 2)) ] && break; sleep 0.5; done
+    if [ "$(renewals)" -ge $((r0 + 2)) ]; then pass "renewals ACKed ($(( $(renewals) - r0 )) in ${t}x0.5 s)"; else fail "no renewals seen"; fi
+    if in_ns ip -4 addr show usb0 | grep -q "10.77.0.2/24" && routes | grep -q "^default via 10\.77\.0\.1 dev usb0" && dns_is 10.77.0.1; then
+        pass "after them: the same address, default route and DNS"
     else
-        fail "the route didn't follow the network change"; routes
+        fail "something changed on a renewal"; routes
     fi
-    kill -HUP "$hpid"    # the S3 has no Wi-Fi
-    if wait_route 50 "^192\.168\.50\.0/24" not; then pass "Wi-Fi lost: its route gone"; else fail "the route stayed"; routes; fi
-    if in_ns ip -4 addr show usb0 | grep -q "10.77.0.2/24"; then pass "still 10.77.0.2/24 (status.json stays reachable)"; else fail "lost 10.77.0.2"; fi
 }
 
 reset_ns() {
     in_ns ip addr flush dev usb0
     in_ns ip route flush dev usb0 2>/dev/null
-    kill -USR1 "$hpid"   # the S3 is on 192.168.4.0/24
-    sleep 0.2
 }
 
 ran=0
@@ -116,11 +116,11 @@ if command -v dhcpcd >/dev/null; then
     ran=1; reset_ns; : > "$work/resolv.conf"
     cat > "$work/dhcpcd.conf" <<'EOF'
 option classless_static_routes, domain_name_servers, routers
-nohook resolv.conf
 ipv4only
 noarp
 EOF
-    in_ns dhcpcd -B -4 -f "$work/dhcpcd.conf" usb0 > "$work/dhcpcd.log" 2>&1 &
+    in_ns unshare -m sh -c "mount --bind '$work/resolv.conf' /etc/resolv.conf && \
+        exec dhcpcd -B -4 -f '$work/dhcpcd.conf' usb0" > "$work/dhcpcd.log" 2>&1 &
     dpid=$!
     sleep 4
     check_client "dhcpcd"
@@ -134,15 +134,15 @@ if command -v busybox >/dev/null && busybox --list | grep -qx udhcpc; then
     cat > "$work/udhcpc.sh" <<'EOF'
 #!/bin/sh
 case "$1" in
-  deconfig) ip -4 addr flush dev "$interface"; ip -4 route flush dev "$interface" 2>/dev/null ;;
+  deconfig) ip -4 addr flush dev "$interface"; ip -4 route flush dev "$interface" 2>/dev/null; : > "$RESOLV" ;;
   bound|renew)
     ip -4 route flush dev "$interface" 2>/dev/null
     ip -4 addr flush dev "$interface"
     ip -4 addr add "$ip/$mask" dev "$interface"
     [ -n "$router" ] && ip route add default via "$router" dev "$interface"
     set -- $staticroutes
-    while [ $# -ge 2 ]; do ip route add "$1" via "$2" dev "$interface"; shift 2; done
-    [ -n "$dns" ] && echo "nameserver $dns" >> "$RESOLV" ;;
+    while [ $# -ge 2 ]; do ip route replace "$1" via "$2" dev "$interface"; shift 2; done
+    : > "$RESOLV"; for d in $dns; do echo "nameserver $d" >> "$RESOLV"; done ;;
 esac
 EOF
     chmod +x "$work/udhcpc.sh"
@@ -155,7 +155,7 @@ EOF
 fi
 
 echo "== the server's side"
-sed 's/^/  /' "$work/harness.log" | tail -n 40
+sed 's/^/  /' "$work/harness.log" | tail -n 60
 [ "$ran" = 1 ] || { echo "no DHCP client installed"; exit 1; }
 echo "$fails failed"
 [ "$fails" = 0 ]

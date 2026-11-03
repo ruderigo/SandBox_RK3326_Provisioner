@@ -38,6 +38,7 @@ class Base(unittest.TestCase):
         a = A.App(display(), version="0.2.0", ports_fn=lambda: [dict(p) for p in self.ports],
                   users_fn=lambda p: (users or {}).get(p, []))
         a.here_fn = None
+        a.adapter_fn = None             # no S3 adapter unless a test plugs in the pretend one
         a.here = {"release": "1.0.0-beta.47", "name": "R36MAX", "chain": "chain member"}
         a.scan()
         return a
@@ -342,6 +343,136 @@ class MakeAStumpOnScreen(Base):
         a.handle("select")
         self.assertIsNone(a.kb)
         self.assertEqual(a.form["a"]["name"], "")
+
+
+class TheWifiAdapter(Base):
+    """The S3 USB Wi-Fi adapter's page, against tests/fake_s3.py."""
+
+    def setUp(self):
+        super().setUp()
+        from fake_s3 import FakeS3
+        self.s3 = FakeS3()
+        os.environ["PROVISIONER_S3_URL"] = self.s3.url
+
+    def tearDown(self):
+        self.s3.stop()
+        os.environ.pop("PROVISIONER_S3_URL", None)
+
+    def plugged(self, ports=()):
+        from provisioner import s3wifi
+        a = self.app(list(ports))
+        a.adapter_fn = s3wifi.status
+        a.internet_fn = lambda: True
+        a._poll_adapter()
+        return a
+
+    def until(self, a, cond, secs=10):
+        end = time.time() + secs
+        while time.time() < end:
+            a.scan()
+            if cond():
+                return True
+            time.sleep(0.05)
+        return False
+
+    def test_it_shows_on_the_boards_screen_first(self):
+        a = self.plugged([port("/dev/ttyUSB0", "10c4:ea60", "CP210x USB-serial")])
+        self.assertEqual(len(a.rows()), 2)
+        self.assertTrue(a.rows()[0].get("adapter"))
+        self.shot(a, "30-boards-with-the-adapter")
+        a.handle("down")                                # the port's row still works as before
+        a.handle("a")
+        self.assertEqual(a.screen, "run")
+        self.wait(a)
+
+    def test_no_adapter_no_row(self):
+        a = self.app([])
+        self.assertEqual(a.rows(), [])
+
+    def test_pick_a_network_type_its_password_and_join(self):
+        a = self.plugged()
+        a.handle("a")
+        self.assertEqual(a.screen, "wifi")
+        self.assertTrue(self.until(a, lambda: len(a.wifi_rows()) == 3))
+        self.assertEqual([r["ssid"] for r in a.wifi_rows()], ["HomeNet", "Stump-Oak", "Cafe"])
+        self.shot(a, "31-wifi-networks")
+        a.handle("a")                                   # HomeNet needs a password: the keyboard
+        self.assertIsNotNone(a.kb)
+        a.handle(("text", "hunter22pw"))
+        self.shot(a, "32-wifi-password")
+        a.handle("start")
+        self.assertIsNone(a.kb)
+        self.assertTrue(self.until(a, lambda: a.wifi["status"].get("ssid") == "HomeNet"))
+        self.assertIn(("POST", "/join", {"ssid": "HomeNet", "password": "hunter22pw"}), self.s3.calls)
+        self.assertIn("Connected to HomeNet", a.toast_text)
+        self.assertTrue(self.until(a, lambda: a.wifi_rows()[0]["saved"]))
+        self.shot(a, "33-wifi-connected")
+        # a saved network joins again with no password asked
+        a.handle("a")
+        self.assertIsNone(a.kb)
+        self.assertTrue(self.until(a, lambda: ("POST", "/join", {"ssid": "HomeNet"}) in self.s3.calls))
+
+    def test_an_open_network_joins_straight_away(self):
+        a = self.plugged()
+        a.handle("a")
+        self.assertTrue(self.until(a, lambda: len(a.wifi_rows()) == 3))
+        a.handle("down")
+        a.handle("a")
+        self.assertIsNone(a.kb)
+        self.assertTrue(self.until(a, lambda: a.wifi["status"].get("ssid") == "Stump-Oak"))
+        self.assertIn(("POST", "/join", {"ssid": "Stump-Oak", "password": ""}), self.s3.calls)
+
+    def test_a_wrong_password_says_so_and_asks_again(self):
+        a = self.plugged()
+        a.handle("a")
+        self.assertTrue(self.until(a, lambda: len(a.wifi_rows()) == 3))
+        a.handle("a")
+        a.handle(("text", "wrongpass1"))
+        a.handle("start")
+        self.assertTrue(self.until(a, lambda: "wrong password" in a.toast_text))
+        self.assertIsNone(a.wifi["joining"])
+        self.shot(a, "34-wifi-wrong-password")
+        a.handle("a")                                   # saved, but its password failed: typed again
+        self.assertIsNotNone(a.kb)
+        a.handle("select")
+        self.assertIsNone(a.kb)
+
+    def test_a_short_password_isnt_sent(self):
+        a = self.plugged()
+        a.handle("a")
+        self.assertTrue(self.until(a, lambda: len(a.wifi_rows()) == 3))
+        a.handle("a")
+        a.handle(("text", "short"))
+        a.handle("start")
+        self.assertIn("8 to 63", a.toast_text)
+        self.assertFalse([c for c in self.s3.calls if c[0] == "POST"])
+
+    def test_forget_asks_first(self):
+        self.s3.saved = {"Cafe": "cafepass99", "Gone": "gonepass99"}
+        a = self.plugged()
+        a.handle("a")
+        self.assertTrue(self.until(a, lambda: len(a.wifi_rows()) == 4))
+        self.assertEqual(a.wifi_rows()[3], {"ssid": "Gone", "rssi": None, "open": False, "saved": True, "here": False})
+        self.shot(a, "35-wifi-saved-out-of-range")
+        a.handle("y")                                   # HomeNet isn't saved
+        self.assertIsNone(a.confirm)
+        for _ in range(3):
+            a.handle("down")
+        a.handle("y")
+        self.assertIn("Forget Gone?", a.confirm["title"])
+        self.assertEqual(a.confirm["choice"], 1)
+        a.handle("a")
+        self.assertTrue(self.until(a, lambda: len(a.wifi_rows()) == 3))
+        self.assertIn(("POST", "/forget", {"ssid": "Gone"}), self.s3.calls)
+
+    def test_unplugged_while_on_its_page(self):
+        a = self.plugged()
+        a.handle("a")
+        self.s3.stop()
+        self.assertTrue(self.until(a, lambda: a.screen == "boards"))
+        self.assertIn("unplugged", a.toast_text)
+        self.assertIsNone(a.adapter)
+        self.s3 = type("S", (), {"stop": lambda self: None})()
 
 
 class Buttons(unittest.TestCase):

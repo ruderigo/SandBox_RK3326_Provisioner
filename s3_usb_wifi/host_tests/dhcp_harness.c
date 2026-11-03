@@ -1,11 +1,11 @@
 /*
  * The firmware's DHCP core on a Linux interface, for testing it against
- * real DHCP clients (see dhcp_clients.sh). Serves the USB pool on IFACE:
- * 10.77.0.2, 60 s leases, no router, no DNS. Signals change what the
- * "S3" has joined: SIGUSR1 192.168.4.0/24, SIGUSR2 192.168.50.0/24,
- * SIGHUP none (each becomes option 121 via 10.77.0.1).
+ * real DHCP clients (see dhcp_clients.sh). Serves the USB pool on IFACE as
+ * the firmware sets it up (netsvc.c): 10.77.0.2, the S3 (10.77.0.1) as
+ * router and DNS, the default route in option 121 too. LEASE_S defaults to
+ * the firmware's 600; the tests use a short one to see renewals.
  *
- *   dhcp_harness IFACE
+ *   dhcp_harness IFACE [LEASE_S]
  *
  * SPDX-License-Identifier: MIT
  */
@@ -14,8 +14,8 @@
 #include <errno.h>
 #include <net/if.h>
 #include <netinet/in.h>
-#include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -23,17 +23,10 @@
 
 #define IP(a, b, c, d) (((uint32_t)(a) << 24) | ((uint32_t)(b) << 16) | ((uint32_t)(c) << 8) | (uint32_t)(d))
 
-static volatile sig_atomic_t s_want = -1;
-
-static void on_sig(int s)
-{
-    s_want = s == SIGUSR1 ? 1 : s == SIGUSR2 ? 2 : 0;
-}
-
 int main(int argc, char **argv)
 {
-    if (argc != 2) {
-        fprintf(stderr, "usage: %s IFACE\n", argv[0]);
+    if (argc < 2) {
+        fprintf(stderr, "usage: %s IFACE [LEASE_S]\n", argv[0]);
         return 2;
     }
     setvbuf(stdout, NULL, _IOLBF, 0);
@@ -50,33 +43,20 @@ int main(int argc, char **argv)
         perror("bind");
         return 1;
     }
-    struct sigaction sa = {.sa_handler = on_sig};
-    sigaction(SIGUSR1, &sa, NULL);
-    sigaction(SIGUSR2, &sa, NULL);
-    sigaction(SIGHUP, &sa, NULL);
 
+    const uint32_t S = IP(10, 77, 0, 1);
     dhcp_pool_t pool;
-    dhcp_pool_init(&pool, IP(10, 77, 0, 1), IP(255, 255, 255, 0), IP(10, 77, 0, 2), 1, 60);
+    dhcp_pool_init(&pool, S, IP(255, 255, 255, 0), IP(10, 77, 0, 2), 1,
+                   argc > 2 ? (uint32_t)atoi(argv[2]) : 600);
+    pool.router = S;
+    pool.dns = S;
+    dhcp_route_t def = {0, 0, S};
+    dhcp_pool_set_routes(&pool, &def, 1);
+
     static const char *names[] = {"?", "DISCOVER", "OFFER", "REQUEST", "DECLINE", "ACK", "NAK", "RELEASE", "INFORM"};
     uint8_t in[1500], out[1024];
     printf("serving on %s\n", argv[1]);
     for (;;) {
-        if (s_want >= 0) {
-            dhcp_route_t r[1];
-            uint8_t n = 0;
-            if (s_want == 1) {
-                r[0] = (dhcp_route_t){IP(192, 168, 4, 0), 24, IP(10, 77, 0, 1)};
-                n = 1;
-            } else if (s_want == 2) {
-                r[0] = (dhcp_route_t){IP(192, 168, 50, 0), 24, IP(10, 77, 0, 1)};
-                n = 1;
-            }
-            dhcp_pool_set_routes(&pool, r, n);
-            printf("routes: %s (generation %u)\n",
-                   s_want == 1 ? "192.168.4.0/24" : s_want == 2 ? "192.168.50.0/24" : "none",
-                   (unsigned)pool.generation);
-            s_want = -1;
-        }
         ssize_t n = recv(fd, in, sizeof(in), 0);
         if (n < 0) {
             if (errno == EINTR) {
@@ -93,10 +73,11 @@ int main(int argc, char **argv)
         for (size_t i = 240; m && i + 2 < m && out[i] != 255; i += out[i] ? 2u + out[i + 1] : 1u) {
             if (out[i] == 53) { rt = out[i + 2]; break; }
         }
-        printf("%s -> %s\n", names[qt > 0 && qt <= 8 ? qt : 0], m ? names[rt > 0 && rt <= 8 ? rt : 0] : "(nothing)");
+        uint32_t uc = dhcp_reply_unicast_to(in, (size_t)n);
+        printf("%s%s -> %s\n", names[qt > 0 && qt <= 8 ? qt : 0], uc ? " (renewing)" : "",
+               m ? names[rt > 0 && rt <= 8 ? rt : 0] : "(nothing)");
         if (m) {
             /* as the firmware does (netsvc.c): unicast to ciaddr; broadcast if none, and NAKs */
-            uint32_t uc = dhcp_reply_unicast_to(in, (size_t)n);
             struct sockaddr_in to = {.sin_family = AF_INET, .sin_port = htons(68)};
             if (uc) {
                 to.sin_addr.s_addr = htonl(uc);

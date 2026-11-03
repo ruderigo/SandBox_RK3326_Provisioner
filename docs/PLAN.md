@@ -65,11 +65,16 @@ Making a Stump is the Provisioner's main job (2026-11-02): it comes first.
 - [ ] **v0.3.0: this handheld's Stump, installed or updated from the
       gamepad**: possible now: Team Stump's `provisioner.py --pc --answers
       FILE.json` (beta.48) runs their wizard from a form's answers
-- [x] **The S3 USB Wi-Fi adapter firmware 0.1.0** (`s3_usb_wifi/`):
-      ESP-IDF 5.3, esp_tinyusb: CDC-NCM, NAT, our own DHCP (10.77.0.2,
-      option 121, no router/DNS; tested against dhclient, dhcpcd, udhcpc),
-      the saved network or an open Stump hotspot, the setup AP,
-      `status.json`; in the catalogue. **Bench test pending** (below)
+- [x] **The S3 USB Wi-Fi adapter firmware** (`s3_usb_wifi/`): ESP-IDF
+      5.3, esp_tinyusb, CDC-NCM, NAT, our own DHCP; in the catalogue.
+      **2026-11-03: it's the handheld's Wi-Fi card** (0.2.0), not the memo's
+      Stump-only link: the S3 is the handheld's router and DNS (a DNS
+      forwarder), up to 8 saved networks, an API to join and forget
+      (`docs/NOTE_TEAM_FIREFLY.md` tells Team FireFly)
+- [x] **The Provisioner's S3 USB Wi-Fi page**: the adapter shown on the
+      boards screen; its networks, join with a password on FireFly's
+      keyboard, forget; tested against a pretend S3 (`tests/fake_s3.py`).
+      **Bench test pending** (below)
 - [ ] The adapter's ECM build (the memo's fallback), if a handheld lacks `cdc_ncm`
 - [ ] Your own images: `.bin` files in `/roms/ESP32-Firmware/` (app only)
 - [ ] 640x480 layout tuned for the R36S (it's scaled for now)
@@ -90,9 +95,10 @@ Making a Stump is the Provisioner's main job (2026-11-02): it comes first.
    **Passed 2026-11-02** (v0.2.0): a CAM made by the handheld, linked to its
    Heltec V3 (set up by Team Stump's Provisioner on a computer), visible to
    visitors, to Android clients and to FireFly on the R36MAX.
-6. **The S3 USB Wi-Fi adapter** (`s3_usb_wifi/README.md`, *The bench test*):
-   flashed from the Provisioner through the CAM's UART port, then its USB
-   port into the R36MAX: 10.77.0.2/24 within 10 s, `cdc_ncm` in dmesg, the
-   default route still only `wlan0`, `status.json`, the Stump's
-   `/node.json` through it, unplug and replug. Then LoRa, and the setup
-   page from a phone.
+6. **The S3 as the R36MAX's Wi-Fi card** (`s3_usb_wifi/README.md`, *The
+   bench test*): flashed from the Provisioner through the CAM's UART port,
+   then its USB port into the R36MAX: 10.77.0.2/24 within 10 s, `cdc_ncm` in
+   dmesg; the Provisioner's S3 USB Wi-Fi page joins the home Wi-Fi with its
+   password (*internet OK*); default route and DNS 10.77.0.1; a Stump's
+   `/node.json` through it; unplug and replug. Then LoRa, and the setup page
+   from a phone.

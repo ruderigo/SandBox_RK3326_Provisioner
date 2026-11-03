@@ -200,6 +200,40 @@ static void test_usb_pool(void)
     CHECK(dhcp_handle(&p, in, n, out, 100) == 0);   /* no room */
 }
 
+static void test_usb_as_a_wifi_card(void)
+{
+    /* what the firmware hands the handheld: the S3 as its router and DNS,
+     * the default route in option 121 too, the same whatever the S3 joins */
+    const uint8_t mac[6] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x66};
+    const uint32_t S = IP(10, 77, 0, 1), C = IP(10, 77, 0, 2);
+    dhcp_pool_t p;
+    dhcp_pool_init(&p, S, IP(255, 255, 255, 0), C, 1, 600);
+    p.router = S;
+    p.dns = S;
+    dhcp_route_t def = {0, 0, S};
+    dhcp_pool_set_routes(&p, &def, 1);
+    uint8_t in[548], out[600];
+    int l;
+    size_t n = msg(in, DHCP_DISCOVER, mac, 0, 0, 0);
+    size_t r = dhcp_handle(&p, in, n, out, sizeof(out));
+    const uint8_t *v = opt(out, r, 3, &l);
+    CHECK(v && l == 4 && rd32(v) == S);
+    v = opt(out, r, 6, &l);
+    CHECK(v && l == 4 && rd32(v) == S);
+    v = opt(out, r, 121, &l);
+    const uint8_t want[] = {0, 10, 77, 0, 1};
+    CHECK(v && l == (int)sizeof(want) && memcmp(v, want, sizeof(want)) == 0);
+    v = opt(out, r, 51, &l);
+    CHECK(v && rd32(v) == 600);
+    /* renewals are simply ACKed: nothing about it ever changes */
+    n = msg(in, DHCP_REQUEST, mac, 0, C, S);
+    CHECK(type_of(out, dhcp_handle(&p, in, n, out, sizeof(out))) == DHCP_ACK);
+    for (int i = 0; i < 3; i++) {
+        n = msg(in, DHCP_REQUEST, mac, C, 0, 0);
+        CHECK(type_of(out, dhcp_handle(&p, in, n, out, sizeof(out))) == DHCP_ACK);
+    }
+}
+
 static void test_ap_pool(void)
 {
     /* the setup AP: several phones, a router and DNS (the captive page) */
@@ -341,13 +375,102 @@ static void test_dns(void)
     CHECK(dns_captive_reply(q, i, 1, r, sizeof(r)) == 0);
 }
 
+static void test_netlist(void)
+{
+    netlist_t l;
+    memset(&l, 0, sizeof(l));
+    CHECK(netlist_put(&l, "Home", "password1"));
+    CHECK(netlist_put(&l, "Stump", ""));
+    CHECK(l.n == 2 && strcmp(l.e[0].ssid, "Stump") == 0 && strcmp(l.e[1].ssid, "Home") == 0);
+    /* joining Home again (no password given) moves it up and keeps its password */
+    CHECK(netlist_put(&l, "Home", NULL));
+    CHECK(l.n == 2 && strcmp(l.e[0].ssid, "Home") == 0 && strcmp(l.e[0].pass, "password1") == 0);
+    /* a new password replaces the old */
+    CHECK(netlist_put(&l, "Home", "password2"));
+    CHECK(strcmp(l.e[0].pass, "password2") == 0 && l.n == 2);
+    /* bounds */
+    CHECK(!netlist_put(&l, "", ""));
+    CHECK(!netlist_put(&l, "x", "short"));
+    CHECK(!netlist_put(&l, "123456789012345678901234567890123", ""));
+    CHECK(netlist_put(&l, "12345678901234567890123456789012", ""));   /* 32: fine */
+    /* a full list drops the oldest */
+    char name[8];
+    for (int i = 0; i < 10; i++) {
+        snprintf(name, sizeof(name), "n%d", i);
+        CHECK(netlist_put(&l, name, NULL));
+    }
+    CHECK(l.n == NETLIST_MAX && strcmp(l.e[0].ssid, "n9") == 0 && strcmp(l.e[7].ssid, "n2") == 0);
+    CHECK(netlist_find(&l, "Home") == -1);
+    CHECK(netlist_remove(&l, "n5") && l.n == 7 && netlist_find(&l, "n5") == -1);
+    CHECK(strcmp(l.e[4].ssid, "n4") == 0 && l.e[7].ssid[0] == 0);
+    CHECK(!netlist_remove(&l, "n5"));
+    CHECK(netlist_sane(&l));
+    l.n = 99;
+    CHECK(!netlist_sane(&l) && l.n == 0);
+    memset(&l, 'A', sizeof(l));
+    l.n = 1;
+    CHECK(!netlist_sane(&l));   /* no terminating NULs */
+}
+
+static void test_dnsfwd(void)
+{
+    dnsfwd_t f;
+    memset(&f, 0, sizeof(f));
+    uint8_t q[32] = {0x12, 0x34, 0x01, 0x00, 0, 1};
+    uint32_t ip;
+    uint16_t port;
+    /* a query out: a fresh id, the asker remembered */
+    CHECK(dnsfwd_out(&f, q, sizeof(q), IP(10, 77, 0, 2), 40000));
+    uint16_t id1 = (uint16_t)(q[0] << 8 | q[1]);
+    CHECK(id1 != 0x1234 || f.next_id == 0x1235);
+    /* the same id from another asker gets another id */
+    uint8_t q2[32] = {0x12, 0x34, 0x01, 0x00, 0, 1};
+    CHECK(dnsfwd_out(&f, q2, sizeof(q2), IP(10, 77, 0, 2), 40001));
+    uint16_t id2 = (uint16_t)(q2[0] << 8 | q2[1]);
+    CHECK(id2 != id1);
+    /* the answers come back to who asked, with their own id */
+    uint8_t r[32];
+    memcpy(r, q2, sizeof(r));
+    r[2] |= 0x80;
+    CHECK(dnsfwd_in(&f, r, sizeof(r), &ip, &port));
+    CHECK(ip == IP(10, 77, 0, 2) && port == 40001 && r[0] == 0x12 && r[1] == 0x34);
+    CHECK(!dnsfwd_in(&f, r, sizeof(r), &ip, &port));   /* answered once */
+    memcpy(r, q, sizeof(r));
+    r[2] |= 0x80;
+    CHECK(dnsfwd_in(&f, r, sizeof(r), &ip, &port) && port == 40000);
+    /* a query as answer, an unknown id, a short packet: dropped */
+    memcpy(r, q, sizeof(r));
+    CHECK(!dnsfwd_in(&f, r, sizeof(r), &ip, &port));
+    CHECK(!dnsfwd_out(&f, q, 5, 1, 1));
+    /* many in flight: the oldest gives way */
+    for (int i = 0; i < DNSFWD_SLOTS + 4; i++) {
+        uint8_t x[16] = {0, (uint8_t)i, 1, 0};
+        CHECK(dnsfwd_out(&f, x, sizeof(x), 1, (uint16_t)i));
+    }
+    /* SERVFAIL: the question kept, rcode 2, a response */
+    uint8_t s[64];
+    uint8_t dq[40] = {0xAB, 0xCD, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 1,
+                      3, 'f', 'o', 'o', 0, 0, 1, 0, 1,
+                      0, 0, 41, 0x10, 0, 0, 0, 0, 0, 0, 0};   /* + an EDNS record */
+    size_t n = dns_servfail(dq, 32, s, sizeof(s));
+    CHECK(n == 21 && s[0] == 0xAB && (s[2] & 0x80) && (s[2] & 0x01) && (s[3] & 0x0F) == 2);
+    CHECK(s[5] == 1 && s[7] == 0 && s[11] == 0);
+    CHECK(dns_servfail(dq, 8, s, sizeof(s)) == 0);
+    dq[12] = 60;   /* a broken name: the header alone */
+    n = dns_servfail(dq, 32, s, sizeof(s));
+    CHECK(n == 12 && s[5] == 0);
+}
+
 int main(void)
 {
     test_usb_pool();
+    test_usb_as_a_wifi_card();
+    test_dnsfwd();
     test_ap_pool();
     test_routes();
     test_util();
     test_dns();
+    test_netlist();
     printf("%d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

@@ -10,7 +10,7 @@ gamepad. It's an EmulationStation **Ports** entry.
 
 | Board | What it can be given (v0.2.0) |
 |---|---|
-| **ESP32-S3 (Freenove CAM)** | **Make a Stump** (Stump 1.0.0-beta.48, offline), update its Stump, its settings, check it starts; **USB Wi-Fi adapter** 0.1.0 for the handheld ([s3_usb_wifi/](s3_usb_wifi/README.md), bench test pending) |
+| **ESP32-S3 (Freenove CAM)** | **Make a Stump** (Stump 1.0.0-beta.48, offline), update its Stump, its settings, check it starts; **USB Wi-Fi adapter** 0.2.0: the S3 becomes the handheld's Wi-Fi card ([below](#the-s3-as-the-handhelds-wi-fi-card), bench test pending) |
 | Heltec V3 | *coming*: RNode for a CAM, set for the mesh |
 | Classic ESP32 | WLED 16.0.1 (app slot only), MicroPython 1.29.0 (full install) |
 | Any of them | the serial log (115200); erase the whole flash |
@@ -34,6 +34,16 @@ The Stump on the handheld is Team Stump's release, as they published it
 (`firmware/stump/`: their release's `Stump-<release>.bundle`, checked against
 its `SHA256SUMS` and file by file). A newer one: `python3 scripts/fetch_stump_bundle.py v<release>`.
 
+## The S3 as the handheld's Wi-Fi card
+
+For handhelds whose Wi-Fi dongle has no driver. Flash **USB Wi-Fi adapter**
+onto a Freenove ESP32-S3 CAM (through its UART port), then plug its **USB**
+port into the handheld. **S3 USB Wi-Fi** appears at the top of the boards:
+press **A** for its networks. A joins one, and a password is typed on
+FireFly's keyboard (START joins). Y forgets a network. The S3 remembers up to
+8 networks and rejoins by itself. The handheld gets its internet through it.
+How it works, its limits and the bench test: [s3_usb_wifi/README.md](s3_usb_wifi/README.md).
+
 ## Install on the handheld
 
 With the handheld online once (to get this repo), or with a release
@@ -56,6 +66,7 @@ EmulationStation if it isn't listed).
 | Screen | Buttons |
 |---|---|
 | Boards | ↑↓ choose · A open (identifies it: the board resets) · X identify again · Y serial log |
+| S3 USB Wi-Fi | ↑↓ · A join (a password on the keyboard) · Y forget · X look again · B back |
 | A board | ↑↓ · A make a Stump / flash / log / erase (asks first) · B back |
 | A form | ↑↓ · A type (the keyboard) or next choice · ←→ choice · B back |
 | Asking | ←→ No / Yes · A accept · B cancel. Erasing defaults to **No** |

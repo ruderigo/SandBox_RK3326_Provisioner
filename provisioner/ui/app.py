@@ -1,10 +1,11 @@
 """The Provisioner's screens: the boards on the hub, what each can be given,
-asking first, flashing with progress, a board's serial log, and making a
-Stump (a form, FireFly's keyboard).
+asking first, flashing with progress, a board's serial log, making a Stump
+(a form, FireFly's keyboard), and the S3 USB Wi-Fi adapter's networks.
 
     BOARDS  --A-->  (identify)  -->  JOBS  --A-->  ask  -->  RUN  --B-->  JOBS
-       \\--Y--> LOG                       |\\--> LOG
-                                         \\--> FORM (a Stump's answers) --> ask --> RUN
+       |\\--Y--> LOG                      |\\--> LOG
+       |                                 \\--> FORM (a Stump's answers) --> ask --> RUN
+       \\--A on "S3 USB Wi-Fi"-->  WIFI (networks; A join, a password on the keyboard; Y forget)
 
 Nothing touches a board until you choose it: identifying a board resets it,
 so a port another program has open (the Stump and its Heltec) asks first.
@@ -13,7 +14,7 @@ so a port another program has open (the Stump and its Heltec) asks first.
 import threading
 import time
 
-from .. import boards, catalog, flasher, stump
+from .. import boards, catalog, flasher, s3wifi, stump
 from ..seriallog import SerialLog
 from .keyboard import Keyboard
 from .sdl import F16, F20, F24, F30B, W, rgb
@@ -116,6 +117,12 @@ class App:
         self.here = None                # this handheld's own Stump: {release, name, chain} or {"none": True}
         self.here_fn = here_status
         self.next_here = 0.0
+        self.kb_done = None             # what the keyboard's text goes to (None: the form)
+        self.adapter = None             # the S3 USB Wi-Fi adapter's status.json, while it's plugged in
+        self.adapter_fn = s3wifi.status
+        self.internet_fn = s3wifi.internet
+        self.next_adapter = 0.0
+        self.wifi = None                # the WIFI screen's state
 
     def bundle(self):
         if self._bundle is False:
@@ -133,6 +140,11 @@ class App:
         if self.here_fn and time.time() >= self.next_here:
             self.next_here = time.time() + 10
             threading.Thread(target=lambda: setattr(self, "here", self.here_fn()), daemon=True).start()
+        if self.adapter_fn and self.screen != "wifi" and time.time() >= self.next_adapter:
+            self.next_adapter = time.time() + 3
+            threading.Thread(target=self._poll_adapter, daemon=True).start()
+        if self.screen == "wifi":
+            self.wifi_refresh()
         if time.time() < self.next_scan:
             return
         self.next_scan = time.time() + 1.0
@@ -150,7 +162,18 @@ class App:
         if self.ports and new:
             self.toast("Board plugged in: %s" % new[0])
         self.ports = ports
-        self.sel = min(self.sel, max(0, len(ports) - 1))
+        self.sel = min(self.sel, max(0, len(self.rows()) - 1))
+
+    def _poll_adapter(self):
+        st = self.adapter_fn()
+        if st and not self.adapter:
+            self.toast("S3 USB Wi-Fi adapter plugged in")
+        self.adapter = st
+        self.sel = min(self.sel, max(0, len(self.rows()) - 1))
+
+    def rows(self):
+        """The BOARDS screen's rows: the Wi-Fi adapter (when it's there), then the ports."""
+        return ([{"adapter": True}] if self.adapter else []) + self.ports
 
     def jobs(self):
         """The rows of the JOBS screen for the current board."""
@@ -174,10 +197,14 @@ class App:
                 return
             r = self.kb.handle(act)
             if r == "ok":
-                self.form["a"][self.kb_key] = self.kb.text
-                self.kb = None
+                text, done = self.kb.text, self.kb_done
+                self.kb, self.kb_done = None, None
+                if done:
+                    done(text)
+                else:
+                    self.form["a"][self.kb_key] = text
             elif r == "cancel":
-                self.kb = None
+                self.kb, self.kb_done = None, None
             return
         # A keyboard's keys, outside the on-screen keyboard: Enter is A, Esc is B.
         act = {"enter": "a", "escape": "b", "backspace": "b", "kx": "x", "ky": "y", "kq": "quit"}.get(act, act)
@@ -205,11 +232,14 @@ class App:
         getattr(self, "on_" + self.screen)(act)
 
     def on_boards(self, act):
-        n = len(self.ports)
+        rows = self.rows()
+        n = len(rows)
         if act in ("up", "down") and n:
             self.sel = (self.sel + (1 if act == "down" else -1)) % n
-        elif act in ("a", "x", "y") and n:
-            p = self.ports[self.sel]
+        elif act == "a" and n and rows[self.sel].get("adapter"):
+            self.open_wifi()
+        elif act in ("a", "x", "y") and n and not rows[self.sel].get("adapter"):
+            p = rows[self.sel]
             self.cur = p
             go = self.open_log if act == "y" else (self.identify if act == "x" or p["port"] not in self.known
                                                    else self.open_jobs)
@@ -325,6 +355,141 @@ class App:
                 self.open_jobs()
             else:
                 self.screen = "jobs" if self.cur and self.cur["port"] in self.known else "boards"
+
+    # -- the S3 USB Wi-Fi adapter --
+    def open_wifi(self):
+        self.wifi = {"sel": 0, "status": self.adapter, "nets": [], "saved": [], "busy": False, "next": 0.0,
+                     "next_scan": 0.0, "joining": None, "retype": set(), "internet": None, "loaded": False}
+        self.screen = "wifi"
+
+    def wifi_refresh(self):
+        w = self.wifi
+        if w and w.get("gone"):
+            self.wifi, self.adapter, self.screen = None, None, "boards"
+            self.toast("The S3 USB Wi-Fi adapter was unplugged")
+            return
+        if not w or w["busy"] or time.time() < w["next"]:
+            return
+        w["busy"] = True
+        do_scan = time.time() >= w["next_scan"]
+
+        def work():
+            try:
+                st = self.adapter_fn()
+                if st is None:
+                    w["gone"] = True
+                    return
+                w["saved"] = s3wifi.saved()
+                if do_scan:
+                    w["nets"] = s3wifi.scan()
+                    w["next_scan"] = time.time() + 10
+                    w["loaded"] = True
+                self.wifi_status(st)
+            finally:
+                w["next"] = time.time() + (1.0 if w["joining"] else 2.5)
+                w["busy"] = False
+        threading.Thread(target=work, daemon=True).start()
+
+    def wifi_status(self, st):
+        """A new status.json: say how a join asked for turned out."""
+        w = self.wifi
+        was = (w["status"] or {}).get("ssid")
+        w["status"] = self.adapter = st
+        j = w["joining"]
+        if j and st.get("state") == "connected" and st.get("ssid") == j:
+            w["joining"] = None
+            w["retype"].discard(j)
+            self.toast("Connected to %s" % j, 3)
+            self.wifi_check_internet()
+        elif j and st.get("state") != "joining" and st.get("target") == j and st.get("error"):
+            w["joining"] = None
+            if st["error"] == "wrong_password":
+                w["retype"].add(j)
+            self.toast("Couldn't join %s: %s" % (j, s3wifi.explain(st["error"])), 4)
+        elif st.get("ssid") and st.get("ssid") != was and not j:
+            self.wifi_check_internet()
+
+    def wifi_check_internet(self):
+        w = self.wifi
+        w["internet"] = "checking"
+
+        def work():
+            time.sleep(2)               # the handheld's DHCP takes a moment to settle
+            w["internet"] = "yes" if self.internet_fn() else "no"
+        threading.Thread(target=work, daemon=True).start()
+
+    def wifi_rows(self):
+        """What's in range (strongest first), then saved networks out of range."""
+        w = self.wifi
+        rows, seen = [], set()
+        for n in w["nets"]:
+            if n["ssid"] in seen:
+                continue
+            seen.add(n["ssid"])
+            rows.append({"ssid": n["ssid"], "rssi": n.get("rssi"), "open": bool(n.get("open")),
+                         "saved": n["ssid"] in w["saved"] or bool(n.get("saved")), "here": True})
+        for ssid in w["saved"]:
+            if ssid not in seen:
+                rows.append({"ssid": ssid, "rssi": None, "open": False, "saved": True, "here": False})
+        return rows
+
+    def on_wifi(self, act):
+        w, rows = self.wifi, self.wifi_rows()
+        if act in ("up", "down") and rows:
+            w["sel"] = (w["sel"] + (1 if act == "down" else -1)) % len(rows)
+        elif act == "b":
+            self.wifi, self.screen = None, "boards"
+        elif act == "x":
+            w["next_scan"] = w["next"] = 0.0
+            self.toast("Looking for networks…")
+        elif act == "y" and rows:
+            r = rows[min(w["sel"], len(rows) - 1)]
+            if not r["saved"]:
+                self.toast("%s isn't saved: nothing to forget" % r["ssid"])
+                return
+            self.ask("Forget %s?" % r["ssid"], ["The S3 won't join it by itself any more.",
+                                               "Its password goes too."],
+                     "Forget it", lambda: self.wifi_forget(r["ssid"]))
+        elif act == "a" and rows:
+            r = rows[min(w["sel"], len(rows) - 1)]
+            ssid = r["ssid"]
+            if r["saved"] and ssid not in w["retype"]:
+                self.wifi_join(ssid, None)
+            elif r["open"]:
+                self.wifi_join(ssid, "")
+            else:
+                self.kb = Keyboard("Password for %s" % ssid, "", 63, secret=True,
+                                   hint="8 to 63 characters. START joins.")
+                self.kb_done = lambda text: self.wifi_password(ssid, text)
+
+    def wifi_password(self, ssid, text):
+        if not 8 <= len(text.encode()) <= 63:
+            self.toast("A Wi-Fi password is 8 to 63 characters: not joined", 4)
+            return
+        self.wifi_join(ssid, text)
+
+    def wifi_join(self, ssid, password):
+        w = self.wifi
+        self.toast("Joining %s…" % ssid, 3)
+
+        def work():
+            ok, err = s3wifi.join(ssid, password)
+            if ok:
+                w["joining"], w["internet"] = ssid, None
+                w["next"] = 0.0
+            else:
+                self.toast("Couldn't ask the S3 to join %s: %s" % (ssid, s3wifi.explain(err)), 4)
+        threading.Thread(target=work, daemon=True).start()
+
+    def wifi_forget(self, ssid):
+        w = self.wifi
+
+        def work():
+            ok, err = s3wifi.forget(ssid)
+            self.toast(("Forgot %s" % ssid) if ok else ("Couldn't forget %s: %s" % (ssid, s3wifi.explain(err))), 3)
+            w["retype"].discard(ssid)
+            w["next"] = 0.0
+        threading.Thread(target=work, daemon=True).start()
 
     # -- a Stump --
     def link_for(self, port):
@@ -542,7 +707,7 @@ class App:
                   "run": self.task.title if self.task else "",
                   "form": "%s  ›  %s" % (self.board_name(), "A new Stump" if self.form and self.form["mode"] == "new"
                                          else "Its settings"), "log": "Serial log  ·  %s  ·  115200"
-                  % (self.cur["port"] if self.cur else "")}[self.screen]
+                  % (self.cur["port"] if self.cur else ""), "wifi": "S3 USB Wi-Fi  ·  its networks"}[self.screen]
         d.text(F20, 16, 52, crumbs, TEXT, W - 32)
         d.fill(0, 86, W, 1, BORDER)
 
@@ -563,7 +728,7 @@ class App:
 
     def draw_boards(self):
         d = self.d
-        if not self.ports:
+        if not self.ports and not self.adapter:
             d.text(F24, 24, TOP + 120, "Plug a board into the hub", TEXT)
             for i, s in enumerate(("With a data cable: a Heltec V3, an ESP32-S3 (Freenove CAM)",
                                    "or a classic ESP32. It shows up here by itself.",
@@ -575,13 +740,17 @@ class App:
         self.draw_here(TOP + 4)
         d.text(F16, 16, TOP + 4, "BOARDS ON THE HUB", EMBER)
         rh = 84
-        first = max(0, min(self.sel - 5, len(self.ports) - 6))
-        for k, p in enumerate(self.ports[first:first + 6]):
+        rows = self.rows()
+        first = max(0, min(self.sel - 5, len(rows) - 6))
+        for k, p in enumerate(rows[first:first + 6]):
             i = first + k
             y = TOP + 28 + k * rh
             sel = i == self.sel
             if sel:
                 d.stroke_rrect(12, y, W - 24, rh - 6, 8, EMBER, PANEL)
+            if p.get("adapter"):
+                self.draw_adapter_row(y, sel)
+                continue
             known = self.known.get(p["port"])
             name = known["board"]["name"] if known else p["usb_chip"]
             d.text(F24, 26, y + 6, name, EMBER_BRIGHT if sel else TEXT, W - 60)
@@ -596,8 +765,38 @@ class App:
             if p.get("users"):
                 d.text(F16, 26, y + 56, "in use by %s" % ", ".join(sorted(set(u[1] for u in p["users"]))), ERROR,
                        W - 60)
-        self.hints([("A", "choose"), ("X", "identify again"), ("Y", "serial log"), ("↑↓", "move"),
-                    ("SELECT+START", "quit")])
+        if rows and rows[min(self.sel, len(rows) - 1)].get("adapter"):
+            self.hints([("A", "its networks"), ("↑↓", "move"), ("SELECT+START", "quit")])
+        else:
+            self.hints([("A", "choose"), ("X", "identify again"), ("Y", "serial log"), ("↑↓", "move"),
+                        ("SELECT+START", "quit")])
+
+    def adapter_line(self, st):
+        """One line on what the adapter is doing."""
+        if not st:
+            return "", MUTED
+        if st.get("state") == "connected" and st.get("ssid"):
+            rssi = st.get("rssi")
+            return "Connected to %s%s" % (st["ssid"], " · %d dBm" % rssi if rssi is not None else ""), OK
+        if st.get("state") == "joining":
+            return "Joining %s…" % (st.get("target") or "?"), EMBER_BRIGHT
+        if st.get("error") and st.get("target"):
+            return "Couldn't join %s: %s" % (st["target"], s3wifi.explain(st["error"])), ERROR
+        return "Not connected", MUTED
+
+    def draw_bars(self, x, y, n, tone):
+        """Signal strength as four bars (n lit)."""
+        for i in range(4):
+            h = 6 + i * 5
+            self.d.fill(x + i * 8, y + 22 - h, 5, h, tone if i < n else BORDER)
+
+    def draw_adapter_row(self, y, sel):
+        d = self.d
+        d.text(F24, 26, y + 6, "S3 USB Wi-Fi", EMBER_BRIGHT if sel else TEXT, W - 60)
+        line, tone = self.adapter_line(self.adapter)
+        d.text(F16, 26, y + 36, line, tone, W - 60)
+        fw = (self.adapter or {}).get("firmware", "")
+        d.text(F16, 26, y + 56, "usb · 10.77.0.1 · %s · A: its networks" % fw, MUTED, W - 60)
 
     def draw_here(self, y):
         """This handheld's own Stump, on one line at the top right."""
@@ -612,6 +811,61 @@ class App:
         d = self.d
         w = min(d.text_width(F16, s), W - 260)
         d.text(F16, W - 16 - w, y, s, c, W - 260)
+
+    def draw_wifi(self):
+        d, w = self.d, self.wifi
+        if not w:
+            return
+        st = w["status"] or {}
+        d.fill_rrect(12, TOP + 2, W - 24, 78, 8, PANEL)
+        line, tone = self.adapter_line(st)
+        if w["joining"] and st.get("state") != "connected":
+            line, tone = "Joining %s…" % w["joining"], EMBER_BRIGHT
+        d.text(F20, 26, TOP + 10, line, tone, W - 52)
+        if st.get("state") == "connected" and st.get("ip"):
+            net = "S3 at %s on %s" % (st["ip"], st.get("subnet") or "?")
+            inet = {"yes": " · internet OK", "no": " · no internet through it", "checking": " · checking the internet…"}
+            d.text(F16, 26, TOP + 44, net + inet.get(w["internet"], ""), MUTED if w["internet"] != "no" else ERROR,
+                   W - 52)
+        else:
+            d.text(F16, 26, TOP + 44, "A joins a network; saved ones join by themselves.",
+                   MUTED, W - 52)
+        d.text(F16, 16, TOP + 92, "NETWORKS", EMBER)
+        rows = self.wifi_rows()
+        if not rows:
+            d.text(F20, 26, TOP + 130, "Looking…" if not w["loaded"] else "None in range (X looks again).", MUTED)
+        rh = 62
+        vis = 8
+        w["sel"] = min(w["sel"], max(0, len(rows) - 1))
+        first = max(0, min(w["sel"] - (vis - 2), len(rows) - vis))
+        for k, r in enumerate(rows[first:first + vis]):
+            i = first + k
+            y = TOP + 116 + k * rh
+            sel = i == w["sel"]
+            if sel:
+                d.stroke_rrect(12, y, W - 24, rh - 6, 8, EMBER, PANEL)
+            on = st.get("state") == "connected" and st.get("ssid") == r["ssid"]
+            if r["here"]:
+                self.draw_bars(26, y + 14, s3wifi.bars(r["rssi"]), OK if on else TEXT)
+            tags = []
+            if on:
+                tags.append(("connected", OK))
+            elif w["joining"] == r["ssid"]:
+                tags.append(("joining…", EMBER_BRIGHT))
+            if r["saved"]:
+                tags.append(("saved", MUTED))
+            if not r["here"]:
+                tags.append(("not in range", MUTED))
+            elif r["open"]:
+                tags.append(("open", MUTED))
+            else:
+                tags.append(("password", MUTED))
+            tag = "  ·  ".join(t for t, _ in tags)
+            tw = d.text_width(F16, tag)
+            d.text(F24, 70, y + 14, r["ssid"], (EMBER_BRIGHT if sel else TEXT) if r["here"] else MUTED,
+                   W - 110 - tw)
+            d.text(F16, W - 28 - tw, y + 20, tag, tags[0][1])
+        self.hints([("A", "join"), ("Y", "forget"), ("X", "look again"), ("↑↓", "move"), ("B", "back")])
 
     def draw_jobs(self):
         d = self.d

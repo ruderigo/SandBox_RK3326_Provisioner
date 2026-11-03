@@ -34,3 +34,46 @@ void setup_ssid(const uint8_t mac[6], char *out);
 /* Captive DNS for the setup AP: answers an A query with ip, any other
  * query with no answer. Returns the reply's length, or 0 to send nothing. */
 size_t dns_captive_reply(const uint8_t *q, size_t qlen, uint32_t ip, uint8_t *out, size_t cap);
+
+/* The DNS forwarder (the handheld asks 10.77.0.1; the S3 asks the joined
+ * network's DNS): queries in flight, under ids of our own. */
+#define DNSFWD_SLOTS 16
+typedef struct {
+    struct {
+        uint16_t client_id, our_id;
+        uint32_t ip;
+        uint16_t port;
+        uint8_t used;
+    } s[DNSFWD_SLOTS];
+    uint16_t next_id;
+    uint8_t next_slot;
+} dnsfwd_t;
+
+/* A query going upstream: gives it an id of ours (in place) and remembers
+ * who asked. False if it isn't a query. */
+bool dnsfwd_out(dnsfwd_t *f, uint8_t *q, size_t len, uint32_t ip, uint16_t port);
+/* An answer from upstream: puts the asker's id back (in place) and says who
+ * asked. False if it isn't one of ours. */
+bool dnsfwd_in(dnsfwd_t *f, uint8_t *r, size_t len, uint32_t *ip, uint16_t *port);
+/* A SERVFAIL answer to a query (no network yet). 0 if it isn't a query. */
+size_t dns_servfail(const uint8_t *q, size_t qlen, uint8_t *out, size_t cap);
+
+/* The saved networks, most recent first (kept in NVS as this blob). */
+#define NETLIST_MAX 8
+typedef struct {
+    uint8_t n;
+    struct {
+        char ssid[33];
+        char pass[65];
+    } e[NETLIST_MAX];
+} netlist_t;
+
+/* Index of ssid, or -1. */
+int netlist_find(const netlist_t *l, const char *ssid);
+/* Puts ssid at the top (pass NULL: keeps its saved password, or "" if new);
+ * the oldest drops off a full list. False if ssid/pass are out of bounds. */
+bool netlist_put(netlist_t *l, const char *ssid, const char *pass);
+/* Removes ssid; false if it wasn't there. */
+bool netlist_remove(netlist_t *l, const char *ssid);
+/* A list read back from storage: false (and emptied) if it isn't sane. */
+bool netlist_sane(netlist_t *l);

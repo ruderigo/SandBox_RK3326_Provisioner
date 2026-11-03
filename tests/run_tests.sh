@@ -59,6 +59,7 @@ fonts = load_fonts("assets/cockpit_font.bin")
 have = set.intersection(*(set(f["glyphs"]) for f in fonts))
 missing = {}
 for path in ("provisioner/ui/app.py", "provisioner/ui/keyboard.py", "provisioner/stump.py", "provisioner/flasher.py",
+             "provisioner/s3wifi.py",
              "firmware/catalog.json"):
     src = open(path, encoding="utf-8").read()
     for i, line in enumerate(src.splitlines(), 1):
