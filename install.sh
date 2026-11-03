@@ -35,7 +35,7 @@ for d in provisioner vendor firmware assets; do
   rm -rf "${APP:?}/$d"
   cp -r "$HERE/$d" "$APP/$d"
 done
-cp -f "$HERE/VERSION" "$HERE/README.md" "$APP/"
+cp -f "$HERE/VERSION" "$HERE/README.md" "$HERE/LICENSE" "$APP/"
 find "$APP" -name __pycache__ -prune -exec rm -rf {} +
 (cd "$APP" && python3 -m provisioner --smoke >/dev/null 2>&1) && ok "installed in $APP (v$(cat "$APP/VERSION"); it draws)" \
   || warn "installed in $APP, but its screen test failed: see 'cd $APP && python3 -m provisioner --smoke'"

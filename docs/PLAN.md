@@ -80,7 +80,7 @@ Making a Stump is the Provisioner's main job (2026-11-02): it comes first.
    (needs the CH343's driver in dArkOS's kernel: `dmesg | tail` on plug-in).
 5. **Make a Stump** on it: the form, about five minutes, then its Wi-Fi
    from a phone and `/admin` with the password chosen. Then Update, its
-   Settings and Check. Not proven off the bench: the board's port coming
-   back after MicroPython is written (the CH343 port should stay; the native
-   port re-enumerates), DTR/RTS held low not resetting it, and the copy's
-   speed over the hub.
+   Settings and Check.
+   **Passed 2026-11-02** (v0.2.0): a CAM made by the handheld, linked to its
+   Heltec V3 (set up by Team Stump's Provisioner on a computer), visible to
+   visitors, to Android clients and to FireFly on the R36MAX.
