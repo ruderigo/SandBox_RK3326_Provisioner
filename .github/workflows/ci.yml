@@ -50,6 +50,11 @@ jobs:
             s3_usb_wifi/build/s3_usb_wifi.elf
             s3_usb_wifi/build/s3_usb_wifi.map
             s3_usb_wifi/build/config/sdkconfig.h
+      - name: Fingerprint (to compare with a local build)
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh" >/dev/null
+          bash s3_usb_wifi/host_tests/image_fingerprint.sh
       - name: The image in firmware/ is this source's
         shell: bash
         run: |
@@ -67,7 +72,10 @@ jobs:
       - name: Unit tests
         run: bash s3_usb_wifi/host_tests/run.sh
       - name: Real DHCP clients
-        run: sudo bash s3_usb_wifi/host_tests/dhcp_clients.sh
+        run: |
+          # the runner's AppArmor profile for dhclient keeps it from our temp files and hooks
+          if [ -f /etc/apparmor.d/sbin.dhclient ]; then sudo apparmor_parser -R /etc/apparmor.d/sbin.dhclient || true; fi
+          sudo bash s3_usb_wifi/host_tests/dhcp_clients.sh
   s3-usb-wifi-release:
     if: startsWith(github.ref, 'refs/tags/s3-usb-wifi-v')
     needs: [s3-usb-wifi, s3-usb-wifi-dhcp]

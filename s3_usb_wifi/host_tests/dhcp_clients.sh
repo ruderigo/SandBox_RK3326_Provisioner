@@ -103,7 +103,11 @@ EOF
         dhclient -4 -v -cf '$work/dhclient.conf' -pf '$work/dhclient.pid' -lf '$work/dhclient.leases' usb0" \
         > "$work/dhclient.log" 2>&1 &
     sleep 4
+    f0=$fails
     check_client "dhclient (ISC)"
+    if [ "$fails" != "$f0" ]; then
+        echo "  -- dhclient's log and lease:"; sed 's/^/     /' "$work/dhclient.log" "$work/dhclient.leases" 2>/dev/null | tail -n 40
+    fi
     [ -f "$work/dhclient.pid" ] && kill "$(cat "$work/dhclient.pid")" 2>/dev/null
     sleep 0.5
 fi
