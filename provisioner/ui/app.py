@@ -163,7 +163,10 @@ class App:
         self.handheld_run = handheld.run
         self.hh_inst = None             # the handheld's Stump's installer chosen (a shelf copy's, a clone)
         self.password_state_fn = handheld.password_state     # (folder, key=admin) -> SET / DEFAULT / EMPTY / NONE
+        self.access_state_fn = handheld.access_state         # (folder) -> what /admin takes: SET / DEFAULT / EMPTY
         self.set_password_fn = handheld.set_password
+        self.current_passwords_fn = handheld.current_passwords
+        self.clear_repo_admin_fn = handheld.clear_repo_admin
         self.clones = True              # offer ~/SandBox_RK3326_Stump, ~/R36MAX-Stump when there
         self.online_fn = shelf.online   # (product, channel) -> the newest release online
         self.fetch_fn = shelf.fetch
@@ -806,10 +809,10 @@ class App:
         keep = f["mode"] == "settings"
         b = self.bundle()
         rows = [{"key": "name", "label": "Its name", "kind": "text", "max": 20, "blank": "needed"},
-                {"key": "pw", "label": "Admin password", "kind": "secret", "max": 64,
-                 "blank": "keeps the one it has" if keep else "needed (4+ characters)"},
-                {"key": "opw", "label": "fserv operator password", "kind": "secret", "max": 64,
-                 "blank": "keeps the one it has" if keep else "none: its dialogue isn't editable from the chat"},
+                {"key": "opw", "label": "Its password", "kind": "secret", "max": 64,
+                 "blank": "keeps the one it has" if keep else "needed: /admin and the fserv bot"},
+                {"key": "pw", "label": "Separate /admin password", "kind": "secret", "max": 64,
+                 "blank": "keeps the one it has" if keep else "none: /admin takes the one above"},
                 {"key": "ssid", "label": "Home Wi-Fi (optional)", "kind": "text", "max": 32, "blank": "none"},
                 {"key": "wpass", "label": "Home Wi-Fi password", "kind": "secret", "max": 63,
                  "blank": "keeps the one it has" if keep else "none"},
@@ -1162,7 +1165,7 @@ class App:
         if p == "handheld":
             h, st = self.here, self.handheld or {}
             if st.get("installed") and self.admin_state() in ("DEFAULT", "EMPTY"):
-                return "Its admin password isn't its own: set one (its page)", ERROR
+                return "/admin's password isn't its own: set Its password (its page)", ERROR
             if h and not h.get("none"):
                 return "Stump %s · %s%s%s" % (h.get("release", "?"), h.get("name", "?"),
                                              " · " + h["chain"] if h.get("chain") else "",
@@ -1303,7 +1306,7 @@ class App:
         rows.append({"kind": "fromfile"})
         if p == "handheld":
             if (self.handheld or {}).get("installed"):
-                rows += [{"kind": "hh_pw", "key": "AUTH_ADMIN_PASSWORD"}, {"kind": "hh_pw", "key": "FSERVBOT_OP_PASSWORD"}]
+                rows += [{"kind": "hh_pw", "key": "FSERVBOT_OP_PASSWORD"}, {"kind": "hh_pw", "key": "AUTH_ADMIN_PASSWORD"}]
             rows.append({"kind": "hh_check"})
         if p == "provisioner" and installers.version_in(installers.previous_dir(self.app_dir)):
             rows.append({"kind": "rollback"})
@@ -1457,7 +1460,7 @@ class App:
                      ["By %s %s: Team Stump's latest SandBox_Stump_On (a newer one needs internet) and its cockpit."
                       % (inst["repo"], inst["version"]),
                       "Its settings, identity on the mesh, files and chain stay. (Y on the row: new answers.)"
-                      + (" Its admin password isn't its own: set it below after." if self.admin_state() != "SET" else ""),
+                      + (" /admin's password isn't its own: set Its password after." if self.admin_state() != "SET" else ""),
                       "The Stump restarts. A few minutes."],
                      "Update it", lambda: self.run_handheld("Updating this handheld's Stump",
                                                             handheld.update_answers(st.get("folder"))))
@@ -1465,8 +1468,10 @@ class App:
             self.open_form("handheld", handheld.form_defaults(self.here), back="product")
 
     def ask_password(self, key):
-        """One of the handheld Stump's passwords, typed twice on the keyboard, then set."""
-        who = handheld.PASSWORDS[key]
+        """One of the handheld Stump's passwords, typed twice on the keyboard, then set:
+        its password (the fserv operator's, which /admin takes too) or a separate /admin one."""
+        one = key == "FSERVBOT_OP_PASSWORD"
+        name = "its password" if one else "a separate /admin password"
         folder = (self.handheld or {}).get("folder") or os.path.expanduser("~/Stump")
 
         def second(first):
@@ -1476,14 +1481,17 @@ class App:
                 elif not 4 <= len(first) <= 64:
                     self.toast("4 to 64 characters: nothing changed", 4)
                 else:
-                    self.ask("Set its %s password?" % who,
-                             ["Written into ~/Stump/config.py by the Stump's own settings (as /admin does); "
-                              "config.py.bak kept.", "The Stump restarts with it."],
-                             "Set it", lambda: self.run_task("Setting its %s password" % who, lambda t: self.set_password_fn(
+                    self.ask("Set %s?" % name,
+                             [("/admin and the fserv bot take it (unless a separate /admin one is set)." if one else
+                               "/admin takes this one instead of its password."),
+                              "Written into ~/Stump/config.py by the Stump's own settings (as /admin does); "
+                              "config.py.bak kept. The Stump restarts with it."],
+                             "Set it", lambda: self.run_task("Setting %s" % name, lambda t: self.set_password_fn(
                                  folder, key, first, t.line)))
-            self.kb = Keyboard("Again: its %s password" % who, "", 64, secret=True, hint="The same again")
+            self.kb = Keyboard("Again: %s" % name, "", 64, secret=True, hint="The same again")
             self.kb_done = done
-        self.kb = Keyboard("Its %s password" % who, "", 64, secret=True, hint="4 to 64 characters")
+        self.kb = Keyboard(name[0].upper() + name[1:], "", 64, secret=True,
+                           hint="4 to 64 characters" + (": /admin and the fserv bot" if one else ""))
         self.kb_done = second
 
     def run_task(self, title, fn, after="product"):
@@ -1538,15 +1546,21 @@ class App:
             elif r["kind"] == "hh_check":
                 title, about, ready = "Check it", "Asks the Stump on this handheld: release, name, chain.", True
             elif r["kind"] == "hh_pw":
-                who = handheld.PASSWORDS[r["key"]]
-                state = self.password_state_fn(st_folder) if self.password_state_fn else "SET"
-                title, ready = "Its %s password" % who, True
-                about = {"SET": "Its own. A changes it.", "EMPTY": "None set: A sets one.",
-                         "DEFAULT": "Still SandBox_Stump_On's, not its own: A sets one."}.get(state, "")
+                state = self.password_state_fn(st_folder, r["key"]) if self.password_state_fn else "SET"
+                ready = True
                 if r["key"] == "FSERVBOT_OP_PASSWORD":
-                    about += " (Editing the fserv bot's dialogue from the chat.)"
-                if state in ("DEFAULT", "EMPTY") and r["key"] == "AUTH_ADMIN_PASSWORD" or state == "DEFAULT":
-                    tag, tc = "set one", ERROR
+                    title = "Its password"
+                    about = {"SET": "Its own: /admin and the fserv bot take it. A changes it.",
+                             "EMPTY": "None: /admin can't be opened. A sets one.",
+                             "DEFAULT": "Still SandBox_Stump_On's: A sets its own."}.get(state, "")
+                    if self.admin_state() != "SET" or state == "DEFAULT":
+                        tag, tc = "set one", ERROR
+                else:
+                    title = "A separate /admin password"
+                    about = {"SET": "Its own: /admin takes this one, not the one above. A changes it.",
+                             "EMPTY": "None: /admin takes the one above (as Team Stump means it).",
+                             "DEFAULT": "SandBox_Stump_On's, left by the wizard: setting Its password clears it."
+                             }.get(state, "")
             else:
                 title = "Go back to v%s" % installers.version_in(installers.previous_dir(self.app_dir))
                 about = "The Provisioner before the last update (kept for this)."
@@ -1564,17 +1578,20 @@ class App:
 
     # -- this handheld's Stump: the form, the installer, the check --
     def admin_state(self):
+        """What /admin takes on the handheld's Stump (handheld.access_state)."""
         st = self.handheld or {}
-        return self.password_state_fn(st.get("folder") or os.path.expanduser("~/Stump")) if self.password_state_fn \
+        return self.access_state_fn(st.get("folder") or os.path.expanduser("~/Stump")) if self.access_state_fn \
             else "SET"
 
     def handheld_form_rows(self, a):
-        keep = (self.handheld or {}).get("installed") and self.admin_state() == "SET"
+        st = self.handheld or {}
+        keep = st.get("installed") and self.password_state_fn and self.password_state_fn(
+            st.get("folder") or os.path.expanduser("~/Stump"), "FSERVBOT_OP_PASSWORD") == "SET"
         rows = [{"key": "name", "label": "Its name", "kind": "text", "max": 20, "blank": "needed"},
-                {"key": "pw", "label": "Admin password", "kind": "secret", "max": 64,
-                 "blank": "keeps the one it has" if keep else "needed (4+ characters)"},
-                {"key": "opw", "label": "fserv operator password", "kind": "secret", "max": 64,
-                 "blank": "keeps the one it has" if keep else "none: its dialogue isn't editable from the chat"},
+                {"key": "pw", "label": "Its password", "kind": "secret", "max": 64,
+                 "blank": "keeps the one it has" if keep else "needed: /admin and the fserv bot"},
+                {"key": "apw", "label": "Separate /admin password", "kind": "secret", "max": 64,
+                 "blank": "none: /admin takes the one above"},
                 {"key": "hotspot", "label": "Its Wi-Fi's name", "kind": "text", "max": 32, "blank": "its name"},
                 {"key": "storage", "label": "Storage (MB)", "kind": "text", "max": 7, "blank": "2048"},
                 {"key": "chain", "label": "Chain", "kind": "choice", "choices": CHAINS}]
@@ -1594,8 +1611,7 @@ class App:
         a = self.form["a"]
         folder = st.get("folder") or os.path.expanduser("~/Stump")
         ans = handheld.answers(a, folder, again=bool(st.get("installed")),
-                               admin_state=self.admin_state() if st.get("installed") else "NONE",
-                               current=handheld.current_passwords(folder) if st.get("installed") else None)
+                               current=self.current_passwords_fn(folder) if st.get("installed") else None)
         if ans.get("error"):
             self.toast(ans["error"], 4)
             return
@@ -1616,14 +1632,14 @@ class App:
 
         def work(t):
             ok, msg = self.handheld_run(inst, ans, t.line, self._step(t))
-            # An installer before v2.4.0-r36max doesn't set the /admin password the
-            # wizard leaves as SandBox_Stump_On's: set here, then.
-            pw = ans.get("_admin password")
-            if ok and pw and self.password_state_fn and self.password_state_fn(folder) != "SET":
-                t.step = "Setting its admin password"
-                pok, pmsg = self.set_password_fn(folder, "AUTH_ADMIN_PASSWORD", pw, t.line)
-                msg = msg + (" Its admin password is set." if pok else " Its admin password isn't: %s" % pmsg)
-                ok = ok and pok
+            # If SandBox_Stump_On's AUTH_ADMIN_PASSWORD is still there (an installer
+            # before v2.4.0-r36max), cleared: /admin takes its one password.
+            if ok and self.clear_repo_admin_fn:
+                changed, why = self.clear_repo_admin_fn(folder, t.line)
+                if changed:
+                    msg += " /admin takes its password (the repo's was left: cleared)."
+                elif why:
+                    ok, msg = False, msg + " /admin's password isn't its own: %s" % why
             return ok, msg, None
         self.form = None
         self.task = Task(title, work)

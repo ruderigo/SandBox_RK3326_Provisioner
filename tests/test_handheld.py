@@ -67,15 +67,19 @@ class Handheld(unittest.TestCase):
 
     def test_answers(self):
         a = dict(H.form_defaults(), name="R36", chain="member", parent="192.168.1.20", secret="s", tavern="yes",
-                 pw="admin-pw", opw="oper-pw")
+                 pw="one-pw")
         ans = H.answers(a, "/home/ark/Stump")
-        self.assertEqual((ans["_admin password"], ans["fserv bot operator password"]), ("admin-pw", "oper-pw"))
-        self.assertIn("admin password is needed", H.answers(dict(a, pw=""), "/x")["error"])          # a new Stump
-        self.assertNotIn("_admin password", H.answers(dict(a, pw=""), "/x", again=True))              # its own: kept
-        self.assertIn("needed", H.answers(dict(a, pw=""), "/x", again=True, admin_state="DEFAULT")["error"])
+        # Team Stump's one password: the fserv operator's, and /admin's through it.
+        self.assertEqual((ans["fserv bot operator password"], ans["admin password for /admin"],
+                          ans["change any of those now"]), ("one-pw", "", True))
+        self.assertNotIn("_admin password", ans)
+        self.assertEqual(H.answers(dict(a, apw="sep-admin"), "/x")["admin password for /admin"], "sep-admin")
+        self.assertIn("password is needed", H.answers(dict(a, pw=""), "/x")["error"])                # a new Stump
+        kept = H.answers(dict(a, pw=""), "/x", again=True, current={"pw": "one-pw", "apw": ""})
+        self.assertEqual(kept["fserv bot operator password"], "one-pw")                               # sent again
+        self.assertIn("needed", H.answers(dict(a, pw=""), "/x", again=True, current={"pw": "", "apw": ""})["error"])
         self.assertIn("4 to 64", H.answers(dict(a, pw="abc"), "/x")["error"])
-        self.assertIn("fserv", H.answers(dict(a, opw="abc"), "/x")["error"])
-        self.assertEqual(H.answers(dict(a, opw=""), "/x")["fserv bot operator password"], "")       # editing off
+        self.assertIn("separate", H.answers(dict(a, apw="abc"), "/x")["error"])
         self.assertEqual(ans["node name"], "R36")
         self.assertEqual(ans["the wi-fi name visitors join"], "R36")
         self.assertEqual(ans["that stump's address"], "192.168.1.20")
@@ -113,6 +117,8 @@ class Handheld(unittest.TestCase):
         self.assertTrue(ok, msg)
         self.assertIn("restarted", msg)
         self.assertEqual(H.password_state(folder, "FSERVBOT_OP_PASSWORD"), "SET")
+        self.assertEqual(H.password_state(folder), "EMPTY")                    # the repo's cleared: /admin takes it
+        self.assertEqual(H.access_state(folder), "SET")
         self.assertFalse(any("op-pass" in " ".join(c) for c in ran))           # by stdin, not the command line
         self.assertFalse(H.set_password(folder, "NODE_NAME", "xxxxx", lambda s: None)[0])
         self.assertFalse(H.set_password(folder, "AUTH_ADMIN_PASSWORD", "abc", lambda s: None)[0])
@@ -152,11 +158,9 @@ class TeamStumpsWizard(unittest.TestCase):
             return f.read()
 
     def install(self, folder, ans):
-        """As install.sh does: the wizard, then the admin password it doesn't ask."""
+        """As install.sh does: the wizard, then the repo's /admin password cleared if it's left."""
         self.wizard(folder, ans)
-        if ans.get("_admin password"):
-            ok, msg = H.set_password(folder, "AUTH_ADMIN_PASSWORD", ans["_admin password"], lambda s: None)
-            self.assertTrue(ok, msg)
+        H.clear_repo_admin(folder, lambda s: None)
         with open(os.path.join(folder, "config.py")) as f:
             return f.read()
 
@@ -165,33 +169,36 @@ class TeamStumpsWizard(unittest.TestCase):
         self.addCleanup(shutil.rmtree, d, True)
         folder = os.path.join(d, "Stump")
         a = dict(H.form_defaults(), name="R36-Test", chain="member", parent="192.168.1.20", secret="s3cret-test",
-                 heltec="none", tavern="yes", pw="admin-pw-1", opw="oper-pw-1")
+                 heltec="none", tavern="yes", pw="one-pw-1")
         cfg = self.wizard(folder, H.answers(a, folder))
         for want in ("NODE_NAME = 'R36-Test'", "PC_CHAIN_PARENT_IP = '192.168.1.20'", "CHAIN_SECRET = 's3cret-test'",
-                     "PC_STORAGE_MB = 2048", "FSERVBOT_OP_PASSWORD = 'oper-pw-1'"):
+                     "PC_STORAGE_MB = 2048", "FSERVBOT_OP_PASSWORD = 'one-pw-1'",
+                     "AUTH_ADMIN_PASSWORD = ''"):              # its own prompt answered: not the repo's
             self.assertIn(want, cfg)
-        # The wizard leaves the repo's admin password (install.sh sets ours after it): it's told apart...
-        self.assertEqual(H.password_state(folder), "DEFAULT")
-        # ...and set with the Stump's own settings.py.
+        self.assertEqual(H.access_state(folder), "SET")         # /admin takes the one password
+        # A Stump the wizard left with the repo's (answered as before): told apart, and cleared.
+        H.write_values(folder, {"AUTH_ADMIN_PASSWORD": "TeK"})
+        self.assertEqual(H.access_state(folder), "DEFAULT")
         lines = []
-        ok, msg = H.set_password(folder, "AUTH_ADMIN_PASSWORD", "admin-pw-1", lines.append)
+        self.assertEqual(H.clear_repo_admin(folder, lines.append), (True, ""))
+        self.assertEqual(H.access_state(folder), "SET")
+        # Its password changed with the Stump's own settings.py, never in its lines.
+        ok, msg = H.set_password(folder, "FSERVBOT_OP_PASSWORD", "one-pw-1", lines.append)
         self.assertTrue(ok, msg)
-        self.assertEqual(H.password_state(folder), "SET")
-        with open(os.path.join(folder, "config.py")) as f:
-            self.assertIn("AUTH_ADMIN_PASSWORD = 'admin-pw-1'", f.read())
-        self.assertFalse(any("admin-pw-1" in line for line in lines))        # never in its lines
+        self.assertFalse(any("one-pw-1" in line for line in lines))
         self.assertTrue(os.path.isdir(os.path.join(folder, "tavern")))
-        again = H.answers(dict(a, name="R36-Again", chain="none", heltec="usb", pw="", opw=""), folder, again=True,
+        again = H.answers(dict(a, name="R36-Again", chain="none", heltec="usb", pw=""), folder, again=True,
                           current=H.current_passwords(folder))
-        self.assertEqual((again["_admin password"], again["fserv bot operator password"]), ("admin-pw-1", "oper-pw-1"))
+        self.assertEqual(again["fserv bot operator password"], "one-pw-1")
         cfg = self.install(folder, again)
-        self.assertIn("AUTH_ADMIN_PASSWORD = 'admin-pw-1'", cfg)            # sent again: still its own
-        self.assertIn("FSERVBOT_OP_PASSWORD = 'oper-pw-1'", cfg)
+        self.assertIn("FSERVBOT_OP_PASSWORD = 'one-pw-1'", cfg)             # sent again: still its own
+        self.assertIn("AUTH_ADMIN_PASSWORD = ''", cfg)
         self.assertIn("NODE_NAME = 'R36-Again'", cfg)
         self.assertIn("RNodeSerialInterface", cfg)
         cfg = self.wizard(folder, H.update_answers(folder))
         self.assertIn("NODE_NAME = 'R36-Again'", cfg)                       # kept
-        self.assertIn("AUTH_ADMIN_PASSWORD = 'admin-pw-1'", cfg)            # kept
+        self.assertIn("FSERVBOT_OP_PASSWORD = 'one-pw-1'", cfg)             # kept
+        self.assertEqual(H.access_state(folder), "SET")
 
 
 if __name__ == "__main__":

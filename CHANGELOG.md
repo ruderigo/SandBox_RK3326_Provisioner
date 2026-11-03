@@ -12,26 +12,31 @@ its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
 ## v0.3.0-beta.10
 
-- **The handheld's Stump gets its own passwords.** Team Stump's computer
-  wizard never asks for an /admin password: the Stump kept the one in
-  SandBox_Stump_On's `config.py`, not yours (found on the bench). Now:
-  - the form asks for the **admin password** (needed for a new Stump) and the
-    **fserv operator password** (blank: its dialogue isn't editable from the
-    chat);
-  - its page has **Its admin password** and **Its fserv operator password**:
-    typed twice, set with the Stump's own `settings.write_config` (as
-    /admin does; `config.py.bak` kept), then the Stump restarts;
-  - the page says (in red) when the admin password isn't the Stump's own;
-  - installing again resends the passwords already set (the wizard rebuilds
-    `config.py` from the repo's and would put theirs back); an installer
-    before v2.4.0-r36max is followed by setting the admin password here.
-- **The CAM's form asks for the fserv operator password too** (its
-  settings already kept it; the field was missing).
-- docs/REQUEST_TEAM_STUMP.md: request 4 (blank passwords in their
-  `config.py`, the wizard asks for one).
-- Tests: the passwords through Team Stump's real wizard (new, again, update),
-  setting one by stdin (never on a command line), the pages, the CAM's
-  form.
+- **One password, as Team Stump means it, reaching /admin.** Their Stump
+  takes the fserv operator password for /admin too, unless a separate
+  `AUTH_ADMIN_PASSWORD` is set (stumpid's `check_admin_password`). Their
+  computer wizard asks it, but leaves `AUTH_ADMIN_PASSWORD` as
+  SandBox_Stump_On's `config.py` has it (not blank) unless "Change any of
+  those now?" gets a yes: on the handheld, /admin took that one instead (found
+  on the bench). Now:
+  - the handheld's form asks for **its password** (needed: /admin and the
+    fserv bot) and, optionally, **a separate /admin password**; the answers
+    say yes to "Change any of those now?" and give /admin's (blank), so the
+    wizard writes it instead of leaving the repo's;
+  - after any install, a repo `AUTH_ADMIN_PASSWORD` left in place is
+    cleared, so /admin takes its password;
+  - its page has **Its password** and **A separate /admin password**: typed
+    twice, set with the Stump's own `settings.write_config` (as /admin does;
+    `config.py.bak` kept), then the Stump restarts. It says in red when
+    /admin's password isn't its own;
+  - installing again resends its passwords (the wizard rebuilds `config.py`).
+- **The CAM's form**: **its password** (/admin and the fserv bot; the
+  fserv operator's, which was missing) and an optional separate /admin one.
+- docs/REQUEST_TEAM_STUMP.md: request 4 (`AUTH_ADMIN_PASSWORD` blank in
+  their `config.py`, as the plugin says).
+- Tests: through Team Stump's real wizard (new, again, update: /admin takes
+  its password), a repo one cleared, setting one by stdin, the pages, the
+  CAM's form.
 
 ## v0.3.0-beta.9
 

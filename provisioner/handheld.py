@@ -72,7 +72,7 @@ def state(home=None, euid=None, which=shutil.which):
 
 def form_defaults(here=None):
     here = here or {}
-    return {"name": "" if here.get("none") else (here.get("name") or ""), "pw": "", "opw": "", "hotspot": "",
+    return {"name": "" if here.get("none") else (here.get("name") or ""), "pw": "", "apw": "", "hotspot": "",
             "storage": "2048",
             "chain": "none", "parent": "", "secret": "", "heltec": "usb", "tavern": "no", "rnfs": "no"}
 
@@ -80,11 +80,15 @@ def form_defaults(here=None):
 IPV4 = re.compile(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$")
 
 
-def current_passwords(folder):
+def current_passwords(folder, home=None):
     """Its passwords now, to send again when it's installed again (the wizard
-    then rebuilds config.py from SandBox_Stump_On's, theirs included)."""
+    then rebuilds config.py from SandBox_Stump_On's): {pw: the one password
+    (the fserv operator's), apw: a separate /admin one of its own, or ""}."""
     cfg = os.path.join(folder, "config.py")
-    return {"pw": _value_in(cfg, "AUTH_ADMIN_PASSWORD") or "", "opw": _value_in(cfg, "FSERVBOT_OP_PASSWORD") or ""}
+    own = password_state(folder, "AUTH_ADMIN_PASSWORD", home) == "SET"
+    op = _value_in(cfg, "FSERVBOT_OP_PASSWORD") or ""
+    return {"pw": op if password_state(folder, "FSERVBOT_OP_PASSWORD", home) == "SET" else "",
+            "apw": (_value_in(cfg, "AUTH_ADMIN_PASSWORD") or "") if own else ""}
 
 
 def answers(a, folder, again=False, admin_state="SET", current=None):
@@ -94,16 +98,18 @@ def answers(a, folder, again=False, admin_state="SET", current=None):
     name = (a.get("name") or "").strip()
     if not name:
         return {"error": "Its name is needed"}
-    pw, opw = a.get("pw") or "", a.get("opw") or ""
-    if again and admin_state == "SET" and current:      # blank: its own, kept (sent again: the wizard rebuilds config.py)
+    # Team Stump's design: one password, the fserv operator's, which /admin
+    # takes too unless a separate one is set (stumpid check_admin_password).
+    pw, apw = a.get("pw") or "", a.get("apw") or ""
+    if again and current:                     # blank: its own, kept (sent again: the wizard rebuilds config.py)
         pw = pw or current.get("pw", "")
-        opw = opw or current.get("opw", "")
-    if pw and not 4 <= len(pw) <= 64:
-        return {"error": "The admin password: 4 to 64 characters"}
-    if not pw and (not again or admin_state != "SET"):
-        return {"error": "Its admin password is needed (4+ characters): /admin asks for it"}
-    if opw and not 4 <= len(opw) <= 64:
-        return {"error": "The fserv operator password: 4 to 64 characters"}
+        apw = apw or current.get("apw", "")
+    if not pw:
+        return {"error": "Its password is needed (4+ characters): /admin and the fserv bot take it"}
+    if not 4 <= len(pw) <= 64:
+        return {"error": "Its password: 4 to 64 characters"}
+    if apw and not 4 <= len(apw) <= 64:
+        return {"error": "The separate /admin password: 4 to 64 characters"}
     try:
         mb = int(a.get("storage") or 2048)
     except ValueError:
@@ -118,14 +124,15 @@ def answers(a, folder, again=False, admin_state="SET", current=None):
                           "none": "None"}[a.get("heltec") or "usb"],
            "install rnfs": a.get("rnfs") == "yes", "install tavern": a.get("tavern") == "yes",
            "start this stump automatically when you log in": True,
-           # The fserv bot's operator (editing its dialogue from the chat): the wizard asks it.
-           "fserv bot operator password": opw,
+           # The one password: the fserv bot's operator's, and /admin's with the
+           # separate one left blank. "Change any of those now?" yes, so the wizard
+           # writes AUTH_ADMIN_PASSWORD (blank) instead of leaving SandBox_Stump_On's.
+           "fserv bot operator password": pw, "change any of those now": True,
+           "admin password for /admin": apw,
            # Questions with no default of their own (the --answers-template values)
            "identity requirement": "open", "how should file sharing work": "Free", "theme": "Amber",
            # The chain check after a new chain: carry on (the installer checks the Stump at its end)
            "fix it, then check again": False}
-    if pw:
-        out["_admin password"] = pw          # the wizard doesn't ask it: install.sh sets it (v2.4.0-r36max on)
     if again:
         out["change something"] = "a"                   # an existing Stump: all the questions again
     if a.get("heltec") == "usb":
@@ -195,7 +202,7 @@ def run(installer, ans, line, step, home=None, popen=subprocess.Popen):
 
 
 # -- its passwords ---------------------------------------------------------------
-PASSWORDS = {"AUTH_ADMIN_PASSWORD": "admin", "FSERVBOT_OP_PASSWORD": "fserv operator"}
+PASSWORDS = {"AUTH_ADMIN_PASSWORD": "separate /admin", "FSERVBOT_OP_PASSWORD": "fserv operator"}
 # Team Stump's computer wizard leaves SandBox_Stump_On's final_firmware/config.py
 # values in place where it doesn't ask: compared with that file (cloned by
 # install.sh), so "still the repo's" is told apart from "its own".
@@ -219,6 +226,17 @@ def _value_in(path, key):
     return found
 
 
+def access_state(folder, home=None):
+    """What /admin takes: SET (a password of its own: the separate one, or the
+    fserv operator's), DEFAULT (SandBox_Stump_On's, left by the wizard), EMPTY
+    (none: /admin can't be opened), NONE (no Stump)."""
+    a = password_state(folder, "AUTH_ADMIN_PASSWORD", home)
+    if a in ("NONE", "DEFAULT", "SET"):
+        return a
+    f = password_state(folder, "FSERVBOT_OP_PASSWORD", home)
+    return "SET" if f == "SET" else ("DEFAULT" if f == "DEFAULT" else "EMPTY")
+
+
 def password_state(folder, key="AUTH_ADMIN_PASSWORD", home=None):
     """SET (its own), DEFAULT (still SandBox_Stump_On's), EMPTY, or NONE (no Stump)."""
     cfg = os.path.join(folder, "config.py")
@@ -234,12 +252,12 @@ def password_state(folder, key="AUTH_ADMIN_PASSWORD", home=None):
 
 
 SET_CODE = r"""
-import os, shutil, sys
-key, pw = sys.argv[1], sys.stdin.readline().rstrip("\n")
+import json, os, shutil, sys
+values = json.loads(sys.stdin.readline())
 sys.path.insert(0, os.getcwd())
 import settings
 shutil.copy2("config.py", "config.py.bak")
-if not settings.write_config({key: pw}, "config.py"):
+if not settings.write_config(values, "config.py"):
     sys.exit("config.py wasn't written")
 try:
     compile(open("config.py").read(), "config.py", "exec")
@@ -250,23 +268,48 @@ print("SET")
 """
 
 
-def set_password(folder, key, pw, line, run=subprocess.run):
-    """Sets one of its passwords with the Stump's own settings.write_config
-    (what /admin uses; config.py.bak kept), then restarts it. (ok, message).
-    The password goes by stdin: never on a command line or in a log."""
+def write_values(folder, values, run=subprocess.run):
+    """Writes values into its config.py with the Stump's own
+    settings.write_config (what /admin uses; config.py.bak kept), by stdin:
+    never on a command line or in a log. '' or why not."""
+    py = os.path.join(folder, "venv", "bin", "python")
+    if not os.path.isfile(os.path.join(folder, "config.py")) or not os.path.exists(py):
+        return "No Stump in %s" % folder
+    p = run([py, "-c", SET_CODE], input=json.dumps(values) + "\n", cwd=folder, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, universal_newlines=True)
+    if "SET" not in (p.stdout or ""):
+        return "Not set: %s" % ((p.stdout or "").strip()[-200:] or "the Stump's settings.py said no")
+    return ""
+
+
+def set_password(folder, key, pw, line, run=subprocess.run, home=None):
+    """Sets one of its passwords, then restarts it. (ok, message). Its one
+    password (the fserv operator's) also clears SandBox_Stump_On's
+    AUTH_ADMIN_PASSWORD when the wizard left it, so /admin takes it."""
     if key not in PASSWORDS:
         return False, "not one of its passwords"
     if not 4 <= len(pw) <= 64:
         return False, "4 to 64 characters"
-    py = os.path.join(folder, "venv", "bin", "python")
-    if not os.path.isfile(os.path.join(folder, "config.py")) or not os.path.exists(py):
-        return False, "No Stump in %s" % folder
-    p = run([py, "-c", SET_CODE, key], input=pw + "\n", cwd=folder, stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, universal_newlines=True)
-    if "SET" not in (p.stdout or ""):
-        return False, "Not set: %s" % ((p.stdout or "").strip()[-200:] or "the Stump's settings.py said no")
+    values = {key: pw}
+    if key == "FSERVBOT_OP_PASSWORD" and password_state(folder, "AUTH_ADMIN_PASSWORD", home) == "DEFAULT":
+        values["AUTH_ADMIN_PASSWORD"] = ""
+    why = write_values(folder, values, run)
+    if why:
+        return False, why
     line("its %s password is set (config.py.bak kept)" % PASSWORDS[key])
     return True, "Its %s password is set. %s" % (PASSWORDS[key], restart(line, run))
+
+
+def clear_repo_admin(folder, line, run=subprocess.run, home=None):
+    """The wizard left SandBox_Stump_On's AUTH_ADMIN_PASSWORD and its one
+    password is set: cleared, so /admin takes that one. (changed, why not)."""
+    if password_state(folder, "AUTH_ADMIN_PASSWORD", home) != "DEFAULT" or \
+            password_state(folder, "FSERVBOT_OP_PASSWORD", home) != "SET":
+        return False, ""
+    why = write_values(folder, {"AUTH_ADMIN_PASSWORD": ""}, run)
+    if not why:
+        line("/admin takes its fserv operator password (SandBox_Stump_On's was left in config.py: cleared)")
+    return not why, why
 
 
 def restart(line, run=subprocess.run):
