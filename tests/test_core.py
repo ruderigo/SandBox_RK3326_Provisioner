@@ -154,6 +154,11 @@ class Flash(unittest.TestCase):
         self.assertIn("--chip esp32s3", calls)
         self.assertIn("keep 0x0 ", calls)
         self.assertIn("verify_flash 0x0 ", calls)
+        # it mustn't start (and write its NVS) before the read-back; the read-back starts it
+        write = [l for l in calls.splitlines() if "write_flash" in l][0]
+        verify = [l for l in calls.splitlines() if "verify_flash" in l][0]
+        self.assertIn("--after no_reset write_flash", write)
+        self.assertNotIn("no_reset", verify)
 
     def test_full_image_needs_the_flash_it_says(self):
         ok, msg = flasher.flash("/dev/ttyUSB0", self.entries["micropython-1.29.0-esp32"], dict(self.board, flash_mb=2))
