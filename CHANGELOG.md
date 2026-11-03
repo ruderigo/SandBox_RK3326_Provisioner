@@ -10,6 +10,35 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.6
+
+- **Every RK3326 handheld's screen.** The layout takes the screen's shape
+  instead of scaling a 720x720 square: 640x480 (R36S and co.) is drawn on a
+  720x540 canvas, 854x480 (OGS, RGB10 Max) 1:1, 480x320 (OGA, RK2020,
+  RG351P/M) on 600x400, so the type stays readable everywhere. Lists show as
+  many rows as fit; the confirm box, the keyboard and the hints fit short
+  screens. A sideways panel (OGA, OGS, RGB10 Max, XU Mini M on systems
+  that don't turn it) is turned. The canvas is scaled in one go (no seams).
+- **Buttons from EmulationStation.** Its `es_input.cfg` decides which button
+  is A, B, the D-pad, L/R, SELECT, START (SDL's numbering turned back into
+  the pad's codes); else a table per pad: the RG351's OSH pad (its Y is
+  another pad's L1, its D-pad a hat), the XU10 / XU Mini M (A and B
+  swapped), the common one. Sticks and hats work. `python3 -m provisioner
+  controls` shows what it found and what each press means.
+- **ArkOS, dArkOS, AmberELEC, ROCKNIX.** install.sh runs as root too (their
+  only user), puts the app in `/storage` and the udev rule in
+  `/storage/.config/udev.rules.d` on the read-only systems, the Ports entry
+  in `/storage/roms/ports` (once, even through the `/roms` link), and writes
+  the app's path into the launcher. The launcher finds a Wayland compositor
+  (ROCKNIX's sway) and uses it first, then KMSDRM.
+- **A board with no driver is named.** A CH340 board on ArkOS (no ch341
+  driver on any RK3326 system), any non-CDC chip on ROCKNIX: the boards
+  screen says which chip and which driver is missing, instead of nothing.
+- Checked for Python 3.6 and newer (vermin, in CI); only SDL 2.0.0
+  functions.
+- The log records the screen, canvas, rotation, display driver and where
+  the buttons came from.
+
 ## v0.3.0-beta.5
 
 - **+ From File.** A new row on every board: a file browser over the games

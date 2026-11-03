@@ -1,6 +1,6 @@
 # RK3326 Provisioner
 
-Turns an RK3326 handheld (R36MAX, R36S) into a workbench for the boards of
+Turns an RK3326 handheld (R36MAX, R36S and the others, [below](#rk3326-handhelds-and-systems)) into a workbench for the boards of
 the Stump/FireFly mesh: plug an ESP32 board into the hub, it's recognised,
 offered the firmware that fits, flashed and checked, **offline**, from the
 gamepad. It's an EmulationStation **Ports** entry.
@@ -8,7 +8,7 @@ gamepad. It's an EmulationStation **Ports** entry.
 > **Sandbox.** Work in progress; the plan, decisions and next steps are in
 > [docs/PLAN.md](docs/PLAN.md).
 
-| Board | What it can be given (v0.3.0-beta.3) |
+| Board | What it can be given (v0.3.0-beta.6) |
 |---|---|
 | **ESP32-S3 (Freenove CAM)** | **Make a Stump** (Stump 1.0.0-beta.50, offline), update its Stump, its settings, check it starts; **add the Tavern or rnfs pack** (or any pack's .zip, by + From File); **USB Wi-Fi adapter** 0.3.0: the S3 becomes the handheld's Wi-Fi card ([below](#the-s3-as-the-handhelds-wi-fi-card), bench test pending) |
 | Heltec V3 | *coming*: RNode for a CAM, set for the mesh |
@@ -45,6 +45,24 @@ FireFly's keyboard (START joins). Y forgets a network. The S3 remembers up to
 as with a Wi-Fi dongle: its own address there, SSH, FireFly, its Stump's portal.
 How it works, its limits and the bench test: [s3_usb_wifi/README.md](s3_usb_wifi/README.md).
 
+## RK3326 handhelds and systems
+
+| | |
+|---|---|
+| Screens | 720x720 (R36MAX, R36Pro, K36) and 854x480 (OGS, RGB10 Max) drawn 1:1; 640x480 (R36S, R33S, R35S, RG351V/MP, RGB20S, RGB10X, XU10, Chi) and 480x320 (OGA, RK2020, RGB10, RG351P/M) a little scaled, never below 0.8 so it stays readable; 1024x768 too. A panel mounted sideways is turned (the device tree's `rotation`, else 270°; `PROVISIONER_ROTATE=0/90/180/270` to change it) |
+| Buttons | EmulationStation's own mapping (`es_input.cfg`), so A is ES's A on every pad; else a table per pad (the RG351's OSH pad, the XU10's swapped A/B). Check over SSH: `python3 -m provisioner controls` |
+| ArkOS, dArkOS, stock R36S | as `ark` (sudo once); `~/rk3326_provisioner`, `/roms/ports` and `/roms2/ports`, KMSDRM |
+| AmberELEC | as root; `/storage/rk3326_provisioner`, `/storage/roms/ports`, udev rules in `/storage/.config`, KMSDRM |
+| ROCKNIX | as root; same paths as AmberELEC; EmulationStation runs under sway, so the launcher uses Wayland first |
+| Python | 3.6 or newer (ArkOS has 3.7, ROCKNIX 3.14); any SDL2 from 2.0 on |
+| USB-serial | CDC-ACM (ESP32-S3/C3 native USB, CH343/CH9102) works on all of them. ArkOS, dArkOS and AmberELEC also have CP210x, FTDI and PL2303, **none has the CH340's driver** (ch341), and ROCKNIX has no USB-serial driver but CDC-ACM. A board the system can't talk to is named on the boards screen with the driver it lacks |
+
+Bench-tested on the R36MAX. The other screens, systems and pads are
+laid out, tested in CI (every size above, both install layouts, the button
+tables) and built from those systems' sources, but not yet run on the
+devices themselves: their `provisioner.log` (in the app's folder) says what
+screen, driver and buttons it found.
+
 ## Install on the handheld
 
 With the handheld online once (to get this repo), or with a release
@@ -53,6 +71,8 @@ unpacked on it:
 ```sh
 ssh -t ark@r36max.local 'git clone https://github.com/ruderigo/SandBox_RK3326_Provisioner.git ~/SandBox_RK3326_Provisioner && bash ~/SandBox_RK3326_Provisioner/install.sh'
 ```
+
+On AmberELEC or ROCKNIX, the same as `root@` (the folder lands in `/storage`).
 
 From a release instead (no internet on the handheld): copy
 `RK3326-Provisioner-<version>.tar.gz` over, then
@@ -74,7 +94,7 @@ EmulationStation if it isn't listed).
 | Flashing | progress, esptool's lines, then *written and verified* or what to do |
 | + From File | ↑↓ · A open a folder / choose the file (asks first) · B up · Y every file or just .bin/.zip · ←→ page |
 | Serial log | A pause / resume · paused: ↑↓ line, ←→ page, X block, Y export (the block, or all) · running: Y export, X clear · B back |
-| Anywhere | SELECT+START closes it |
+| Anywhere | SELECT+START closes it (A, B, ... are EmulationStation's) |
 
 A port another program has open (the Stump's Heltec, its radio) is marked
 *in use* and asks before anything touches it. A board that doesn't answer:

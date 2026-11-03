@@ -67,6 +67,30 @@ class Detect(unittest.TestCase):
         self.assertEqual((info["chip"], info["chip_text"], info["flash_mb"]), ("esp32", "ESP32-D0WD-V3", 4))
 
 
+class NoDriver(unittest.TestCase):
+    """A CH340 on ArkOS (no ch341 there), a CP2102 on ROCKNIX (no USB serial
+    drivers but cdc_acm): seen, and said why there's no port."""
+
+    def test_a_chip_no_driver_took(self):
+        import tempfile
+        usb = tempfile.mkdtemp(prefix="usb-")
+
+        def dev(name, vid, pid, bound):
+            d = os.path.join(usb, name)
+            os.makedirs(os.path.join(d, name + ":1.0"))
+            for k, v in (("idVendor", vid), ("idProduct", pid)):
+                with open(os.path.join(d, k), "w") as f:
+                    f.write(v + "\n")
+            if bound:
+                os.symlink("/sys/bus/usb/drivers/cp210x", os.path.join(d, name + ":1.0", "driver"))
+        dev("1-1.2", "1a86", "7523", False)          # CH340, no driver
+        dev("1-1.3", "10c4", "ea60", True)           # CP2102, cp210x took it
+        dev("1-1.4", "046d", "c52b", False)          # not a serial chip
+        got = boards.unbound(usb)
+        self.assertEqual(got, [{"usb": "1a86:7523", "usb_chip": "CH340 USB-serial", "driver": "ch341"}])
+        self.assertEqual(boards.unbound("/nonexistent"), [])
+
+
 class TheWifiAdapterFound(unittest.TestCase):
     def test_its_control_port_by_vendor_and_product(self):
         ports = [{"port": "/dev/ttyACM0", "usb": "1a86:55d3", "product": "USB Single Serial"},

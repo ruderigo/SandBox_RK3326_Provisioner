@@ -711,6 +711,160 @@ class Buttons(unittest.TestCase):
         self.assertEqual(g.decode(1, 314, 1), ["select"])
         self.assertEqual(g.decode(1, 315, 1), ["quit"])           # SELECT+START
 
+    def test_es_input_cfg_decides(self):
+        """dArkOS's es_input.cfg for the GO-Super pad: SDL numbers its buttons
+        304..313 (0-7), the D-pad 544-547 (8-11), 704/705 (12, 13)."""
+        from provisioner.ui import gamepad as G
+        cfg = os.path.join(tempfile.mkdtemp(prefix="es-"), "es_input.cfg")
+        with open(cfg, "w") as f:
+            f.write("""<?xml version="1.0"?>
+<inputList>
+  <inputConfig type="keyboard" deviceName="Keyboard" deviceGUID="-1"><input name="a" type="key" id="13" value="1"/></inputConfig>
+  <inputConfig type="joystick" deviceName="GO-Super Gamepad" deviceGUID="190000004b4800000010000001010000">
+    <input name="a" type="button" id="1" value="1"/><input name="b" type="button" id="0" value="1"/>
+    <input name="x" type="button" id="2" value="1"/><input name="y" type="button" id="3" value="1"/>
+    <input name="leftshoulder" type="button" id="4" value="1"/><input name="rightshoulder" type="button" id="5" value="1"/>
+    <input name="up" type="button" id="8" value="1"/><input name="down" type="button" id="9" value="1"/>
+    <input name="left" type="button" id="10" value="1"/><input name="right" type="button" id="11" value="1"/>
+    <input name="select" type="button" id="12" value="1"/><input name="start" type="button" id="13" value="1"/>
+    <input name="hotkeyenable" type="button" id="12" value="1"/>
+  </inputConfig>
+</inputList>""")
+        keys = {304, 305, 307, 308, 310, 311, 312, 313, 544, 545, 546, 547, 704, 705, 706, 707}
+        pad = G.Pad(-1, "GO-Super Gamepad", keys, {0, 1, 3, 4}, G.es_configs([cfg]))
+        self.assertIn("EmulationStation", pad.source)
+        self.assertEqual({c: pad.keys[c] for c in (305, 304, 310, 544, 547, 704, 705)},
+                         {305: "a", 304: "b", 310: "l", 544: "up", 547: "right", 704: "select", 705: "start"})
+        g = Gamepad([])
+        self.assertEqual(g.decode(1, 704, 1, pad=pad), ["select"])
+        self.assertEqual(g.decode(1, 705, 1, pad=pad), ["quit"])
+        # The same file on a pad it doesn't name: the pad's table.
+        osh = G.Pad(-1, "OpenSimHardware OSH PB Controller", {304, 305, 306, 307, 308, 309, 310, 311},
+                    {0, 1, 0x10, 0x11}, G.es_configs([cfg]))
+        self.assertIn("table", osh.source)
+
+    def test_pads_that_differ(self):
+        from provisioner.ui import gamepad as G
+        g = Gamepad([])
+        osh = G.Pad(-1, "OpenSimHardware OSH PB Controller", {304, 305, 306, 307, 308, 309, 310, 311},
+                    {0x10, 0x11}, [])
+        self.assertEqual(g.decode(1, 308, 1, pad=osh), ["l"])           # Y elsewhere, L1 here
+        self.assertEqual(g.decode(1, 306, 1, pad=osh), ["y"])
+        self.assertEqual(g.decode(3, 0x11, -1, pad=osh), ["up"])        # the D-pad is a hat
+        self.assertEqual(g.decode(3, 0x11, 0, pad=osh), [])
+        xu = G.Pad(-1, "XU10 Gamepad", {304, 305, 307, 308, 314, 315}, set(), [])
+        self.assertEqual(g.decode(1, 304, 1, pad=xu), ["a"])            # A and B the other way round
+        # ES with the D-pad on a hat, and a stick.
+        ins = [("up", "hat", 0, 1), ("right", "hat", 0, 2), ("down", "hat", 0, 4), ("left", "hat", 0, 8),
+               ("a", "button", 0, 1)]
+        kmap, amap = G.es_mapping(ins, {304, 305}, {0, 1, 0x10, 0x11})
+        self.assertEqual(kmap, {304: "a"})
+        self.assertEqual(amap, {0x11: ("up", "down"), 0x10: ("left", "right")})
+        _, amap = G.es_mapping([("left", "axis", 0, -1), ("right", "axis", 0, 1)], set(), {0, 1, 0x10})
+        self.assertEqual(amap, {0: ("left", "right")})
+
+
+class EveryScreenSize(Base):
+    """The RK3326 handhelds' screens: each laid out on its own canvas, a
+    sideways panel turned."""
+
+    SIZES = [((640, 480), 0, (720, 540)), ((854, 480), 0, (854, 480)), ((480, 320), 0, (600, 400)),
+             ((320, 480), 270, (600, 400)), ((1024, 768), 0, (1024, 768)), ((720, 720), 0, (720, 720))]
+
+    def display_for(self, screen, rot):
+        d = Display(os.path.join(ROOT, "assets", "cockpit_font.bin"), headless=True, screen=screen, rotate=rot)
+
+        def gone():
+            if d.target:
+                d.sdl.SDL_DestroyTexture(d.target)
+            for tex, _ in d._atlases:
+                d.sdl.SDL_DestroyTexture(tex)
+            d.sdl.SDL_DestroyRenderer(d.ren)
+            d.sdl.SDL_DestroyWindow(d.win)       # not SDL_Quit: the other tests' display stays
+        self.addCleanup(gone)
+        self.addCleanup(lambda: A.set_canvas(display().size))
+        return d
+
+    def test_canvas_sizes(self):
+        from provisioner.ui import sdl as S
+        self.assertEqual(S.canvas_for(640, 480), (720, 540))
+        self.assertEqual(S.canvas_for(480, 320), (600, 400))
+        self.assertEqual(S.canvas_for(854, 480), (854, 480))
+        self.assertEqual(S.rotation_for(320, 480, True, env={}, dt="/nonexistent"), 270)
+        self.assertEqual(S.rotation_for(320, 480, False, env={}, dt="/nonexistent"), 0)     # a window
+        self.assertEqual(S.rotation_for(640, 480, True, env={}, dt="/nonexistent"), 0)
+        self.assertEqual(S.rotation_for(320, 480, True, env={"PROVISIONER_ROTATE": "90"}), 90)
+        dt = tempfile.mkdtemp(prefix="dt-")
+        os.makedirs(os.path.join(dt, "dsi@ff450000", "panel@0"))
+        with open(os.path.join(dt, "dsi@ff450000", "panel@0", "rotation"), "wb") as f:
+            f.write(b"\0\0\0\x5a")
+        self.assertEqual(S.rotation_for(480, 854, True, env={}, dt=dt), 90)         # the panel says
+        self.assertTrue(S.is_fullscreen_driver({"SDL_VIDEODRIVER": "wayland"}))     # ROCKNIX's sway
+
+    def test_every_screen(self):
+        import shutil
+        os.environ["FAKE_BOARD"] = "s3"
+        for screen, rot, canvas in self.SIZES:
+            with self.subTest(screen=screen):
+                d = self.display_for(screen, rot)
+                self.assertEqual(d.size, canvas)
+                a = A.App(d, version="0.3.0", ports_fn=lambda: [], users_fn=lambda p: [])
+                a.here_fn = a.adapter_fn = None
+                a.unbound_fn = lambda: [{"usb": "1a86:7523", "usb_chip": "CH340 USB-serial", "driver": "ch341"}]
+                a.scan()
+                self.assertEqual((A.W, A.H), canvas)
+                tag = "%dx%d" % screen
+                self.shot(a, "60-%s-empty-nodriver" % tag)
+                pw, ph, px = d.snapshot()
+                self.assertEqual((pw, ph), screen)
+                if not rot:                              # the hints bar is at the very bottom
+                    o = ((ph - 3) * pw + 3) * 4
+                    self.assertEqual(tuple(px[o:o + 3]), A.PANEL2)
+                a.unbound_fn = None
+                a.nodriver = []
+                a.ports_fn = lambda: [port("/dev/ttyACM0", "303a:1001", "ESP32-S3/C3 native USB")]
+                a.next_scan = 0
+                a.scan()
+                a.handle("a")
+                self.wait(a)
+                a.handle("a")
+                self.assertEqual(a.screen, "jobs")
+                rows = a.jobs()
+                k = [i for i, r in enumerate(rows) if r["kind"] == "pack"][-1]
+                for _ in range(k):
+                    a.handle("down")
+                self.shot(a, "61-%s-jobs" % tag)
+                a.handle("a")
+                self.assertIsNotNone(a.confirm)
+                self.shot(a, "62-%s-confirm" % tag)
+                a.handle("b")
+                a.jsel = 0
+                a.handle("a")                            # Make a Stump: the form
+                self.shot(a, "63-%s-form" % tag)
+                a.handle("a")                            # its first field: the keyboard
+                self.assertIsNotNone(a.kb)
+                self.shot(a, "64-%s-keyboard" % tag)
+                a.handle("select")
+                self.assertIsNone(a.kb)
+                a.handle("b")
+                tmp = tempfile.mkdtemp(prefix="card-")
+                self.addCleanup(shutil.rmtree, tmp, True)
+                for n in range(14):
+                    open(os.path.join(tmp, "image-%02d.bin" % n), "wb").close()
+                a.roots_fn = lambda: [("Card", tmp)]
+                a.jsel = [r["kind"] for r in a.jobs()].index("fromfile")
+                a.handle("a")
+                a.handle("a")
+                for _ in range(12):
+                    a.handle("down")
+                self.shot(a, "65-%s-files" % tag)
+                a.handle("b")
+                a.handle("b")
+                a.handle("y")                            # the serial log (nothing there: says so)
+                self.shot(a, "66-%s-log" % tag)
+                a.handle("b")
+                a.stop_log()
+
 
 if __name__ == "__main__":
     try:

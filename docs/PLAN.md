@@ -81,10 +81,14 @@ Making a Stump is the Provisioner's main job (2026-11-02): it comes first.
       from its bytes) or a pack's `.zip`, from the card, home or a USB drive
 - [x] **Packs** (0.3.0-beta.5): Tavern and rnfs from Stump 1.0.0-beta.50,
       installed as Arborist does
-- [ ] **Every RK3326 handheld** (imperative): controls from ES's
-      `es_input.cfg` (per-device evdev tables as the fallback), layouts for
-      480x320, 640x480, 720x720, 854x480 (rotated panels too), launcher and
+- [x] **Every RK3326 handheld** (0.3.0-beta.6): controls from ES's
+      `es_input.cfg` (per-pad tables as the fallback), layouts for 480x320,
+      640x480, 720x720, 854x480, 1024x768 (rotated panels too), launcher and
       installer for ArkOS, dArkOS, AmberELEC, ROCKNIX (Wayland there)
+- [ ] Run it on another RK3326 (R36S, an OGA-class 480x320, ROCKNIX) and
+      check the rotation direction on a sideways panel
+- [ ] CH340 boards: no RK3326 system has ch341; a userspace driver (libusb)
+      would be the way, if wanted
 - [x] The bundle from its own release file (Team Stump's beta.48)
 
 ## Bench (on the R36MAX)

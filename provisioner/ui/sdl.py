@@ -3,8 +3,17 @@ EmulationStation uses, KMSDRM on the handheld; no pygame), with FireFly's
 font (DejaVu Sans Mono, pre-rendered in assets/cockpit_font.bin, the same
 file the Stump cockpit uses).
 
-The screen is laid out at 720x720 (the R36MAX); any other screen (the
-R36S's 640x480, a computer window) shows it scaled to fit.
+The layout takes the screen's own shape: a canvas as big as the screen,
+or, on a screen narrower than 720, a bigger one scaled down by no more
+than 0.8 so the type stays readable. 720x720 (the R36MAX) and 854x480 (the
+OGS, RGB10 Max) are drawn 1:1; 640x480 (R36S, RG351V/MP, ...) is a 720x540
+canvas; 480x320 (OGA, RK2020, RG351P/M) a 600x400 one. A panel mounted
+sideways (the screen reports portrait) gets the picture turned: by the
+panel's own `rotation` in the device tree when it says, else 270 degrees,
+or PROVISIONER_ROTATE=0/90/180/270.
+
+Only SDL 2.0.0 functions are used (the oldest SDL on these systems is
+2.0.20-ish), so any SDL2 build works.
 """
 
 import ctypes as C
@@ -13,7 +22,7 @@ import math
 import os
 import struct
 
-W = H = 720
+W = H = 720                     # the canvas when nothing else is known (and the tests' default)
 F10, F16, F20, F24, F30B = range(5)
 
 SDL_INIT_VIDEO = 0x20
@@ -25,6 +34,8 @@ SDL_RENDERER_SOFTWARE = 1
 SDL_RENDERER_ACCELERATED = 2
 SDL_PIXELFORMAT_ABGR8888 = 0x16762004          # bytes R, G, B, A in memory (little-endian)
 SDL_BLENDMODE_BLEND = 1
+SDL_TEXTUREACCESS_TARGET = 2
+MIN_SCALE = 0.8                 # a canvas is never shrunk more than this: the type stays readable
 SDL_QUIT, SDL_KEYDOWN, SDL_TEXTINPUT = 0x100, 0x300, 0x303
 
 # A keyboard's keys (a USB keyboard on the handheld, a computer's). Letters
@@ -49,6 +60,45 @@ def _lib():
             except OSError:
                 pass
     raise RuntimeError("SDL2 not found (install libsdl2 / brew install sdl2)")
+
+
+def canvas_for(w, h):
+    """The canvas (layout size) for a screen of w x h (landscape)."""
+    s = 1.0 if w >= W else max(MIN_SCALE, w / float(W))
+    return int(round(w / s)), int(round(h / s))
+
+
+def panel_rotation(dt="/proc/device-tree"):
+    """The device tree's panel `rotation` (degrees), or None."""
+    import glob
+    for pat in ("*/panel*/rotation", "*/*/panel*/rotation", "*/*/*/panel*/rotation", "*/*/*/*/panel*/rotation"):
+        for p in sorted(glob.glob(os.path.join(dt, pat))):
+            try:
+                with open(p, "rb") as f:
+                    b = f.read(4)
+                if len(b) == 4:
+                    return struct.unpack(">I", b)[0] % 360
+            except OSError:
+                pass
+    return None
+
+
+def rotation_for(out_w, out_h, fullscreen, env=None, dt="/proc/device-tree"):
+    """Degrees to turn the picture by: a portrait screen on the handheld is a
+    panel mounted sideways (an SDL that already turns it reports landscape)."""
+    env = os.environ if env is None else env
+    forced = env.get("PROVISIONER_ROTATE", "")
+    if forced.strip().isdigit():
+        return int(forced) % 360
+    if not fullscreen or out_h <= out_w:
+        return 0
+    r = panel_rotation(dt)
+    return r if r in (90, 270) else 270
+
+
+def is_fullscreen_driver(env=None):
+    env = os.environ if env is None else env
+    return env.get("PROVISIONER_FULLSCREEN") == "1" or env.get("SDL_VIDEODRIVER", "") in ("kmsdrm", "fbcon", "wayland")
 
 
 def rgb(hexstr):
@@ -77,19 +127,23 @@ def load_fonts(path):
 
 
 class Display:
-    def __init__(self, font_path, headless=False, windowed=None):
+    def __init__(self, font_path, headless=False, windowed=None, screen=None, rotate=None):
+        """screen: the window's size (the tests pretend a handheld's screen);
+        rotate: degrees, None to work it out."""
         self.sdl = sdl = _lib()
         self._protos()
         if headless:
             os.environ["SDL_VIDEODRIVER"] = "dummy"
             os.environ.setdefault("SDL_RENDER_DRIVER", "software")
+        sdl.SDL_SetHint(b"SDL_RENDER_SCALE_QUALITY", b"1")        # scaled type stays smooth
         if sdl.SDL_Init(SDL_INIT_VIDEO) != 0:
             raise RuntimeError("SDL_Init: %s" % sdl.SDL_GetError().decode())
         if windowed is None:
-            windowed = headless or os.environ.get("SDL_VIDEODRIVER", "") not in ("kmsdrm", "fbcon")
+            windowed = headless or not is_fullscreen_driver()
         flags = (SDL_WINDOW_HIDDEN if headless else SDL_WINDOW_SHOWN) | (0 if windowed else SDL_WINDOW_FULLSCREEN_DESKTOP)
+        sw, sh = screen or (W, H)
         self.win = sdl.SDL_CreateWindow(b"RK3326 Provisioner", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-                                        W, H, flags)
+                                        sw, sh, flags)
         if not self.win:
             raise RuntimeError("SDL_CreateWindow: %s" % sdl.SDL_GetError().decode())
         self.ren = sdl.SDL_CreateRenderer(self.win, -1, SDL_RENDERER_SOFTWARE if headless else SDL_RENDERER_ACCELERATED)
@@ -100,8 +154,18 @@ class Display:
         ow, oh = C.c_int(), C.c_int()
         sdl.SDL_GetRendererOutputSize(self.ren, C.byref(ow), C.byref(oh))
         self.out_size = (ow.value, oh.value)
-        if self.out_size != (W, H):
-            sdl.SDL_RenderSetLogicalSize(self.ren, W, H)   # the 720x720 layout, scaled to fit
+        self.rot = rotation_for(ow.value, oh.value, not windowed) if rotate is None else rotate % 360
+        lw, lh = (oh.value, ow.value) if self.rot in (90, 270) else (ow.value, oh.value)
+        self.size = canvas_for(lw, lh)
+        self.target = None
+        if self.rot or self.size != (lw, lh):
+            # Drawn on a texture the canvas's size, then scaled (and turned) onto
+            # the screen in one go: scaling each shape alone leaves seams.
+            self.target = sdl.SDL_CreateTexture(self.ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_TARGET,
+                                                self.size[0], self.size[1])
+            if not self.target or sdl.SDL_SetRenderTarget(self.ren, self.target) != 0:
+                raise RuntimeError("can't draw on a texture to scale or turn (PROVISIONER_ROTATE=0 to try "
+                                   "without turning): %s" % sdl.SDL_GetError().decode())
         sdl.SDL_ShowCursor(0)
         sdl.SDL_StartTextInput()
         sdl.SDL_SetRenderDrawBlendMode(self.ren, SDL_BLENDMODE_BLEND)
@@ -129,6 +193,8 @@ class Display:
                            ("SDL_SetTextureColorMod", [vp, C.c_uint8, C.c_uint8, C.c_uint8]),
                            ("SDL_RenderCopy", [vp, vp, C.POINTER(Rect), C.POINTER(Rect)]),
                            ("SDL_RenderReadPixels", [vp, C.POINTER(Rect), u, vp, i]),
+                           ("SDL_SetRenderTarget", [vp, vp]), ("SDL_SetHint", [C.c_char_p, C.c_char_p]),
+                           ("SDL_RenderCopyEx", [vp, vp, C.POINTER(Rect), C.POINTER(Rect), C.c_double, vp, i]),
                            ("SDL_PollEvent", [vp]), ("SDL_DestroyTexture", [vp]),
                            ("SDL_DestroyRenderer", [vp]), ("SDL_DestroyWindow", [vp])):
             getattr(s, name).argtypes = args
@@ -217,8 +283,25 @@ class Display:
         self.fill_rrect(x, y, w, h, r, edge)
         self.fill_rrect(x + 2, y + 2, w - 4, h - 4, max(0, r - 2), inside)
 
+    def _turned(self):
+        """Copies the canvas, turned and scaled, onto the screen (the target is the screen)."""
+        sdl, (ow, oh), (cw, ch) = self.sdl, self.out_size, self.size
+        lw, lh = (oh, ow) if self.rot in (90, 270) else (ow, oh)
+        s = min(lw / float(cw), lh / float(ch))
+        dw, dh = int(round(cw * s)), int(round(ch * s))
+        dst = Rect((ow - dw) // 2, (oh - dh) // 2, dw, dh)       # turned about its centre: fills the screen
+        sdl.SDL_SetRenderDrawColor(self.ren, 0, 0, 0, 255)
+        sdl.SDL_RenderClear(self.ren)
+        sdl.SDL_RenderCopyEx(self.ren, self.target, None, C.byref(dst), float(self.rot), None, 0)
+
     def present(self):
-        self.sdl.SDL_RenderPresent(self.ren)
+        if self.target:
+            self.sdl.SDL_SetRenderTarget(self.ren, None)
+            self._turned()
+            self.sdl.SDL_RenderPresent(self.ren)
+            self.sdl.SDL_SetRenderTarget(self.ren, self.target)
+        else:
+            self.sdl.SDL_RenderPresent(self.ren)
 
     def events(self):
         """Keyboard actions since the last call (a USB keyboard, a computer)."""
@@ -239,15 +322,22 @@ class Display:
         return out
 
     def snapshot(self):
-        """(w, h, RGBA bytes) of what's drawn (the tests' screenshots)."""
+        """(w, h, RGBA bytes) of what's on the screen (the tests' screenshots)."""
         ow, oh = self.out_size
         buf = (C.c_uint8 * (ow * oh * 4))()
+        if self.target:
+            self.sdl.SDL_SetRenderTarget(self.ren, None)
+            self._turned()
         self.sdl.SDL_RenderReadPixels(self.ren, None, SDL_PIXELFORMAT_ABGR8888, buf, ow * 4)
+        if self.target:
+            self.sdl.SDL_SetRenderTarget(self.ren, self.target)
         return ow, oh, bytes(buf)
 
     def close(self):
         for tex, _ in self._atlases:
             self.sdl.SDL_DestroyTexture(tex)
+        if self.target:
+            self.sdl.SDL_DestroyTexture(self.target)
         self.sdl.SDL_DestroyRenderer(self.ren)
         self.sdl.SDL_DestroyWindow(self.win)
         self.sdl.SDL_Quit()

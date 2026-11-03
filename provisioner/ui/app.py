@@ -17,13 +17,34 @@ import time
 
 from .. import boards, catalog, files, flasher, images, packs, s3wifi, stump
 from ..seriallog import SerialLog
+from . import keyboard
 from .keyboard import Keyboard
-from .sdl import F16, F20, F24, F30B, W, rgb
+from .sdl import F16, F20, F24, F30B, rgb
 
 BG, PANEL, PANEL2, BORDER = rgb("1b1512"), rgb("2a2119"), rgb("221b15"), rgb("493c2e")
 EMBER, EMBER_BRIGHT, TEXT, MUTED = rgb("d97a3a"), rgb("f0a050"), rgb("ecdfc8"), rgb("9c8d76")
 ERROR, OK = rgb("e07a5a"), rgb("9cb876")
 TOP = 96                                   # under the header
+W = H = 720                                # the canvas: set from the display (set_canvas)
+BOT = H - 38                               # the hints bar's top
+
+
+def set_canvas(size):
+    """The canvas the screens are laid out on (the display's: 600x400 to 854x720 on these handhelds)."""
+    global W, H, BOT
+    W, H = size
+    BOT = H - 38
+    keyboard.set_canvas(size)
+
+
+def fits(top, rh, gap=6):
+    """How many rows rh high fit from top to the hints bar."""
+    return max(1, (BOT - gap - top) // rh)
+
+
+def window(sel, n, vis, ahead=1):
+    """The first row shown, so sel is in view with `ahead` rows after it when there are."""
+    return max(0, min(sel - (vis - 1 - ahead), n - vis))
 THEME = {"BG": BG, "PANEL": PANEL, "PANEL2": PANEL2, "BORDER": BORDER, "EMBER": EMBER, "TEXT": TEXT, "MUTED": MUTED}
 CHAINS = [("none", "No chain"), ("first", "First Stump of a chain"), ("member", "Joins another Stump")]
 RADIOS = [("ap", "Heltec on its own Wi-Fi"), ("lan", "Heltec on the home Wi-Fi"), ("none", "No LoRa radio")]
@@ -95,10 +116,13 @@ def wrap(d, fid, text, width):
 class App:
     def __init__(self, display, version="", firmware_dir=None, ports_fn=None, users_fn=None):
         self.d = display
+        set_canvas(getattr(display, "size", (720, 720)))
         self.version = version
         self.entries = catalog.load(firmware_dir)
         self.ports_fn = ports_fn or boards.list_ports
         self.users_fn = users_fn or boards.port_users
+        self.unbound_fn = boards.unbound
+        self.nodriver = []              # USB-serial chips plugged in with no driver on this system
         self.screen = "boards"
         self.ports, self.sel, self.jsel = [], 0, 0
         self.known = {}                 # port -> {"board": {...}, "info": {...}} once identified
@@ -159,6 +183,10 @@ class App:
             return
         self.next_scan = time.time() + 1.0
         ports = self.ports_fn()
+        try:
+            self.nodriver = self.unbound_fn() if self.unbound_fn else []
+        except Exception:
+            self.nodriver = []
         # the S3 USB Wi-Fi adapter's control port isn't a board to flash: it's the adapter's row
         port = s3wifi.find(ports)
         ports = [p for p in ports if p["port"] != port]
@@ -776,8 +804,10 @@ class App:
             return
         a, rows = f["a"], self.form_rows()
         d.text(F16, 16, TOP + 4, "A NEW STUMP" if f["mode"] == "new" else "ITS SETTINGS", EMBER)
-        rh, vis = 56, 9
-        first = max(0, min(f["sel"] - (vis - 2), len(rows) - vis))
+        rh = 56
+        lora = a.get("radio") != "none"
+        vis = max(1, (BOT - 6 - (TOP + 28) - (28 if lora else 0)) // rh)
+        first = window(f["sel"], len(rows), vis)
         if first > 0:
             d.text(F16, W - 90, TOP + 4, "↑ more", MUTED)
         if first + vis < len(rows):
@@ -803,11 +833,12 @@ class App:
             else:
                 val = v if v else "blank: " + r.get("blank", "")
                 vc = TEXT if v else MUTED
-            d.text(F20, 26, y + 13, r["label"], EMBER_BRIGHT if sel else TEXT, 300)
-            vw = min(d.text_width(F20, val), W - 360)
-            d.text(F20, W - 28 - vw, y + 13, val, vc, W - 360)
-        if a.get("radio") != "none":
-            d.text(F16, 16, 656, "LoRa: 868.8 MHz · 125 kHz · SF8 · CR 4/5 · 22 dBm (the mesh's)",
+            lw = min(300, W * 5 // 12)
+            d.text(F20, 26, y + 13, r["label"], EMBER_BRIGHT if sel else TEXT, lw)
+            vw = min(d.text_width(F20, val), W - lw - 60)
+            d.text(F20, W - 28 - vw, y + 13, val, vc, W - lw - 60)
+        if lora:
+            d.text(F16, 16, BOT - 26, "LoRa: 868.8 MHz · 125 kHz · SF8 · CR 4/5 · 22 dBm (the mesh's)",
                    MUTED, W - 32)
         self.hints([("A", "type / choose"), ("←→", "choice"), ("↑↓", "move"), ("B", "back")])
 
@@ -827,7 +858,7 @@ class App:
 
     def log_rows(self):
         """How many lines the log screen shows (fewer while a long line is spelled out)."""
-        return (676 - (TOP + 40)) // self.LOG_ROW
+        return (BOT - 6 - (TOP + 40)) // self.LOG_ROW
 
     def on_log(self, act):
         v, log = self.logv, self.log
@@ -916,32 +947,51 @@ class App:
 
     def hints(self, pairs):
         d, x = self.d, 12
-        d.fill(0, 682, W, 38, PANEL2)
+        d.fill(0, BOT, W, H - BOT, PANEL2)
         for key, label in pairs:
+            if x > W - 40:
+                break
             if key:
                 kw = d.text_width(F16, key) + 14
-                d.fill_rrect(x, 690, kw, 24, 5, BORDER)
-                d.text(F16, x + 7, 693, key, TEXT)
+                d.fill_rrect(x, BOT + 8, kw, 24, 5, BORDER)
+                d.text(F16, x + 7, BOT + 11, key, TEXT)
                 x += kw + 6
-            x += d.text(F16, x, 693, label, MUTED) + 16
+            x += d.text(F16, x, BOT + 11, label, MUTED, W - 8 - x) + 16
+
+    def nodriver_line(self):
+        """One line on a board this system can't talk to (no driver for its USB chip)."""
+        n = self.nodriver[0]
+        return "%s plugged in, but this system has no driver for it (%s): no port to flash it by" % (
+            n["usb_chip"], n["driver"])
 
     def draw_boards(self):
         d = self.d
+        if self.nodriver:
+            for i, s in enumerate(wrap(d, F16, self.nodriver_line(), W - 48)[:2]):
+                d.text(F16, 24, BOT - 50 + i * 21, s, ERROR, W - 48)
         if not self.ports and not self.adapter:
-            d.text(F24, 24, TOP + 120, "Plug a board into the hub", TEXT)
-            for i, s in enumerate(("With a data cable: a Heltec V3, an ESP32-S3 (Freenove CAM)",
-                                   "or a classic ESP32. It shows up here by itself.",
-                                   "A board with two USB-C ports: either one flashes it; once",
-                                   "it's a USB Wi-Fi adapter, use the serial chip's port.")):
-                d.text(F16, 24, TOP + 160 + i * 24, s, MUTED, W - 48)
+            y0 = TOP + (120 if H >= 600 else 24)
+            d.text(F24, 24, y0, "Plug a board into the hub", TEXT)
+            text = [wrap(d, F16, t, W - 48) for t in (
+                "With a data cable: a Heltec V3, an ESP32-S3 (Freenove CAM) or a classic ESP32. "
+                "It shows up here by itself.",
+                "A board with two USB-C ports: either one flashes it; once it's a USB Wi-Fi adapter, "
+                "use the serial chip's port.")]
+            y = y0 + 40
+            for para in text:
+                for s in para:
+                    d.text(F16, 24, y, s, MUTED, W - 48)
+                    y += 22
+                y += 8
             self.hints([("SELECT+START", "quit")])
             return
         self.draw_here(TOP + 4)
         d.text(F16, 16, TOP + 4, "BOARDS ON THE HUB", EMBER)
         rh = 84
         rows = self.rows()
-        first = max(0, min(self.sel - 5, len(rows) - 6))
-        for k, p in enumerate(rows[first:first + 6]):
+        vis = fits(TOP + 28, rh) - (1 if self.nodriver else 0)
+        first = window(self.sel, len(rows), max(1, vis), ahead=0)
+        for k, p in enumerate(rows[first:first + max(1, vis)]):
             i = first + k
             y = TOP + 28 + k * rh
             sel = i == self.sel
@@ -1035,9 +1085,9 @@ class App:
         if not rows:
             d.text(F20, 26, TOP + 130, "Looking…" if not w["loaded"] else "None in range (X looks again).", MUTED)
         rh = 62
-        vis = 8
+        vis = fits(TOP + 116, rh)
         w["sel"] = min(w["sel"], max(0, len(rows) - 1))
-        first = max(0, min(w["sel"] - (vis - 2), len(rows) - vis))
+        first = window(w["sel"], len(rows), vis)
         for k, r in enumerate(rows[first:first + vis]):
             i = first + k
             y = TOP + 116 + k * rh
@@ -1078,8 +1128,9 @@ class App:
         d.text(F16, 16, TOP + 72, "WHAT IT CAN BE GIVEN", EMBER)
         rows = self.jobs()
         rh = 72
-        first = max(0, min(self.jsel - 6, len(rows) - 7))
-        for k, r in enumerate(rows[first:first + 7]):
+        vis = fits(TOP + 96, rh)
+        first = window(self.jsel, len(rows), vis)
+        for k, r in enumerate(rows[first:first + vis]):
             i = first + k
             y = TOP + 96 + k * rh
             sel = i == self.jsel
@@ -1155,7 +1206,7 @@ class App:
         else:
             y += 18
         d.text(F16, 20, y, "LOG", EMBER)
-        n = (676 - (y + 24)) // 20
+        n = max(0, (BOT - 6 - (y + 24)) // 20)
         for i, s in enumerate(t.tail(n)):
             d.text(F16, 20, y + 24 + i * 20, s, MUTED, W - 40)
         self.hints([("A", "continue"), ("B", "back")] if t.done else [("", "working: leave it plugged in")])
@@ -1170,8 +1221,9 @@ class App:
         if not es:
             d.text(F20, 26, TOP + 44, "Nothing here to flash (Y shows every file)." if fb["path"] else
                    "No card or drive found.", MUTED, W - 52)
-        rh, vis = 52, 10
-        first = max(0, min(fb["sel"] - (vis - 2), len(es) - vis))
+        rh = 52
+        vis = fits(TOP + 34, rh)
+        first = window(fb["sel"], len(es), vis)
         for k, e in enumerate(es[first:first + vis]):
             i, y = first + k, TOP + 34 + k * rh
             sel = i == fb["sel"]
@@ -1261,15 +1313,16 @@ class App:
         tone = ERROR if c["danger"] else OK
         # The box fits its text: the body in F20, or F16 when F20 won't fit
         # between the header and the hints.
-        room = (W - 56) - (TOP + 20) - 70 - 54 - 30
+        area = 8 if H < 560 else TOP + 10       # a short screen: over the header too
+        room = BOT - 8 - area - (66 + 20 + 54 + 20)
         for font, lh in ((F20, 26), (F16, 21)):
             body = [wrap(d, font, s, W - 150) for s in c["lines"]]
             h = sum(len(b) * lh + 4 for b in body)
             if h <= room:
                 break
         h = min(h, room)
-        box_h = 70 + h + 20 + 54 + 20
-        top = max(TOP + 10, (W - 56 - box_h) // 2 + 10)
+        box_h = 66 + h + 20 + 54 + 20
+        top = max(area, (BOT + area - box_h) // 2)
         d.stroke_rrect(50, top, W - 100, box_h, 10, tone, PANEL)
         d.text(F24, 74, top + 20, c["title"], tone, W - 148)
         y, end = top + 66, top + 66 + h
@@ -1281,13 +1334,15 @@ class App:
                 y += lh
             y += 4
         by = top + box_h - 74
+        bw = (W - 148 - 20) // 2
         for i in range(2):
             sel = c["choice"] == i
-            bx = 74 + i * 290
+            bx = 74 + i * (bw + 20)
             lbl = "No, cancel" if i == 0 else c["yes"]
             if sel:
-                d.fill_rrect(bx, by, 270, 54, 8, EMBER if i == 0 else tone)
+                d.fill_rrect(bx, by, bw, 54, 8, EMBER if i == 0 else tone)
             else:
-                d.stroke_rrect(bx, by, 270, 54, 8, BORDER, PANEL2)
-            d.text(F24, bx + (270 - d.text_width(F24, lbl)) // 2, by + 12, lbl, BG if sel else TEXT)
+                d.stroke_rrect(bx, by, bw, 54, 8, BORDER, PANEL2)
+            lw = min(d.text_width(F24, lbl), bw - 16)
+            d.text(F24, bx + (bw - lw) // 2, by + 12, lbl, BG if sel else TEXT, bw - 16)
         self.hints([("←→", "choose"), ("A", "accept"), ("B", "cancel")])

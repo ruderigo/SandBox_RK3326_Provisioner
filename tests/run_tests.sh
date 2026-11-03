@@ -38,6 +38,13 @@ run "python" pyflakes_or_compile
 step "Core: detection, catalogue, flashing (fake esptool)"
 run "core" python3 -W error::ResourceWarning tests/test_core.py
 
+step "install.sh on ArkOS/dArkOS and AmberELEC/ROCKNIX layouts (a pretend root)"
+run "install" python3 tests/test_install.py
+
+step "Python 3.6 and newer (the oldest on these systems is ArkOS's 3.7)"
+if command -v vermin >/dev/null; then run "python-min" vermin -q --no-tips --violations -t=3.6- provisioner
+else echo "(no vermin: pip install vermin)"; fi
+
 step "Making a Stump (Team Stump's pretend board, the real bundle)"
 run "stump" python3 -W error::ResourceWarning tests/test_stump.py
 

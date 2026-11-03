@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Packages
-        run: sudo apt-get update -q && sudo apt-get install -y -q libsdl2-2.0-0 shellcheck pyflakes3
+        run: sudo apt-get update -q && sudo apt-get install -y -q libsdl2-2.0-0 shellcheck pyflakes3 && pipx install -q vermin
       - name: run_tests.sh
         run: bash tests/run_tests.sh
       - name: Screenshots
