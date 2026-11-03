@@ -15,6 +15,28 @@ gamepad. It's an EmulationStation **Ports** entry.
 | Classic ESP32 | WLED 16.0.1 (app slot only), MicroPython 1.29.0 (full install) |
 | Any of them | the serial log (115200); erase the whole flash |
 
+## This handheld's Stump
+
+On ArkOS / dArkOS the boards screen ends with **This handheld's Stump**:
+what the handheld runs (release, name, chain) or *None yet*. **A** opens its
+page:
+
+- **Install a Stump**: a form (its name, its Wi-Fi's name, storage, the
+  chain: first or joining another by its address, and the chain's secret,
+  the Heltec on USB or Bluetooth or none, the Tavern and rnfs packs), then
+  R36MAX-Stump's installer with those answers: Team Stump's own wizard,
+  the walk-up extras and the cockpit. The first install needs internet
+  (packages, SandBox_Stump_On, the Stump's Python), 10-20 minutes.
+- **Update its Stump**: Team Stump's latest, everything kept.
+- **Check it**: does it answer, and with what.
+
+It needs the installer on the handheld, once, over SSH (v2.3.0-r36max or
+newer; until it's released, the sandbox):
+
+```sh
+ssh ark@r36max.local 'git clone -b answers https://github.com/ruderigo/SandBox_RK3326_Stump ~/SandBox_RK3326_Stump'
+```
+
 ## Making a Stump
 
 Plug the Freenove into the hub, choose it (it's identified), then **Make a

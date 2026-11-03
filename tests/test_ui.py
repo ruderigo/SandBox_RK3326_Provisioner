@@ -40,6 +40,7 @@ class Base(unittest.TestCase):
                   users_fn=lambda p: (users or {}).get(p, []))
         a.here_fn = None
         a.adapter_fn = None             # no S3 adapter unless a test plugs in the pretend one
+        a.handheld_fn = None            # no "This handheld's Stump" row unless a test gives one
         a.here = {"release": "1.0.0-beta.47", "name": "R36MAX", "chain": "chain member"}
         a.scan()
         return a
@@ -695,6 +696,104 @@ class FromFileAndPacks(Base):
         self.pick(a, "bad.zip")
         self.assertIsNone(a.confirm)
         self.assertIn("changed since it was hashed", a.toast_text)
+
+
+class TheHandheldsStump(Base):
+    """Installing, updating and checking the handheld's own Stump from the
+    gamepad: a form, then R36MAX-Stump's install.sh --answers (pretend)."""
+
+    def handheld_app(self, installed=False, answers=True, why=""):
+        a = self.app([])
+        inst = {"path": "/home/ark/SandBox_RK3326_Stump/handheld/install.sh", "repo": "SandBox_RK3326_Stump",
+                "version": "2.3.0-r36max" if answers else "2.0.0-r36max", "answers": answers}
+        a.handheld_fn = lambda: {"installer": inst, "why": why, "folder": "/home/ark/Stump", "installed": installed}
+        self.runs = []
+
+        def run(inst, ans, line, step):
+            self.runs.append(ans)
+            step("1/6 Packages")
+            line("installing")
+            return True, "The Stump is up: R36-Test 1.0.0-beta.50 on :80, no chain. Its cockpit: Ports -> LaBuche_Stump."
+        a.handheld_run = run
+        a.here = {"none": True} if not installed else {"release": "1.0.0-beta.50", "name": "LaBuche-R36",
+                                                       "chain": "chain member"}
+        a.here_fn = lambda: a.here
+        a.scan()
+        return a
+
+    def test_install_from_the_gamepad(self):
+        a = self.handheld_app()
+        self.assertEqual(a.rows(), [{"handheld": True}])
+        self.shot(a, "70-boards-handheld")
+        a.handle("a")
+        self.assertEqual(a.screen, "handheld")
+        self.shot(a, "71-handheld")
+        self.assertEqual([r["kind"] for r in a.handheld_jobs()], ["hh_install", "hh_check"])   # nothing to update
+        a.handle("a")
+        self.assertEqual((a.screen, a.form["mode"]), ("form", "handheld"))
+        a.handle("a")                                   # its name
+        a.handle(("text", "R36-Test"))
+        a.handle("start")
+        a.form["sel"] = 3
+        a.handle("right")                               # chain: first
+        a.handle("right")                               # ... joins another
+        self.shot(a, "72-handheld-form")
+        rows = [r["key"] for r in a.form_rows()]
+        self.assertEqual(rows, ["name", "hotspot", "storage", "chain", "parent", "secret", "heltec", "tavern", "rnfs", "go"])
+        a.form["sel"] = rows.index("go")
+        a.handle("a")
+        self.assertIn("address", a.toast_text)          # no address for the Stump it joins: refused
+        self.assertIsNone(a.confirm)
+        a.form["a"].update(parent="192.168.1.20", secret="s3cret-test", tavern="yes")
+        a.handle("a")
+        self.assertEqual(a.confirm["title"], "Install this handheld's Stump?")
+        self.shot(a, "73-handheld-confirm")
+        a.handle("a")                                   # Install (the default here: nothing is erased)
+        self.wait(a)
+        self.shot(a, "74-handheld-done")
+        self.assertTrue(a.task.ok)
+        ans = self.runs[0]
+        self.assertEqual((ans["node name"], ans["that stump's address"], ans["chain secret"], ans["install tavern"]),
+                         ("R36-Test", "192.168.1.20", "s3cret-test", True))
+        self.assertNotIn("change something", ans)        # a new Stump
+        a.handle("a")
+        self.assertEqual(a.screen, "handheld")
+
+    def test_update_keeps_everything(self):
+        a = self.handheld_app(installed=True)
+        a.open_handheld()
+        self.assertEqual([r["kind"] for r in a.handheld_jobs()], ["hh_install", "hh_update", "hh_check"])
+        a.handle("down")
+        a.handle("a")
+        self.assertEqual(a.confirm["title"], "Update this handheld's Stump?")
+        a.handle("a")
+        self.wait(a)
+        self.assertEqual(self.runs[0]["change something"], "")
+        a.handle("b")
+        a.handle("up")                                  # install again: the form, with its name
+        a.handle("a")
+        self.assertEqual(a.form["a"]["name"], "LaBuche-R36")
+
+    def test_check(self):
+        a = self.handheld_app(installed=True)
+        a.open_handheld()
+        a.hsel = 2
+        a.handle("a")
+        self.wait(a)
+        self.assertTrue(a.task.ok)
+        self.assertIn("LaBuche-R36", a.task.msg)
+
+    def test_an_installer_that_cant_take_answers_says_how(self):
+        a = self.handheld_app(answers=False)
+        a.open_handheld()
+        self.shot(a, "75-handheld-old-installer")
+        a.handle("a")
+        self.assertIsNone(a.form)
+        self.assertIn("git pull", a.toast_text)
+        a = self.handheld_app(why="Runs as root here (AmberELEC, ROCKNIX?): ...")
+        a.open_handheld()
+        a.handle("a")
+        self.assertIn("root", a.toast_text)
 
 
 class Buttons(unittest.TestCase):

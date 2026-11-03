@@ -41,6 +41,10 @@ run "core" python3 -W error::ResourceWarning tests/test_core.py
 step "install.sh on ArkOS/dArkOS and AmberELEC/ROCKNIX layouts (a pretend root)"
 run "install" python3 tests/test_install.py
 
+WIZARD=""; [ -n "${STUMP_ON:-}" ] && WIZARD=" (and Team Stump's own wizard, in $STUMP_ON)"
+step "This handheld's Stump: the installer, its answers$WIZARD"
+run "handheld" python3 -W error::ResourceWarning tests/test_handheld.py
+
 step "Python 3.6 and newer (the oldest on these systems is ArkOS's 3.7)"
 if command -v vermin >/dev/null; then run "python-min" vermin -q --no-tips --violations -t=3.6- provisioner
 else echo "(no vermin: pip install vermin)"; fi
@@ -66,6 +70,7 @@ fonts = load_fonts("assets/cockpit_font.bin")
 have = set.intersection(*(set(f["glyphs"]) for f in fonts))
 missing = {}
 for path in ("provisioner/ui/app.py", "provisioner/ui/keyboard.py", "provisioner/stump.py", "provisioner/flasher.py",
+             "provisioner/handheld.py",
              "provisioner/s3wifi.py",
              "firmware/catalog.json"):
     src = open(path, encoding="utf-8").read()

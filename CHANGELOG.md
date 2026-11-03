@@ -10,6 +10,24 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.7
+
+- **This handheld's Stump, from the gamepad.** On ArkOS / dArkOS the boards
+  screen has a row for the handheld's own Stump (what it runs, or *None
+  yet*). Its page installs one (a form: its name, its Wi-Fi's name, storage,
+  the chain and its secret, the Heltec, the Tavern and rnfs packs), updates
+  it (everything kept), or checks it answers. It runs R36MAX-Stump's
+  installer, `handheld/install.sh --answers FILE.json` (SandBox_RK3326_Stump
+  v2.3.0-r36max on), which hands the answers to Team Stump's own wizard
+  (`provisioner.py --pc --answers`, 1.0.0-beta.48 on); the installer's
+  steps and lines show as it goes. The answers file lives only while it
+  runs (it can hold the chain's secret). The first install needs internet;
+  an older installer, or root (AmberELEC, ROCKNIX), is said plainly.
+- Tests: the answers through Team Stump's real wizard (a new chain member
+  with Tavern, the same Stump again with new answers, an update that keeps
+  them), a pretend installer (steps, its stop message, the file gone), and
+  the screens from the boards row to the result.
+
 ## v0.3.0-beta.6
 
 - **Every RK3326 handheld's screen.** The layout takes the screen's shape

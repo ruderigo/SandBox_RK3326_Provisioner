@@ -15,7 +15,7 @@ import os
 import threading
 import time
 
-from .. import boards, catalog, files, flasher, images, packs, s3wifi, stump
+from .. import boards, catalog, files, flasher, handheld, images, packs, s3wifi, stump
 from ..seriallog import SerialLog
 from . import keyboard
 from .keyboard import Keyboard
@@ -48,6 +48,8 @@ def window(sel, n, vis, ahead=1):
 THEME = {"BG": BG, "PANEL": PANEL, "PANEL2": PANEL2, "BORDER": BORDER, "EMBER": EMBER, "TEXT": TEXT, "MUTED": MUTED}
 CHAINS = [("none", "No chain"), ("first", "First Stump of a chain"), ("member", "Joins another Stump")]
 RADIOS = [("ap", "Heltec on its own Wi-Fi"), ("lan", "Heltec on the home Wi-Fi"), ("none", "No LoRa radio")]
+HELTECS = [("usb", "Heltec on USB"), ("ble", "Heltec over Bluetooth"), ("none", "No Heltec")]
+YESNO = [("no", "No"), ("yes", "Yes")]
 
 
 class Task:
@@ -157,6 +159,11 @@ class App:
         self.address_fn = s3wifi.handheld_address
         self.next_adapter = 0.0
         self.wifi = None                # the WIFI screen's state
+        self.handheld_fn = handheld.state   # () -> this handheld's Stump row's state, or None (no row)
+        self.handheld_run = handheld.run
+        self.handheld = None
+        self.next_handheld = 0.0
+        self.hsel = 0
 
     def bundle(self):
         if self._bundle is False:
@@ -179,6 +186,13 @@ class App:
             threading.Thread(target=self._poll_adapter, daemon=True).start()
         if self.screen == "wifi":
             self.wifi_refresh()
+        if self.handheld_fn and time.time() >= self.next_handheld:
+            self.next_handheld = time.time() + 5
+            try:
+                self.handheld = self.handheld_fn()
+            except Exception:
+                self.handheld = None
+            self.sel = min(self.sel, max(0, len(self.rows()) - 1))
         if time.time() < self.next_scan:
             return
         self.next_scan = time.time() + 1.0
@@ -219,8 +233,10 @@ class App:
         self.sel = min(self.sel, max(0, len(self.rows()) - 1))
 
     def rows(self):
-        """The BOARDS screen's rows: the Wi-Fi adapter (when it's there), then the ports."""
-        return ([{"adapter": True}] if self.adapter else []) + self.ports
+        """The BOARDS screen's rows: the Wi-Fi adapter (when it's there), the ports,
+        then this handheld's own Stump (on ArkOS / dArkOS)."""
+        return (([{"adapter": True}] if self.adapter else []) + self.ports +
+                ([{"handheld": True}] if self.handheld else []))
 
     def jobs(self):
         """The rows of the JOBS screen for the current board."""
@@ -291,11 +307,16 @@ class App:
     def on_boards(self, act):
         rows = self.rows()
         n = len(rows)
+        row = rows[self.sel] if n else {}
         if act in ("up", "down") and n:
             self.sel = (self.sel + (1 if act == "down" else -1)) % n
-        elif act == "a" and n and rows[self.sel].get("adapter"):
-            self.open_wifi()
-        elif act in ("a", "x", "y") and n and not rows[self.sel].get("adapter"):
+        elif row.get("adapter"):
+            if act == "a":
+                self.open_wifi()
+        elif row.get("handheld"):
+            if act == "a":
+                self.open_handheld()
+        elif act in ("a", "x", "y") and n:
             p = rows[self.sel]
             self.cur = p
             go = self.open_log if act == "y" else (self.identify if act == "x" or p["port"] not in self.known
@@ -417,6 +438,9 @@ class App:
                 self.open_form("settings", stump.answers_from(t.result))
             elif t.ok and getattr(t, "after", "") == "jobs":
                 self.open_jobs()
+            elif getattr(t, "after", "") == "handheld":
+                self.next_here = self.next_handheld = 0.0       # look again: it may have changed
+                self.screen = "handheld"
             else:
                 self.screen = "jobs" if self.cur and self.cur["port"] in self.known else "boards"
 
@@ -721,12 +745,14 @@ class App:
         self.task.after = "jobs"
         self.screen = "run"
 
-    def open_form(self, mode, a):
-        self.form = {"mode": mode, "a": a, "sel": 0}
+    def open_form(self, mode, a, back="jobs"):
+        self.form = {"mode": mode, "a": a, "sel": 0, "back": back}
         self.screen = "form"
 
     def form_rows(self):
         f, a = self.form, self.form["a"]
+        if f["mode"] == "handheld":
+            return self.handheld_form_rows(a)
         keep = f["mode"] == "settings"
         b = self.bundle()
         rows = [{"key": "name", "label": "Its name", "kind": "text", "max": 20, "blank": "needed"},
@@ -761,7 +787,7 @@ class App:
             i = keys.index(f["a"].get(r["key"], keys[0])) if f["a"].get(r["key"]) in keys else 0
             f["a"][r["key"]] = keys[(i + (1 if act == "right" else -1)) % len(keys)]
         elif act == "b":
-            self.form, self.screen = None, "jobs"
+            self.form, self.screen = None, self.form.get("back", "jobs")
         elif act == "a":
             if r["kind"] in ("text", "secret"):
                 self.kb = Keyboard(r["label"], f["a"].get(r["key"]) or "", r["max"], secret=r["kind"] == "secret",
@@ -773,6 +799,8 @@ class App:
                 self.submit_form()
 
     def submit_form(self):
+        if self.form["mode"] == "handheld":
+            return self.submit_handheld()
         f, b, port = self.form, self.bundle(), self.cur["port"]
         a = dict(f["a"], pw2=f["a"].get("pw", ""))
         if f["mode"] == "settings":
@@ -803,9 +831,10 @@ class App:
         if self.kb:
             return
         a, rows = f["a"], self.form_rows()
-        d.text(F16, 16, TOP + 4, "A NEW STUMP" if f["mode"] == "new" else "ITS SETTINGS", EMBER)
+        d.text(F16, 16, TOP + 4, {"new": "A NEW STUMP", "handheld": "THIS HANDHELD'S STUMP"}.get(f["mode"], "ITS SETTINGS"),
+               EMBER)
         rh = 56
-        lora = a.get("radio") != "none"
+        lora = f["mode"] != "handheld" and a.get("radio") != "none"
         vis = max(1, (BOT - 6 - (TOP + 28) - (28 if lora else 0)) // rh)
         first = window(f["sel"], len(rows), vis)
         if first > 0:
@@ -935,8 +964,10 @@ class App:
         d.text(F16, W - 14 - d.text_width(F16, v), 16, v, MUTED)
         crumbs = {"boards": "Boards on the hub", "jobs": "Boards  ›  %s" % self.board_name(),
                   "run": self.task.title if self.task else "",
-                  "form": "%s  ›  %s" % (self.board_name(), "A new Stump" if self.form and self.form["mode"] == "new"
-                                         else "Its settings"), "files": "%s  ›  From File" % self.board_name(), "log": "Serial log  ·  %s  ·  115200"
+                  "form": ("This handheld  ›  Its Stump" if self.form and self.form["mode"] == "handheld" else
+                           "%s  ›  %s" % (self.board_name(), "A new Stump" if self.form and self.form["mode"] == "new"
+                                          else "Its settings")),
+                  "handheld": "This handheld's Stump", "files": "%s  ›  From File" % self.board_name(), "log": "Serial log  ·  %s  ·  115200"
                   % (self.cur["port"] if self.cur else ""), "wifi": "S3 USB Wi-Fi  ·  its networks"}[self.screen]
         d.text(F20, 16, 52, crumbs, TEXT, W - 32)
         d.fill(0, 86, W, 1, BORDER)
@@ -971,6 +1002,11 @@ class App:
                 d.text(F16, 24, BOT - 50 + i * 21, s, ERROR, W - 48)
         if not self.ports and not self.adapter:
             y0 = TOP + (120 if H >= 600 else 24)
+            if self.handheld:                           # this handheld's Stump first, then how to plug a board
+                d.text(F16, 16, TOP + 4, "THIS HANDHELD", EMBER)
+                d.stroke_rrect(12, TOP + 28, W - 24, 78, 8, EMBER, PANEL)
+                self.draw_handheld_row(TOP + 28, True)
+                y0 = TOP + 28 + 84 + (40 if H >= 600 else 12)
             d.text(F24, 24, y0, "Plug a board into the hub", TEXT)
             text = [wrap(d, F16, t, W - 48) for t in (
                 "With a data cable: a Heltec V3, an ESP32-S3 (Freenove CAM) or a classic ESP32. "
@@ -983,7 +1019,7 @@ class App:
                     d.text(F16, 24, y, s, MUTED, W - 48)
                     y += 22
                 y += 8
-            self.hints([("SELECT+START", "quit")])
+            self.hints(([("A", "this handheld's Stump")] if self.handheld else []) + [("SELECT+START", "quit")])
             return
         self.draw_here(TOP + 4)
         d.text(F16, 16, TOP + 4, "BOARDS ON THE HUB", EMBER)
@@ -999,6 +1035,9 @@ class App:
                 d.stroke_rrect(12, y, W - 24, rh - 6, 8, EMBER, PANEL)
             if p.get("adapter"):
                 self.draw_adapter_row(y, sel)
+                continue
+            if p.get("handheld"):
+                self.draw_handheld_row(y, sel)
                 continue
             known = self.known.get(p["port"])
             name = known["board"]["name"] if known else p["usb_chip"]
@@ -1016,6 +1055,8 @@ class App:
                        W - 60)
         if rows and rows[min(self.sel, len(rows) - 1)].get("adapter"):
             self.hints([("A", "its networks"), ("↑↓", "move"), ("SELECT+START", "quit")])
+        elif rows and rows[min(self.sel, len(rows) - 1)].get("handheld"):
+            self.hints([("A", "install, update, check"), ("↑↓", "move"), ("SELECT+START", "quit")])
         else:
             self.hints([("A", "choose"), ("X", "identify again"), ("Y", "serial log"), ("↑↓", "move"),
                         ("SELECT+START", "quit")])
@@ -1046,6 +1087,183 @@ class App:
         d.text(F16, 26, y + 36, line, tone, W - 60)
         fw = (self.adapter or {}).get("firmware", "")
         d.text(F16, 26, y + 56, "%s · %s · A: its networks" % (self.adapter_port or "usb", fw), MUTED, W - 60)
+
+    def handheld_line(self):
+        """(text, colour): the handheld's Stump, now."""
+        h, st = self.here, self.handheld or {}
+        if h and not h.get("none"):
+            return "Stump %s · %s%s" % (h.get("release", "?"), h.get("name", "?"),
+                                        " · " + h["chain"] if h.get("chain") else ""), OK
+        if st.get("installed"):
+            return "Installed, not answering: ~/Stump/stump.log says why", ERROR
+        return "None yet", MUTED
+
+    def handheld_where(self):
+        st = self.handheld or {}
+        inst = st.get("installer")
+        if st.get("why"):
+            return st["why"], ERROR
+        if not inst:
+            return "No installer here: get SandBox_RK3326_Stump (A says how)", MUTED
+        if not inst["answers"]:
+            return "%s %s can't be run from here: v2.3.0 or newer can" % (inst["repo"], inst["version"]), ERROR
+        return "%s %s · A: install, update, check" % (inst["repo"], inst["version"]), MUTED
+
+    def draw_handheld_row(self, y, sel):
+        d = self.d
+        d.text(F24, 26, y + 6, "This handheld's Stump", EMBER_BRIGHT if sel else TEXT, W - 60)
+        line, tone = self.handheld_line()
+        d.text(F16, 26, y + 36, line, tone, W - 60)
+        where, wt = self.handheld_where()
+        d.text(F16, 26, y + 56, where, wt, W - 60)
+
+    # -- this handheld's own Stump --
+    def open_handheld(self):
+        self.hsel = 0
+        self.next_here = 0.0
+        self.screen = "handheld"
+
+    def handheld_jobs(self):
+        st = self.handheld or {}
+        rows = [{"kind": "hh_install"}]
+        if st.get("installed"):
+            rows.append({"kind": "hh_update"})
+        rows.append({"kind": "hh_check"})
+        return rows
+
+    def handheld_blocked(self):
+        """Why the installer can't run from here (a toast), or ''."""
+        st = self.handheld or {}
+        inst = st.get("installer")
+        if st.get("why"):
+            return st["why"]
+        if not inst:
+            return "Over SSH, once (internet): " + handheld.GET
+        if not inst["answers"]:
+            return "%s %s takes no answers: cd ~/%s && git pull (v2.3.0+), or: %s" % (
+                inst["repo"], inst["version"], inst["repo"], handheld.GET)
+        return ""
+
+    def on_handheld(self, act):
+        rows = self.handheld_jobs()
+        self.hsel = min(self.hsel, len(rows) - 1)
+        if act in ("up", "down"):
+            self.hsel = (self.hsel + (1 if act == "down" else -1)) % len(rows)
+        elif act == "b":
+            self.screen = "boards"
+        elif act == "a":
+            kind = rows[self.hsel]["kind"]
+            if kind == "hh_check":
+                return self.check_handheld()
+            why = self.handheld_blocked()
+            if why:
+                self.toast(why, 8)
+            elif kind == "hh_install":
+                self.open_form("handheld", handheld.form_defaults(self.here), back="handheld")
+            else:
+                st = self.handheld
+                self.ask("Update this handheld's Stump?",
+                         ["Team Stump's latest SandBox_Stump_On and %s's cockpit (git pull: a newer one needs "
+                          "internet; without it, the same again)." % st["installer"]["repo"],
+                          "Its settings, its identity on the mesh, its files and chain stay.",
+                          "The Stump restarts. A few minutes."],
+                         "Update it", lambda: self.run_handheld("Updating this handheld's Stump",
+                                                                handheld.update_answers(st["folder"])))
+
+    def handheld_form_rows(self, a):
+        rows = [{"key": "name", "label": "Its name", "kind": "text", "max": 20, "blank": "needed"},
+                {"key": "hotspot", "label": "Its Wi-Fi's name", "kind": "text", "max": 32, "blank": "its name"},
+                {"key": "storage", "label": "Storage (MB)", "kind": "text", "max": 7, "blank": "2048"},
+                {"key": "chain", "label": "Chain", "kind": "choice", "choices": CHAINS}]
+        if a.get("chain") == "member":
+            rows += [{"key": "parent", "label": "Joins (its address)", "kind": "text", "max": 15,
+                      "blank": "needed: e.g. 192.168.1.20"}]
+        if a.get("chain") in ("first", "member"):
+            rows += [{"key": "secret", "label": "The chain's secret", "kind": "text", "max": 64, "blank": "none (open)"}]
+        rows += [{"key": "heltec", "label": "LoRa", "kind": "choice", "choices": HELTECS},
+                 {"key": "tavern", "label": "Tavern pack", "kind": "choice", "choices": YESNO},
+                 {"key": "rnfs", "label": "rnfs pack", "kind": "choice", "choices": YESNO},
+                 {"key": "go", "label": "Install the Stump", "kind": "button"}]
+        return rows
+
+    def submit_handheld(self):
+        st = self.handheld or {}
+        a = self.form["a"]
+        ans = handheld.answers(a, st.get("folder") or os.path.expanduser("~/Stump"), again=bool(st.get("installed")))
+        if ans.get("error"):
+            self.toast(ans["error"], 4)
+            return
+        lines = ["%s on this handheld, by %s's installer: Team Stump's own wizard, answered from this form." % (
+                 ans["node name"], st["installer"]["repo"])]
+        if st.get("installed"):
+            lines.append("Its Stump is there: these answers replace its settings; its identity and files stay.")
+        else:
+            lines.append("The first install needs internet: packages, SandBox_Stump_On, its Python. 10-20 minutes.")
+        if a.get("chain") in ("first", "member") and not a.get("secret"):
+            lines.append("No chain secret: anyone on a Stump's Wi-Fi could join the chain.")
+        self.ask("Install this handheld's Stump?", lines, "Install", lambda: self.run_handheld(
+            "Installing this handheld's Stump", ans))
+
+    def run_handheld(self, title, ans):
+        inst = self.handheld["installer"]
+
+        def work(t):
+            ok, msg = self.handheld_run(inst, ans, t.line, self._step(t))
+            return ok, msg, None
+        self.form = None
+        self.task = Task(title, work)
+        self.task.after = "handheld"
+        self.screen = "run"
+
+    def check_handheld(self):
+        fn, st = self.here_fn, self.handheld or {}
+
+        def work(t):
+            t.step = "Asking the Stump on this handheld (:80, :8080)"
+            h = fn() if fn else {"none": True}
+            self.here = h
+            if h and not h.get("none"):
+                return True, "Stump %s · %s%s: it answers." % (h.get("release", "?"), h.get("name", "?"),
+                                                              " · " + h["chain"] if h.get("chain") else ""), None
+            if st.get("installed"):
+                return False, "It's installed but doesn't answer: ~/Stump/stump.log says why (Update starts it again).", None
+            return False, "No Stump on this handheld yet: Install a Stump.", None
+        self.task = Task("Checking this handheld's Stump", work)
+        self.task.after = "handheld"
+        self.screen = "run"
+
+    def draw_handheld(self):
+        d = self.d
+        st = self.handheld or {}
+        d.fill_rrect(12, TOP + 2, W - 24, 58, 8, PANEL)
+        line, tone = self.handheld_line()
+        d.text(F20, 26, TOP + 8, line, tone, W - 52)
+        where, wt = self.handheld_where()
+        d.text(F16, 26, TOP + 34, where, wt, W - 52)
+        d.text(F16, 16, TOP + 72, "WHAT IT CAN BE GIVEN", EMBER)
+        rows = self.handheld_jobs()
+        rh = 72
+        blocked = bool(self.handheld_blocked())
+        for k, r in enumerate(rows[:fits(TOP + 96, rh)]):
+            y = TOP + 96 + k * rh
+            sel = k == self.hsel
+            if sel:
+                d.stroke_rrect(12, y, W - 24, rh - 6, 8, EMBER, PANEL)
+            title, about, tag, tc = {
+                "hh_install": ("Install again, new answers" if st.get("installed") else "Install a Stump",
+                               "Its name, Wi-Fi, chain, LoRa, packs; then Team Stump's wizard and the cockpit. "
+                               "The first time needs internet.", "asks first", MUTED),
+                "hh_update": ("Update its Stump", "Team Stump's latest; its settings, identity and files stay.",
+                              "keeps settings", OK),
+                "hh_check": ("Check it", "Asks the Stump on this handheld: release, name, chain.", "", MUTED),
+            }[r["kind"]]
+            ready = r["kind"] == "hh_check" or not blocked
+            tw = d.text_width(F16, tag)
+            d.text(F24, 26, y + 6, title, (EMBER_BRIGHT if sel else TEXT) if ready else MUTED, W - 80 - tw)
+            if tag:
+                d.text(F16, W - 28 - tw, y + 12, tag, tc)
+            d.text(F16, 26, y + 38, about, MUTED, W - 52)
+        self.hints([("A", "choose"), ("B", "boards"), ("↑↓", "move")])
 
     def draw_here(self, y):
         """This handheld's own Stump, on one line at the top right."""
