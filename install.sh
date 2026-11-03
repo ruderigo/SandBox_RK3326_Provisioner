@@ -42,6 +42,14 @@ MYHOME="${MYHOME:-$HOME}"
 APP="${PROVISIONER_APP:-$MYHOME/rk3326_provisioner}"
 OS="$(. "$R/etc/os-release" 2>/dev/null; echo "${PRETTY_NAME:-${NAME:-this system}}")"
 
+# The handheld only: stop here, before anything is touched, on anything else (a
+# computer runs it from its folder instead: python3 -m provisioner).
+[ "$(uname -s)" = "Linux" ] || die "This installs on the handheld (it's $(uname -s) here): run it there, over SSH:
+    ssh -t ark@r36max.local 'cd ~/SandBox_RK3326_Provisioner && git pull && bash install.sh'
+On this computer, use it from this folder instead: python3 -m provisioner"
+PORTS_FOUND=""
+for ports in "$R/roms/ports" "$R/roms2/ports" "$R/storage/roms/ports"; do [ -d "$ports" ] && PORTS_FOUND=1; done
+[ -n "$PORTS_FOUND" ] || die "No roms/ports folder here (/roms/ports, /storage/roms/ports): this isn't the handheld. Nothing was changed."
 command -v python3 >/dev/null || die "python3 is needed"
 python3 -c 'import sys; sys.exit(sys.version_info < (3, 6))' || die "python3 is $(python3 -V 2>&1); 3.6 or newer is needed"
 if [ -z "$R" ]; then

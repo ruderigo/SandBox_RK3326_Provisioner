@@ -67,9 +67,14 @@ class Install(unittest.TestCase):
                                                     "99-rk3326-provisioner.rules")))
         self.assertFalse(os.path.exists(os.path.join(self.r, "etc", "udev")))   # read-only there
 
-    def test_no_ports_folder_says_so(self):
-        code, out = run_install(self.r, self.mk("home", "ark"))
-        self.assertIn("no roms/ports folder", out)
+    def test_not_a_handheld_nothing_touched(self):
+        home = self.mk("home", "ark")
+        self.mk("etc", "udev", "rules.d")
+        code, out = run_install(self.r, home)
+        self.assertNotEqual(code, 0)
+        self.assertIn("this isn't the handheld. Nothing was changed.", out)
+        self.assertFalse(os.path.exists(os.path.join(home, "rk3326_provisioner")))
+        self.assertEqual(os.listdir(os.path.join(self.r, "etc", "udev", "rules.d")), [])
 
 
 if __name__ == "__main__":

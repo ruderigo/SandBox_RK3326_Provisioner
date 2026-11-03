@@ -10,6 +10,14 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.9
+
+- **install.sh stops on anything that isn't the handheld, before touching
+  anything**: not Linux (a Mac), or no `roms/ports` folder. Run on a Mac,
+  beta.8 copied the app into the home folder and a udev rule into
+  `/etc/udev/rules.d` before saying it wasn't the handheld. It now says how
+  to run it on the handheld (over SSH) and that nothing was changed.
+
 ## v0.3.0-beta.8
 
 - **Official, Sandbox, + From File, for everything it installs**, as every
