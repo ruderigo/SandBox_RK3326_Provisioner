@@ -102,3 +102,11 @@ Making a Stump is the Provisioner's main job (2026-11-02): it comes first.
    password (*internet OK*); default route and DNS 10.77.0.1; a Stump's
    `/node.json` through it; unplug and replug. Then LoRa, and the setup page
    from a phone.
+   **2026-11-03, v0.3.0-beta.2 / S3 0.2.1, with the Blueway still in:** `usb0`
+   10.77.0.2/24 by DHCP; the network joined from the Provisioner's page;
+   default route via 10.77.0.1 (metric 100, ahead of `wlan0`'s 600); DNS
+   10.77.0.1 first; `curl --interface usb0 https://example.com`: HTTP/2 200
+   (DNS, NAT and TLS through the S3). Found on the way: 0.2.0's empty MAC
+   string ("bind() failure" in `cdc_ncm`), and the read-back after flashing.
+   ES's network screen doesn't list it (it shows `wlan0` only). Next: without
+   the Blueway (does ES let the scraper and updates run?), replug, LoRa.
