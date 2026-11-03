@@ -4,16 +4,28 @@ A tag `v<VERSION>` (VERSION) runs the tests and publishes a release with
 `RK3326-Provisioner-<VERSION>.tar.gz` and its `SHA256SUMS`; the section
 below is its notes.
 
-## Next (not released)
+**Every change that goes onto the handheld bumps VERSION** (and gets its line
+here), so the version at the top right of the screen says what's installed:
+`0.3.0-beta.1`, `beta.2`, … then `0.3.0`. The CI refuses a pull request that
+changes the app without changing VERSION. The S3 firmware does the same with
+its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
-- **The S3 as the handheld's Wi-Fi card.** *USB Wi-Fi adapter* 0.2.0 in the
-  catalogue (`s3_usb_wifi/`: ESP-IDF firmware, built here, its image checked
-  by the CI). Flashed onto a Freenove S3 and plugged into the handheld by its
-  USB port, it's the handheld's network card: router and DNS for it, up to 8
-  networks remembered.
+## v0.3.0-beta.1
+
+The S3 as the handheld's Wi-Fi card.
+
+- **USB Wi-Fi adapter** 0.2.0 in the catalogue (`s3_usb_wifi/`: ESP-IDF
+  firmware, built here, its image checked by the CI). Flashed onto a
+  Freenove S3 and plugged into the handheld by its USB port, it's the
+  handheld's network card: router and DNS for it, up to 8 networks
+  remembered.
 - **The S3 USB Wi-Fi page**: the adapter at the top of the boards (what it's
   connected to). Its networks with signal bars, A to join one (a password on
   FireFly's keyboard), Y to forget one, *Connected · internet OK* or why not.
+- **Flashing: the board isn't started before the read-back any more.** A full
+  image covers the S3's settings area. The adapter's firmware started right
+  after the write and wrote its settings there, so the read-back said "Verify
+  failed" though the image was fine (seen on the bench, 2026-11-03).
 - Tests: the page against a pretend S3 (`tests/fake_s3.py`), flashing the
   image.
 

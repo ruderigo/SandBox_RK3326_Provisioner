@@ -27,6 +27,33 @@ jobs:
         with:
           name: screenshots
           path: shots/
+  versions:
+    # A pull request that changes what goes on the handheld (or onto the S3)
+    # must change its version too: the screen's version is how you tell what's
+    # installed.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Bumped where it changed
+        run: |
+          base="origin/${{ github.base_ref }}"
+          changed() { ! git diff --quiet "$base" HEAD -- "$@"; }
+          bad=0
+          if changed provisioner install.sh ports firmware assets vendor && ! changed VERSION; then
+            echo "::error::the app changed but VERSION ($(cat VERSION)) didn't: bump it and add its CHANGELOG.md section"
+            bad=1
+          fi
+          if git cat-file -e "$base:s3_usb_wifi/CMakeLists.txt" 2>/dev/null \
+              && changed s3_usb_wifi/main s3_usb_wifi/components s3_usb_wifi/sdkconfig.defaults \
+              && [ "$(git show "$base:s3_usb_wifi/CMakeLists.txt" | grep PROJECT_VER)" = "$(grep PROJECT_VER s3_usb_wifi/CMakeLists.txt)" ]; then
+            echo "::error::the S3 firmware changed but its PROJECT_VER didn't: bump it in s3_usb_wifi/CMakeLists.txt"
+            bad=1
+          fi
+          [ "$bad" = 0 ] && echo "VERSION $(cat VERSION); S3 firmware $(sed -n 's/^set(PROJECT_VER \"\(.*\)\")/\1/p' s3_usb_wifi/CMakeLists.txt)"
+          exit $bad
   s3-usb-wifi:
     # ESP-IDF v5.3.2's own image; the vendored components need nothing else
     runs-on: ubuntu-24.04
