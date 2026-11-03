@@ -1,85 +1,122 @@
 /*
- * The USB side: a CDC-NCM network device (TinyUSB, through esp_tinyusb)
- * wired to an esp_netif with a fixed address, 10.77.0.1/24.
+ * The USB side: a CDC-NCM network device bridged to the Wi-Fi the S3 joined.
+ *
+ * The handheld's interface takes the S3's own Wi-Fi station MAC, and frames
+ * go across unchanged: USB -> esp_wifi_internal_tx(STA), Wi-Fi STA rx ->
+ * USB. So the handheld is on the Wi-Fi itself: its address from the
+ * network's DHCP, its broadcasts and multicasts (Reticulum, mDNS) reach the
+ * others, and they reach it (SSH, a Stump's portal). The S3 has no address
+ * on that network of its own. Wi-Fi allows one MAC per station, which is why
+ * the handheld uses the S3's.
+ *
+ * The NCM link is "up" for the handheld only while the S3 is on a network:
+ * joining one makes its network manager ask for an address there, leaving
+ * one drops it.
  *
  * SPDX-License-Identifier: MIT
  */
-#include <stdlib.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_mac.h"
-#include "esp_netif.h"
 #include "esp_check.h"
+#include "esp_wifi.h"
+#include "esp_private/wifi.h"
 #include "tinyusb.h"
 #include "tinyusb_default_config.h"
 #include "tinyusb_net.h"
+#include "class/net/net_device.h"
+#include "device/usbd_pvt.h"
 #include "adapter.h"
 
 static const char *TAG = "usb_net";
 
-typedef struct {
-    esp_netif_driver_base_t base;
-} usb_driver_t;
-
-static usb_driver_t s_driver;
-static esp_netif_t *s_netif;
 static volatile bool s_mounted;
+static volatile bool s_bridging;     /* the S3 is on a network: frames cross */
+static uint8_t s_mac[6];             /* the S3's station MAC = the handheld's */
+static volatile uint32_t s_to_wifi, s_to_usb, s_dropped;
+static bool s_warned_mac;
 
-/* lwIP -> USB. The packet is copied into an NCM buffer before this returns. */
-static esp_err_t usb_transmit(void *h, void *buffer, size_t len)
-{
-    if (len > 0xFFFF || !s_mounted) {
-        return ESP_FAIL;
-    }
-    for (int tries = 0; tries < 4; tries++) {
-        esp_err_t r = tinyusb_net_send_sync(buffer, (uint16_t)len, NULL, pdMS_TO_TICKS(20));
-        if (r == ESP_OK) {
-            return ESP_OK;
-        }
-        if (r == ESP_ERR_INVALID_STATE) {
-            return ESP_FAIL;     /* not mounted: drop */
-        }
-        vTaskDelay(1);           /* the NCM buffers are busy: give the host a moment */
-    }
-    return ESP_FAIL;
-}
+/* ---- Wi-Fi -> USB ------------------------------------------------------ */
 
-static void usb_free_rx(void *h, void *buffer)
+static esp_err_t wifi_rx(void *buffer, uint16_t len, void *eb)
 {
-    free(buffer);
-}
-
-static void usb_free_tx(void *buffer, void *ctx)
-{
-    /* sync sends only: the buffer stays lwIP's */
-}
-
-/* USB -> lwIP. TinyUSB reuses its buffer when this returns, so copy it. */
-static esp_err_t usb_recv(void *buffer, uint16_t len, void *ctx)
-{
-    if (!s_netif || len == 0) {
+    if (!s_bridging || !s_mounted
+            || tinyusb_net_send_sync(buffer, len, eb, pdMS_TO_TICKS(100)) != ESP_OK) {
+        esp_wifi_internal_free_rx_buffer(eb);
+        s_dropped++;
         return ESP_OK;
     }
-    void *copy = malloc(len);
-    if (!copy) {
-        return ESP_ERR_NO_MEM;
-    }
-    memcpy(copy, buffer, len);
-    return esp_netif_receive(s_netif, copy, len, NULL);
+    s_to_usb++;
+    return ESP_OK;
 }
 
-static esp_err_t usb_post_attach(esp_netif_t *netif, void *args)
+/* TinyUSB copied a Wi-Fi frame into its buffer: give the frame back */
+static void usb_tx_done(void *buff_free_arg, void *ctx)
 {
-    usb_driver_t *d = args;
-    d->base.netif = netif;
-    esp_netif_driver_ifconfig_t cfg = {
-        .handle = d,
-        .transmit = usb_transmit,
-        .driver_free_rx_buffer = usb_free_rx,
-    };
-    return esp_netif_set_driver_config(netif, &cfg);
+    if (buff_free_arg) {
+        esp_wifi_internal_free_rx_buffer(buff_free_arg);
+    }
+}
+
+/* ---- USB -> Wi-Fi ------------------------------------------------------ */
+
+static esp_err_t usb_rx(void *buffer, uint16_t len, void *ctx)
+{
+    if (!s_bridging || len < 14) {
+        s_dropped++;
+        return ESP_OK;
+    }
+    const uint8_t *f = buffer;
+    if (memcmp(f + 6, s_mac, 6) != 0 && !s_warned_mac) {
+        /* the access point only answers the S3's MAC */
+        ESP_LOGW(TAG, "the handheld sends from " MACSTR ", not " MACSTR ": its replies won't come back",
+                 MAC2STR(f + 6), MAC2STR(s_mac));
+        s_warned_mac = true;
+    }
+    if (esp_wifi_internal_tx(WIFI_IF_STA, buffer, len) == ESP_OK) {
+        s_to_wifi++;
+    } else {
+        s_dropped++;
+    }
+    return ESP_OK;
+}
+
+/* ---- the link the handheld sees ---------------------------------------- */
+
+/* TinyUSB asks this when the host (re)configures the device. */
+bool tud_network_default_link_state_cb(void)
+{
+    return s_bridging;
+}
+
+static void link_in_usb_task(void *arg)
+{
+    tud_network_link_state(0, arg != NULL);
+}
+
+void usb_net_set_bridge(bool on)
+{
+    if (on == s_bridging) {
+        return;
+    }
+    if (on) {
+        s_bridging = true;
+        esp_wifi_internal_reg_rxcb(WIFI_IF_STA, wifi_rx);
+    } else {
+        esp_wifi_internal_reg_rxcb(WIFI_IF_STA, NULL);
+        s_bridging = false;
+    }
+    usbd_defer_func(link_in_usb_task, on ? (void *)1 : NULL, false);
+    ESP_LOGI(TAG, "link to the handheld %s", on ? "up: bridged to the Wi-Fi" : "down");
+}
+
+void usb_net_counters(uint32_t *to_wifi, uint32_t *to_usb, uint32_t *dropped)
+{
+    *to_wifi = s_to_wifi;
+    *to_usb = s_to_usb;
+    *dropped = s_dropped;
 }
 
 static void usb_event(tinyusb_event_t *event, void *arg)
@@ -98,60 +135,27 @@ static void usb_event(tinyusb_event_t *event, void *arg)
     }
 }
 
-esp_netif_t *usb_net_start(void)
+esp_err_t usb_net_start(void)
 {
-    /* Two locally administered MACs from the chip's: ours, and the one
-     * the host's interface takes (NCM's iMACAddress). */
-    uint8_t base[6], dev_mac[6], host_mac[6];
-    ESP_ERROR_CHECK(esp_read_mac(base, ESP_MAC_WIFI_STA));
-    ESP_ERROR_CHECK(esp_derive_local_mac(dev_mac, base));
-    memcpy(host_mac, dev_mac, 6);
-    host_mac[5] ^= 0x01;
-
-    esp_netif_ip_info_t ip = {
-        .ip = {.addr = ESP_IP4TOADDR(10, 77, 0, 1)},
-        .netmask = {.addr = ESP_IP4TOADDR(255, 255, 255, 0)},
-        .gw = {.addr = 0},
-    };
-    esp_netif_inherent_config_t base_cfg = {
-        .flags = ESP_NETIF_FLAG_AUTOUP,
-        .ip_info = &ip,
-        .if_key = "USB_NCM",
-        .if_desc = "usb",
-        .route_prio = 5,          /* never the default route: Wi-Fi is */
-    };
-    memcpy(base_cfg.mac, dev_mac, 6);
-    esp_netif_config_t cfg = {
-        .base = &base_cfg,
-        .driver = NULL,
-        .stack = ESP_NETIF_NETSTACK_DEFAULT_ETH,
-    };
-    s_netif = esp_netif_new(&cfg);
-    assert(s_netif);
-    s_driver.base.post_attach = usb_post_attach;
-    ESP_ERROR_CHECK(esp_netif_attach(s_netif, &s_driver));
-    esp_netif_action_start(s_netif, NULL, 0, NULL);
-    esp_netif_action_connected(s_netif, NULL, 0, NULL);
+    ESP_RETURN_ON_ERROR(esp_read_mac(s_mac, ESP_MAC_WIFI_STA), TAG, "no MAC");
 
     tinyusb_net_config_t ncfg = {
-        .on_recv_callback = usb_recv,
-        .free_tx_buffer = usb_free_tx,
+        .on_recv_callback = usb_rx,
+        .free_tx_buffer = usb_tx_done,
         .user_context = NULL,
     };
-    memcpy(ncfg.mac_addr, host_mac, 6);
+    memcpy(ncfg.mac_addr, s_mac, 6);
     /* The driver first, then the NCM class: tinyusb_driver_install() resets
      * the string descriptors to its defaults, where the MAC string is empty,
-     * and tinyusb_net_init() is what puts our host MAC there. With it empty,
+     * and tinyusb_net_init() is what puts the MAC there. With it empty,
      * Linux's cdc_ncm can't read the MAC and refuses the device ("bind()
      * failure", seen on the R36MAX's kernel 4.4). The host asks for that
      * string only after enumerating, long after this. */
     tinyusb_config_t tcfg = TINYUSB_DEFAULT_CONFIG(usb_event, NULL);
-    ESP_ERROR_CHECK(tinyusb_driver_install(&tcfg));
-    ESP_ERROR_CHECK(tinyusb_net_init(&ncfg));
-
-    ESP_LOGI(TAG, "CDC-NCM up: S3 " MACSTR " at 10.77.0.1, host " MACSTR,
-             MAC2STR(dev_mac), MAC2STR(host_mac));
-    return s_netif;
+    ESP_RETURN_ON_ERROR(tinyusb_driver_install(&tcfg), TAG, "USB driver");
+    ESP_RETURN_ON_ERROR(tinyusb_net_init(&ncfg), TAG, "NCM");
+    ESP_LOGI(TAG, "CDC-NCM up: the handheld's interface is " MACSTR " (the S3's station MAC)", MAC2STR(s_mac));
+    return ESP_OK;
 }
 
 bool usb_net_mounted(void)

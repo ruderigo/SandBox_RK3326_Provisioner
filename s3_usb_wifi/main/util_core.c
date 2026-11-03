@@ -120,24 +120,6 @@ bool nets_overlap(uint32_t a, uint32_t amask, uint32_t b, uint32_t bmask)
     return (a & m) == (b & m);
 }
 
-bool node_json_is_stump(const char *body, size_t len)
-{
-    static const char key[] = "\"lxmf\"";
-    size_t k = sizeof(key) - 1;
-    for (size_t i = 0; i + k <= len; i++) {
-        if (memcmp(body + i, key, k) == 0) {
-            size_t j = i + k;
-            while (j < len && (body[j] == ' ' || body[j] == '\t' || body[j] == '\r' || body[j] == '\n')) {
-                j++;
-            }
-            if (j < len && body[j] == ':') {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
 void setup_ssid(const uint8_t mac[6], char *out)
 {
     snprintf(out, 16, "FireFly-S3-%02X%02X", mac[4], mac[5]);
@@ -256,81 +238,3 @@ bool netlist_sane(netlist_t *l)
     return ok;
 }
 
-bool dnsfwd_out(dnsfwd_t *f, uint8_t *q, size_t len, uint32_t ip, uint16_t port)
-{
-    if (len < 12 || (q[2] & 0x80)) {
-        return false;
-    }
-    if (++f->next_id == 0) {
-        f->next_id = 1;
-    }
-    int slot = -1;
-    for (int i = 0; i < DNSFWD_SLOTS; i++) {
-        if (!f->s[i].used) {
-            slot = i;
-            break;
-        }
-    }
-    if (slot < 0) {
-        slot = f->next_slot;   /* the oldest in flight gives way */
-        f->next_slot = (uint8_t)((f->next_slot + 1) % DNSFWD_SLOTS);
-    }
-    f->s[slot].client_id = (uint16_t)(q[0] << 8 | q[1]);
-    f->s[slot].our_id = f->next_id;
-    f->s[slot].ip = ip;
-    f->s[slot].port = port;
-    f->s[slot].used = 1;
-    q[0] = (uint8_t)(f->next_id >> 8);
-    q[1] = (uint8_t)f->next_id;
-    return true;
-}
-
-bool dnsfwd_in(dnsfwd_t *f, uint8_t *r, size_t len, uint32_t *ip, uint16_t *port)
-{
-    if (len < 12 || !(r[2] & 0x80)) {
-        return false;
-    }
-    uint16_t id = (uint16_t)(r[0] << 8 | r[1]);
-    for (int i = 0; i < DNSFWD_SLOTS; i++) {
-        if (f->s[i].used && f->s[i].our_id == id) {
-            r[0] = (uint8_t)(f->s[i].client_id >> 8);
-            r[1] = (uint8_t)f->s[i].client_id;
-            *ip = f->s[i].ip;
-            *port = f->s[i].port;
-            f->s[i].used = 0;
-            return true;
-        }
-    }
-    return false;
-}
-
-size_t dns_servfail(const uint8_t *q, size_t qlen, uint8_t *out, size_t cap)
-{
-    if (qlen < 12 || (q[2] & 0x80) || cap < 12) {
-        return 0;
-    }
-    /* the header and the one question, nothing after it (EDNS etc. dropped) */
-    size_t end = 12;
-    int qd = (q[4] == 0 && q[5] == 1);
-    if (qd) {
-        while (end < qlen && q[end] != 0 && !(q[end] & 0xC0)) {
-            end += 1 + q[end];
-        }
-        if (end < qlen && q[end] == 0 && end + 5 <= qlen) {
-            end += 5;
-        } else {
-            qd = 0;
-            end = 12;
-        }
-    }
-    if (end > cap) {
-        return 0;
-    }
-    memcpy(out, q, end);
-    out[2] = 0x80 | (q[2] & 0x79);   /* a response; opcode and RD kept */
-    out[3] = 0x80 | 0x02;            /* RA, SERVFAIL */
-    out[4] = 0;
-    out[5] = (uint8_t)qd;
-    out[6] = out[7] = out[8] = out[9] = out[10] = out[11] = 0;
-    return end;
-}

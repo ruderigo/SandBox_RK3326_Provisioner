@@ -10,6 +10,16 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.3
+
+- **USB Wi-Fi adapter 0.3.0: the handheld is on the Wi-Fi itself.** The S3
+  bridges it, so the handheld gets its own address from your network: SSH
+  reaches it, FireFly and Reticulum find their peers, a Stump on the handheld
+  serves its portal. 0.2.x hid it behind the S3 (seen on the bench).
+- The S3 USB Wi-Fi page talks to the S3 over the serial port on the same
+  cable (the S3 has no address of its own now). That port isn't listed as a
+  board to flash. The page shows the handheld's address on that network.
+
 ## v0.3.0-beta.2
 
 - **USB Wi-Fi adapter 0.2.1**: the handheld now takes it as a network card.

@@ -1,3 +1,30 @@
+## s3-usb-wifi 0.3.0
+
+**A bridge, not a router.** On the bench (R36MAX, 2026-11-03), 0.2.1 got the
+handheld online but hid it behind the S3: no SSH to it, FireFly and Reticulum
+couldn't find their peers (broadcasts don't cross a router), and the
+handheld's Stump announced a portal at 10.77.0.2 that nobody could open. Now
+the handheld is on the Wi-Fi itself:
+
+- **The NCM card is bridged to the Wi-Fi station**, frames unchanged. The
+  handheld's interface takes the S3's station MAC (one MAC per Wi-Fi client)
+  and gets its address from the network's own DHCP. The S3 has no address of
+  its own there: no DHCP server, DNS forwarder, NAT or routing for the USB
+  side any more.
+- **The handheld's link follows the S3's:** up while it's on a network, down
+  otherwise (NCM's network-connection notification), so joining one makes
+  the handheld ask for an address there.
+- **A control port on the same cable:** a CDC-ACM serial port, one JSON line
+  each way: `status`, `scan`, `saved`, `join`, `forget`. The Provisioner's page
+  talks to the S3 through it.
+- `status` now says `channel`, `mac`, `link`, `usb`, `setup_ap` and frame
+  counters (no addresses: the S3 has none).
+- No more auto-joining open Stump hotspots (it checked them over the S3's own
+  address, which it no longer has). One press on the page joins one, and then
+  it's remembered.
+- Tests: the control protocol on the host (escapes, UTF-8, bad lines);
+  the real-client DHCP test now covers the setup AP's pool.
+
 ## s3-usb-wifi 0.2.1
 
 - **Linux takes it now.** The NCM interface's MAC address string was empty,

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# The DHCP core against real Linux DHCP clients (dhclient, dhcpcd, busybox
-# udhcpc), over a veth pair into a network namespace standing in for a
-# handheld with no Wi-Fi of its own: it must get 10.77.0.2/24, its default
-# route via 10.77.0.1 and 10.77.0.1 as its DNS, and keep them through lease
-# renewals (a short lease here, to see a few).
+# The firmware's DHCP core against real Linux DHCP clients (dhclient, dhcpcd,
+# busybox udhcpc), over a veth pair into a network namespace, as the setup
+# AP serves the phones that join it: an address in 10.77.1.0/24, the S3
+# (10.77.1.1) as router and DNS (that's what makes phones show the setup
+# page), and renewals that change nothing (a short lease here, to see a few).
 #
 # Needs root (ip netns). Runs whichever of the clients are installed.
 #   sudo bash host_tests/dhcp_clients.sh
@@ -30,7 +30,7 @@ ip netns del "$NS" 2>/dev/null; ip link del s3h0 2>/dev/null
 ip netns add "$NS"
 ip link add s3h0 type veth peer name usb0
 ip link set usb0 netns "$NS"
-ip addr add 10.77.0.1/24 dev s3h0
+ip addr add 10.77.1.1/24 dev s3h0
 ip link set s3h0 up
 ip -n "$NS" link set lo up
 ip -n "$NS" link set usb0 up
@@ -70,15 +70,15 @@ renewals() { grep -c "(renewing) -> ACK" "$work/harness.log"; }
 check_client() {
     local name=$1
     echo "== $name"
-    if in_ns ip -4 addr show usb0 | grep -q "10.77.0.2/24"; then pass "10.77.0.2/24 on usb0"; else fail "no 10.77.0.2/24"; in_ns ip -4 addr show usb0; fi
-    if wait_route 5 "^default via 10\.77\.0\.1 dev usb0"; then pass "default route via 10.77.0.1"; else fail "no default route via the S3"; routes; fi
-    if wait_dns 5 10.77.0.1; then pass "DNS 10.77.0.1"; else fail "not 10.77.0.1 as DNS"; cat "$work/resolv.conf"; fi
+    if in_ns ip -4 addr show usb0 | grep -q "10.77.1.2/24"; then pass "10.77.1.2/24 on usb0"; else fail "no 10.77.1.2/24"; in_ns ip -4 addr show usb0; fi
+    if wait_route 5 "^default via 10\.77\.1\.1 dev usb0"; then pass "default route via 10.77.1.1"; else fail "no default route via the S3"; routes; fi
+    if wait_dns 5 10.77.1.1; then pass "DNS 10.77.1.1"; else fail "not 10.77.1.1 as DNS"; cat "$work/resolv.conf"; fi
     # renewals (12 s leases: one every ~6 s) are ACKed and change nothing
     local r0 t
     r0=$(renewals)
     for t in $(seq 40); do [ "$(renewals)" -ge $((r0 + 2)) ] && break; sleep 0.5; done
     if [ "$(renewals)" -ge $((r0 + 2)) ]; then pass "renewals ACKed ($(( $(renewals) - r0 )) in ${t}x0.5 s)"; else fail "no renewals seen"; fi
-    if in_ns ip -4 addr show usb0 | grep -q "10.77.0.2/24" && routes | grep -q "^default via 10\.77\.0\.1 dev usb0" && dns_is 10.77.0.1; then
+    if in_ns ip -4 addr show usb0 | grep -q "10.77.1.2/24" && routes | grep -q "^default via 10\.77\.1\.1 dev usb0" && dns_is 10.77.1.1; then
         pass "after them: the same address, default route and DNS"
     else
         fail "something changed on a renewal"; routes

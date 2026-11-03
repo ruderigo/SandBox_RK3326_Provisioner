@@ -8,9 +8,9 @@ gamepad. It's an EmulationStation **Ports** entry.
 > **Sandbox.** Work in progress; the plan, decisions and next steps are in
 > [docs/PLAN.md](docs/PLAN.md).
 
-| Board | What it can be given (v0.3.0-beta.2) |
+| Board | What it can be given (v0.3.0-beta.3) |
 |---|---|
-| **ESP32-S3 (Freenove CAM)** | **Make a Stump** (Stump 1.0.0-beta.48, offline), update its Stump, its settings, check it starts; **USB Wi-Fi adapter** 0.2.1: the S3 becomes the handheld's Wi-Fi card ([below](#the-s3-as-the-handhelds-wi-fi-card), bench test pending) |
+| **ESP32-S3 (Freenove CAM)** | **Make a Stump** (Stump 1.0.0-beta.48, offline), update its Stump, its settings, check it starts; **USB Wi-Fi adapter** 0.3.0: the S3 becomes the handheld's Wi-Fi card ([below](#the-s3-as-the-handhelds-wi-fi-card), bench test pending) |
 | Heltec V3 | *coming*: RNode for a CAM, set for the mesh |
 | Classic ESP32 | WLED 16.0.1 (app slot only), MicroPython 1.29.0 (full install) |
 | Any of them | the serial log (115200); erase the whole flash |
@@ -41,7 +41,8 @@ onto a Freenove ESP32-S3 CAM (through its UART port), then plug its **USB**
 port into the handheld. **S3 USB Wi-Fi** appears at the top of the boards:
 press **A** for its networks. A joins one, and a password is typed on
 FireFly's keyboard (START joins). Y forgets a network. The S3 remembers up to
-8 networks and rejoins by itself. The handheld gets its internet through it.
+8 networks and rejoins by itself. The handheld is then on that network itself,
+as with a Wi-Fi dongle: its own address there, SSH, FireFly, its Stump's portal.
 How it works, its limits and the bench test: [s3_usb_wifi/README.md](s3_usb_wifi/README.md).
 
 ## Install on the handheld

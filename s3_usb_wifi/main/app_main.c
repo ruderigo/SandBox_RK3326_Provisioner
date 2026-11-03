@@ -1,8 +1,8 @@
 /*
- * FireFly S3 USB Wi-Fi: an ESP32-S3 (Freenove WROOM CAM) as a USB network
- * card for RK3326 handhelds. On its native USB it's a CDC-NCM device at
- * 10.77.0.1/24 handing out 10.77.0.2 (no default route, no DNS: only the
- * Wi-Fi it joined, as option 121), and NATs that to the Wi-Fi it joined.
+ * FireFly S3 USB Wi-Fi: an ESP32-S3 (Freenove WROOM CAM) as the Wi-Fi card
+ * of an RK3326 handheld. On its native USB it's a CDC-NCM network card
+ * bridged to the Wi-Fi it joined (the handheld is on that network itself),
+ * plus a serial port the Provisioner uses to choose the network.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -53,11 +53,10 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    /* USB first: the handheld gets its address while Wi-Fi is still joining */
-    esp_netif_t *usb = usb_net_start();
     esp_netif_t *ap = wifi_link_init(false);
-    ESP_ERROR_CHECK(netsvc_start(usb, ap));
-    ESP_ERROR_CHECK(esp_netif_napt_enable(usb));   /* USB -> the joined Wi-Fi */
+    ESP_ERROR_CHECK(usb_net_start());     /* the network card (link down until joined) */
+    ESP_ERROR_CHECK(ctl_start());         /* and its control port */
+    ESP_ERROR_CHECK(netsvc_start(ap));
     ESP_ERROR_CHECK(web_start());
     wifi_link_start();
 

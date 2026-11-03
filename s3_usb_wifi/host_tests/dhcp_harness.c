@@ -1,9 +1,9 @@
 /*
  * The firmware's DHCP core on a Linux interface, for testing it against
- * real DHCP clients (see dhcp_clients.sh). Serves the USB pool on IFACE as
- * the firmware sets it up (netsvc.c): 10.77.0.2, the S3 (10.77.0.1) as
- * router and DNS, the default route in option 121 too. LEASE_S defaults to
- * the firmware's 600; the tests use a short one to see renewals.
+ * real DHCP clients (see dhcp_clients.sh). Serves the setup AP's pool on
+ * IFACE as the firmware sets it up (netsvc.c): 10.77.1.2-9, the S3
+ * (10.77.1.1) as router and DNS. LEASE_S defaults to the firmware's 120;
+ * the tests use a short one to see renewals.
  *
  *   dhcp_harness IFACE [LEASE_S]
  *
@@ -44,14 +44,12 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    const uint32_t S = IP(10, 77, 0, 1);
+    const uint32_t S = IP(10, 77, 1, 1);
     dhcp_pool_t pool;
-    dhcp_pool_init(&pool, S, IP(255, 255, 255, 0), IP(10, 77, 0, 2), 1,
-                   argc > 2 ? (uint32_t)atoi(argv[2]) : 600);
+    dhcp_pool_init(&pool, S, IP(255, 255, 255, 0), IP(10, 77, 1, 2), 8,
+                   argc > 2 ? (uint32_t)atoi(argv[2]) : 120);
     pool.router = S;
     pool.dns = S;
-    dhcp_route_t def = {0, 0, S};
-    dhcp_pool_set_routes(&pool, &def, 1);
 
     static const char *names[] = {"?", "DISCOVER", "OFFER", "REQUEST", "DECLINE", "ACK", "NAK", "RELEASE", "INFORM"};
     uint8_t in[1500], out[1024];

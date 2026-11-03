@@ -9,5 +9,5 @@ if cc -fsanitize=address,undefined -x c -o "$out/probe" - <<<'int main(void){ret
     san="-fsanitize=address,undefined"
 fi
 cc -std=c11 -Wall -Wextra -Werror $san -I../main -o "$out/test_core" \
-    test_core.c ../main/dhcp_core.c ../main/util_core.c
+    test_core.c ../main/dhcp_core.c ../main/util_core.c ../main/ctl_core.c
 "$out/test_core"

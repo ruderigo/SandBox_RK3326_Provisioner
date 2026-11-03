@@ -67,9 +67,10 @@ Making a Stump is the Provisioner's main job (2026-11-02): it comes first.
       FILE.json` (beta.48) runs their wizard from a form's answers
 - [x] **The S3 USB Wi-Fi adapter firmware** (`s3_usb_wifi/`): ESP-IDF
       5.3, esp_tinyusb, CDC-NCM, NAT, our own DHCP; in the catalogue.
-      **2026-11-03: it's the handheld's Wi-Fi card** (0.2.0), not the memo's
-      Stump-only link: the S3 is the handheld's router and DNS (a DNS
-      forwarder), up to 8 saved networks, an API to join and forget
+      **2026-11-03: it's the handheld's Wi-Fi card**, not the memo's
+      Stump-only link: 0.2.x as a router (the handheld hidden behind it),
+      **0.3.0 as a bridge** (the handheld on the Wi-Fi itself), up to 8
+      saved networks, a control port on the same cable
       (`docs/NOTE_TEAM_FIREFLY.md` tells Team FireFly)
 - [x] **The Provisioner's S3 USB Wi-Fi page**: the adapter shown on the
       boards screen; its networks, join with a password on FireFly's
@@ -110,3 +111,8 @@ Making a Stump is the Provisioner's main job (2026-11-02): it comes first.
    string ("bind() failure" in `cdc_ncm`), and the read-back after flashing.
    ES's network screen doesn't list it (it shows `wlan0` only). Next: without
    the Blueway (does ES let the scraper and updates run?), replug, LoRa.
+   **Then, with the Blueway out:** no SSH to the handheld, FireFly and the
+   handheld's Stump unreachable (its portal at 10.77.0.2). The S3 was a
+   router: the handheld was hidden behind it. **S3 0.3.0 bridges instead**
+   (v0.3.0-beta.3): the handheld is on the Wi-Fi itself, the page talks to the
+   S3 over the serial port on the same cable. Bench it again from the top.

@@ -12,6 +12,7 @@
 #include <string.h>
 #include "dhcp_core.h"
 #include "util_core.h"
+#include "ctl_core.h"
 
 static int fails, checks;
 #define CHECK(c) do { checks++; if (!(c)) { fails++; printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); } } while (0)
@@ -200,40 +201,6 @@ static void test_usb_pool(void)
     CHECK(dhcp_handle(&p, in, n, out, 100) == 0);   /* no room */
 }
 
-static void test_usb_as_a_wifi_card(void)
-{
-    /* what the firmware hands the handheld: the S3 as its router and DNS,
-     * the default route in option 121 too, the same whatever the S3 joins */
-    const uint8_t mac[6] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x66};
-    const uint32_t S = IP(10, 77, 0, 1), C = IP(10, 77, 0, 2);
-    dhcp_pool_t p;
-    dhcp_pool_init(&p, S, IP(255, 255, 255, 0), C, 1, 600);
-    p.router = S;
-    p.dns = S;
-    dhcp_route_t def = {0, 0, S};
-    dhcp_pool_set_routes(&p, &def, 1);
-    uint8_t in[548], out[600];
-    int l;
-    size_t n = msg(in, DHCP_DISCOVER, mac, 0, 0, 0);
-    size_t r = dhcp_handle(&p, in, n, out, sizeof(out));
-    const uint8_t *v = opt(out, r, 3, &l);
-    CHECK(v && l == 4 && rd32(v) == S);
-    v = opt(out, r, 6, &l);
-    CHECK(v && l == 4 && rd32(v) == S);
-    v = opt(out, r, 121, &l);
-    const uint8_t want[] = {0, 10, 77, 0, 1};
-    CHECK(v && l == (int)sizeof(want) && memcmp(v, want, sizeof(want)) == 0);
-    v = opt(out, r, 51, &l);
-    CHECK(v && rd32(v) == 600);
-    /* renewals are simply ACKed: nothing about it ever changes */
-    n = msg(in, DHCP_REQUEST, mac, 0, C, S);
-    CHECK(type_of(out, dhcp_handle(&p, in, n, out, sizeof(out))) == DHCP_ACK);
-    for (int i = 0; i < 3; i++) {
-        n = msg(in, DHCP_REQUEST, mac, C, 0, 0);
-        CHECK(type_of(out, dhcp_handle(&p, in, n, out, sizeof(out))) == DHCP_ACK);
-    }
-}
-
 static void test_ap_pool(void)
 {
     /* the setup AP: several phones, a router and DNS (the captive page) */
@@ -328,12 +295,6 @@ static void test_util(void)
     CHECK(!nets_overlap(IP(10, 77, 0, 0), IP(255, 255, 255, 0), IP(192, 168, 4, 0), IP(255, 255, 255, 0)));
     CHECK(!nets_overlap(IP(10, 77, 0, 0), IP(255, 255, 255, 0), IP(10, 77, 1, 0), IP(255, 255, 255, 0)));
 
-    const char *n1 = "{\"name\":\"Oak\",\"lxmf\" : \"ab12\"}";
-    CHECK(node_json_is_stump(n1, strlen(n1)));
-    const char *n2 = "{\"name\":\"lxmf\"}";
-    CHECK(!node_json_is_stump(n2, strlen(n2)));
-    CHECK(!node_json_is_stump("<html>", 6));
-    CHECK(!node_json_is_stump("\"lxmf\"", 6));
 
     const uint8_t mac[6] = {1, 2, 3, 4, 0xAB, 0x0C};
     char ss[16];
@@ -412,60 +373,101 @@ static void test_netlist(void)
     CHECK(!netlist_sane(&l));   /* no terminating NULs */
 }
 
-static void test_dnsfwd(void)
+static void parse(const char *line, ctl_req_t *r)
 {
-    dnsfwd_t f;
-    memset(&f, 0, sizeof(f));
-    uint8_t q[32] = {0x12, 0x34, 0x01, 0x00, 0, 1};
-    uint32_t ip;
-    uint16_t port;
-    /* a query out: a fresh id, the asker remembered */
-    CHECK(dnsfwd_out(&f, q, sizeof(q), IP(10, 77, 0, 2), 40000));
-    uint16_t id1 = (uint16_t)(q[0] << 8 | q[1]);
-    CHECK(id1 != 0x1234 || f.next_id == 0x1235);
-    /* the same id from another asker gets another id */
-    uint8_t q2[32] = {0x12, 0x34, 0x01, 0x00, 0, 1};
-    CHECK(dnsfwd_out(&f, q2, sizeof(q2), IP(10, 77, 0, 2), 40001));
-    uint16_t id2 = (uint16_t)(q2[0] << 8 | q2[1]);
-    CHECK(id2 != id1);
-    /* the answers come back to who asked, with their own id */
-    uint8_t r[32];
-    memcpy(r, q2, sizeof(r));
-    r[2] |= 0x80;
-    CHECK(dnsfwd_in(&f, r, sizeof(r), &ip, &port));
-    CHECK(ip == IP(10, 77, 0, 2) && port == 40001 && r[0] == 0x12 && r[1] == 0x34);
-    CHECK(!dnsfwd_in(&f, r, sizeof(r), &ip, &port));   /* answered once */
-    memcpy(r, q, sizeof(r));
-    r[2] |= 0x80;
-    CHECK(dnsfwd_in(&f, r, sizeof(r), &ip, &port) && port == 40000);
-    /* a query as answer, an unknown id, a short packet: dropped */
-    memcpy(r, q, sizeof(r));
-    CHECK(!dnsfwd_in(&f, r, sizeof(r), &ip, &port));
-    CHECK(!dnsfwd_out(&f, q, 5, 1, 1));
-    /* many in flight: the oldest gives way */
-    for (int i = 0; i < DNSFWD_SLOTS + 4; i++) {
-        uint8_t x[16] = {0, (uint8_t)i, 1, 0};
-        CHECK(dnsfwd_out(&f, x, sizeof(x), 1, (uint16_t)i));
+    ctl_parse(line, strlen(line), r);
+}
+
+static void test_ctl(void)
+{
+    ctl_req_t r;
+    parse("{\"id\":7,\"cmd\":\"status\"}", &r);
+    CHECK(r.cmd == CTL_STATUS && r.id == 7 && !r.error);
+    parse("  { \"cmd\" : \"scan\" , \"id\" : 12 }  ", &r);
+    CHECK(r.cmd == CTL_SCAN && r.id == 12);
+    parse("{\"cmd\":\"saved\",\"extra\":true,\"n\":-3,\"s\":\"x\"}", &r);
+    CHECK(r.cmd == CTL_SAVED && r.id == 0);
+
+    /* join: escapes, UTF-8, a password or none */
+    parse("{\"id\":1,\"cmd\":\"join\",\"ssid\":\"Caf\\u00e9 \\\"5G\\\"\",\"password\":\"p\\\\w\\/rd\\tx\"}", &r);
+    CHECK(r.cmd == CTL_JOIN && r.has_password);
+    CHECK(strcmp(r.ssid, "Caf\xc3\xa9 \"5G\"") == 0);
+    CHECK(strcmp(r.password, "p\\w/rd\tx") == 0);
+    parse("{\"id\":2,\"cmd\":\"join\",\"ssid\":\"Home\"}", &r);
+    CHECK(r.cmd == CTL_JOIN && !r.has_password);
+    parse("{\"id\":3,\"cmd\":\"join\",\"ssid\":\"Open\",\"password\":\"\"}", &r);
+    CHECK(r.cmd == CTL_JOIN && r.has_password && r.password[0] == 0);
+    parse("{\"cmd\":\"join\",\"ssid\":\"\\ud83d\\ude00\"}", &r);   /* a surrogate pair */
+    CHECK(r.cmd == CTL_JOIN && strcmp(r.ssid, "\xf0\x9f\x98\x80") == 0);
+    parse("{\"cmd\":\"join\"}", &r);
+    CHECK(r.cmd == CTL_BAD && strcmp(r.error, "no_ssid") == 0);
+    parse("{\"cmd\":\"join\",\"ssid\":\"\"}", &r);
+    CHECK(r.cmd == CTL_BAD && strcmp(r.error, "no_ssid") == 0);
+    parse("{\"cmd\":\"join\",\"ssid\":\"123456789012345678901234567890123\"}", &r);   /* 33 */
+    CHECK(r.cmd == CTL_BAD && strcmp(r.error, "bad_ssid") == 0);
+    parse("{\"cmd\":\"join\",\"ssid\":\"x\",\"password\":\"\\u0000abc\"}", &r);
+    CHECK(r.cmd == CTL_BAD && strcmp(r.error, "bad_password") == 0);
+    parse("{\"cmd\":\"forget\"}", &r);
+    CHECK(r.cmd == CTL_FORGET && !r.has_ssid);
+    parse("{\"cmd\":\"forget\",\"ssid\":\"Home\"}", &r);
+    CHECK(r.cmd == CTL_FORGET && r.has_ssid && strcmp(r.ssid, "Home") == 0);
+
+    /* not requests */
+    const char *bad[] = {"", "AT", "AT+CGMI", "[]", "{", "{}", "{\"cmd\":}", "{\"cmd\":\"x\"}",
+                         "{\"cmd\":\"status\"", "{\"cmd\":\"status\",}", "{\"cmd\":{\"a\":1}}",
+                         "{\"id\":\"7\",\"cmd\":\"status\"}", "{\"cmd\":\"stat\\us\"}", "{\"cmd\":\"status\" x}"};
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        parse(bad[i], &r);
+        if (r.cmd != CTL_BAD || !r.error) {
+            printf("  accepted: %s\n", bad[i]);
+        }
+        CHECK(r.cmd == CTL_BAD && r.error);
     }
-    /* SERVFAIL: the question kept, rcode 2, a response */
-    uint8_t s[64];
-    uint8_t dq[40] = {0xAB, 0xCD, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 1,
-                      3, 'f', 'o', 'o', 0, 0, 1, 0, 1,
-                      0, 0, 41, 0x10, 0, 0, 0, 0, 0, 0, 0};   /* + an EDNS record */
-    size_t n = dns_servfail(dq, 32, s, sizeof(s));
-    CHECK(n == 21 && s[0] == 0xAB && (s[2] & 0x80) && (s[2] & 0x01) && (s[3] & 0x0F) == 2);
-    CHECK(s[5] == 1 && s[7] == 0 && s[11] == 0);
-    CHECK(dns_servfail(dq, 8, s, sizeof(s)) == 0);
-    dq[12] = 60;   /* a broken name: the header alone */
-    n = dns_servfail(dq, 32, s, sizeof(s));
-    CHECK(n == 12 && s[5] == 0);
+
+    /* answers */
+    char out[128];
+    CHECK(ctl_answer(out, sizeof(out), 7, NULL, "{\"state\":\"idle\"}"));
+    CHECK(strcmp(out, "{\"id\":7,\"ok\":true,\"data\":{\"state\":\"idle\"}}\n") == 0);
+    CHECK(ctl_answer(out, sizeof(out), 8, "bad_password", NULL));
+    CHECK(strcmp(out, "{\"id\":8,\"ok\":false,\"error\":\"bad_password\"}\n") == 0);
+    CHECK(ctl_answer(out, sizeof(out), 9, NULL, NULL) && strstr(out, "\"data\":null"));
+    CHECK(!ctl_answer(out, 20, 7, NULL, "{\"state\":\"idle\"}"));
+
+    /* lines from a byte stream */
+    ctl_lines_t L;
+    memset(&L, 0, sizeof(L));
+    const char *stream = "{\"cmd\":\"status\"}\r\n\nAT\r\n";
+    const char *got[4] = {0};
+    int n = 0;
+    for (const char *c = stream; *c; c++) {
+        const char *line = ctl_feed(&L, *c);
+        if (line && n < 4) {
+            got[n++] = line[0] ? "x" : "";
+            if (n == 1) {
+                CHECK(strcmp(line, "{\"cmd\":\"status\"}") == 0);
+            }
+            if (n == 3) {
+                CHECK(strcmp(line, "AT") == 0);
+            }
+        }
+    }
+    CHECK(n == 3 && got[1][0] == 0);
+    /* a line too long is dropped whole, and the next one is fine */
+    for (int i = 0; i < 600; i++) {
+        CHECK(ctl_feed(&L, 'a') == NULL);
+    }
+    CHECK(ctl_feed(&L, '\n') == NULL);
+    const char *ok = NULL;
+    for (const char *c = "{}\n"; *c; c++) {
+        ok = ctl_feed(&L, *c);
+    }
+    CHECK(ok && strcmp(ok, "{}") == 0);
 }
 
 int main(void)
 {
     test_usb_pool();
-    test_usb_as_a_wifi_card();
-    test_dnsfwd();
+    test_ctl();
     test_ap_pool();
     test_routes();
     test_util();

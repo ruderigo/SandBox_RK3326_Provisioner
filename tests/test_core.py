@@ -12,7 +12,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.environ["PROVISIONER_ESPTOOL"] = os.path.join(ROOT, "tests", "fake_esptool.py")
-from provisioner import boards, catalog, flasher  # noqa: E402
+from provisioner import boards, catalog, flasher, s3wifi  # noqa: E402
 
 
 def _w(path, text):
@@ -65,6 +65,35 @@ class Detect(unittest.TestCase):
     def test_a_classic_esp32_part_name_is_the_esp32_family(self):
         info = boards.parse_probe("Chip is ESP32-D0WD-V3 (revision v3.1)\nDetected flash size: 4MB\n")
         self.assertEqual((info["chip"], info["chip_text"], info["flash_mb"]), ("esp32", "ESP32-D0WD-V3", 4))
+
+
+class TheWifiAdapterFound(unittest.TestCase):
+    def test_its_control_port_by_vendor_and_product(self):
+        ports = [{"port": "/dev/ttyACM0", "usb": "1a86:55d3", "product": "USB Single Serial"},
+                 {"port": "/dev/ttyACM1", "usb": "303a:1001", "product": "USB JTAG/serial debug unit"},
+                 {"port": "/dev/ttyACM2", "usb": "303a:4002", "product": "FireFly S3 USB Wi-Fi"}]
+        self.assertEqual(s3wifi.find(ports), "/dev/ttyACM2")
+        self.assertIsNone(s3wifi.find(ports[:2]))
+        self.assertIsNone(s3wifi.find([{"port": "/dev/ttyUSB0", "usb": "10c4:ea60", "product": "FireFly S3 USB Wi-Fi"}]))
+
+    def test_its_network_interface_from_sysfs(self):
+        d = tempfile.mkdtemp()
+        def iface(name, product):
+            usb = os.path.join(d, "devices", name + "-usb")
+            os.makedirs(os.path.join(usb, "if"))
+            with open(os.path.join(usb, "product"), "w") as f:
+                f.write(product + "\n")
+            os.makedirs(os.path.join(d, "net", name))
+            os.symlink(os.path.join(usb, "if"), os.path.join(d, "net", name, "device"))
+        iface("wlan0", "802.11 n WLAN")
+        iface("usb0", "FireFly S3 USB Wi-Fi")
+        os.makedirs(os.path.join(d, "net", "lo"))          # no device: skipped
+        self.assertEqual(s3wifi.interface(os.path.join(d, "net")), "usb0")
+        self.assertIsNone(s3wifi.interface(os.path.join(d, "nothing")))
+        self.assertIsNone(s3wifi.handheld_address("nosuchif0"))
+
+    def test_bars(self):
+        self.assertEqual([s3wifi.bars(r) for r in (None, -40, -60, -70, -90)], [0, 4, 3, 2, 1])
 
 
 class Catalogue(unittest.TestCase):

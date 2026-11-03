@@ -118,9 +118,11 @@ class App:
         self.here_fn = here_status
         self.next_here = 0.0
         self.kb_done = None             # what the keyboard's text goes to (None: the form)
-        self.adapter = None             # the S3 USB Wi-Fi adapter's status.json, while it's plugged in
-        self.adapter_fn = s3wifi.status
+        self.adapter = None             # the S3 USB Wi-Fi adapter's status, while it's plugged in
+        self.adapter_port = None        # its control port (a serial port on the same cable)
+        self.adapter_fn = s3wifi.status     # (port) -> status or None
         self.internet_fn = s3wifi.internet
+        self.address_fn = s3wifi.handheld_address
         self.next_adapter = 0.0
         self.wifi = None                # the WIFI screen's state
 
@@ -140,7 +142,7 @@ class App:
         if self.here_fn and time.time() >= self.next_here:
             self.next_here = time.time() + 10
             threading.Thread(target=lambda: setattr(self, "here", self.here_fn()), daemon=True).start()
-        if self.adapter_fn and self.screen != "wifi" and time.time() >= self.next_adapter:
+        if self.adapter_fn and self.adapter_port and self.screen != "wifi" and time.time() >= self.next_adapter:
             self.next_adapter = time.time() + 3
             threading.Thread(target=self._poll_adapter, daemon=True).start()
         if self.screen == "wifi":
@@ -149,6 +151,15 @@ class App:
             return
         self.next_scan = time.time() + 1.0
         ports = self.ports_fn()
+        # the S3 USB Wi-Fi adapter's control port isn't a board to flash: it's the adapter's row
+        port = s3wifi.find(ports)
+        ports = [p for p in ports if p["port"] != port]
+        if port != self.adapter_port:
+            self.adapter_port, self.next_adapter = port, 0.0
+            if not port:
+                self.adapter = None
+                if self.screen == "wifi" and self.wifi:
+                    self.wifi["gone"] = True
         for p in ports:
             p["users"] = self.users_fn(p["port"])
         gone = set(self.known) - set(p["port"] for p in ports)
@@ -165,7 +176,7 @@ class App:
         self.sel = min(self.sel, max(0, len(self.rows()) - 1))
 
     def _poll_adapter(self):
-        st = self.adapter_fn()
+        st = self.adapter_fn(self.adapter_port)
         if st and not self.adapter:
             self.toast("S3 USB Wi-Fi adapter plugged in")
         self.adapter = st
@@ -359,7 +370,10 @@ class App:
     # -- the S3 USB Wi-Fi adapter --
     def open_wifi(self):
         self.wifi = {"sel": 0, "status": self.adapter, "nets": [], "saved": [], "busy": False, "next": 0.0,
-                     "next_scan": 0.0, "joining": None, "retype": set(), "internet": None, "loaded": False}
+                     "next_scan": 0.0, "joining": None, "retype": set(), "internet": None, "address": None,
+                     "loaded": False}
+        if (self.adapter or {}).get("state") == "connected":
+            self.wifi_check_internet()
         self.screen = "wifi"
 
     def wifi_refresh(self):
@@ -375,13 +389,14 @@ class App:
 
         def work():
             try:
-                st = self.adapter_fn()
+                port = self.adapter_port
+                st = self.adapter_fn(port)
                 if st is None:
                     w["gone"] = True
                     return
-                w["saved"] = s3wifi.saved()
+                w["saved"] = s3wifi.saved(port)
                 if do_scan:
-                    w["nets"] = s3wifi.scan()
+                    w["nets"] = s3wifi.scan(port)
                     w["next_scan"] = time.time() + 10
                     w["loaded"] = True
                 self.wifi_status(st)
@@ -410,11 +425,17 @@ class App:
             self.wifi_check_internet()
 
     def wifi_check_internet(self):
+        """The handheld's address on the adapter (its network's DHCP gives it, a few
+        seconds after the S3 joins), then whether the internet answers."""
         w = self.wifi
-        w["internet"] = "checking"
+        w["internet"], w["address"] = "checking", None
 
         def work():
-            time.sleep(2)               # the handheld's DHCP takes a moment to settle
+            for _ in range(20):
+                w["address"] = self.address_fn()
+                if w["address"]:
+                    break
+                time.sleep(1)
             w["internet"] = "yes" if self.internet_fn() else "no"
         threading.Thread(target=work, daemon=True).start()
 
@@ -473,7 +494,7 @@ class App:
         self.toast("Joining %s…" % ssid, 3)
 
         def work():
-            ok, err = s3wifi.join(ssid, password)
+            ok, err = s3wifi.join(self.adapter_port, ssid, password)
             if ok:
                 w["joining"], w["internet"] = ssid, None
                 w["next"] = 0.0
@@ -485,7 +506,7 @@ class App:
         w = self.wifi
 
         def work():
-            ok, err = s3wifi.forget(ssid)
+            ok, err = s3wifi.forget(self.adapter_port, ssid)
             self.toast(("Forgot %s" % ssid) if ok else ("Couldn't forget %s: %s" % (ssid, s3wifi.explain(err))), 3)
             w["retype"].discard(ssid)
             w["next"] = 0.0
@@ -796,7 +817,7 @@ class App:
         line, tone = self.adapter_line(self.adapter)
         d.text(F16, 26, y + 36, line, tone, W - 60)
         fw = (self.adapter or {}).get("firmware", "")
-        d.text(F16, 26, y + 56, "usb · 10.77.0.1 · %s · A: its networks" % fw, MUTED, W - 60)
+        d.text(F16, 26, y + 56, "%s · %s · A: its networks" % (self.adapter_port or "usb", fw), MUTED, W - 60)
 
     def draw_here(self, y):
         """This handheld's own Stump, on one line at the top right."""
@@ -822,9 +843,10 @@ class App:
         if w["joining"] and st.get("state") != "connected":
             line, tone = "Joining %s…" % w["joining"], EMBER_BRIGHT
         d.text(F20, 26, TOP + 10, line, tone, W - 52)
-        if st.get("state") == "connected" and st.get("ip"):
-            net = "S3 at %s on %s" % (st["ip"], st.get("subnet") or "?")
-            inet = {"yes": " · internet OK", "no": " · no internet through it", "checking": " · checking the internet…"}
+        if st.get("state") == "connected":
+            a = w.get("address")
+            net = ("This handheld: %s on it" % a) if a else "This handheld: asking that network for an address…"
+            inet = {"yes": " · internet OK", "no": " · no internet through it", "checking": ""}
             d.text(F16, 26, TOP + 44, net + inet.get(w["internet"], ""), MUTED if w["internet"] != "no" else ERROR,
                    W - 52)
         else:

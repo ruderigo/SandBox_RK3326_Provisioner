@@ -1,9 +1,9 @@
 /*
- * HTTP on port 80, for the USB side (10.77.0.1) and the setup AP
- * (10.77.1.1) only; the Wi-Fi the S3 joined gets a 403.
+ * HTTP on port 80, on the setup AP (10.77.1.1) only: the S3 has no address
+ * anywhere else (the handheld's side is a bridge; the Provisioner uses the
+ * USB serial port, ctl.c).
  *
- *   GET  /status.json    {"ssid","rssi","ip","gateway","subnet","state","target",
- *                          "error","dns","stump","firmware"}
+ *   GET  /status.json    as api.c says
  *   GET  /               the setup page
  *   GET  /scan.json      nearby networks [{"ssid","rssi","open","saved"}]
  *   GET  /networks.json  the saved networks' names, most recent first
@@ -29,37 +29,19 @@ static const char *TAG = "web";
 extern const char setup_html_start[] asm("_binary_setup_html_start");
 extern const char setup_html_end[] asm("_binary_setup_html_end");
 
-typedef enum { SIDE_USB, SIDE_AP, SIDE_OTHER } side_t;
+typedef enum { SIDE_AP, SIDE_OTHER } side_t;
 
-/* Which address did the request come in on? */
+/* Which address did the request come in on? Only the setup AP's is served. */
 static side_t side_of(httpd_req_t *req)
 {
     struct sockaddr_storage ss;
     socklen_t len = sizeof(ss);
     int fd = httpd_req_to_sockfd(req);
-    if (getsockname(fd, (struct sockaddr *)&ss, &len) != 0) {
+    if (getsockname(fd, (struct sockaddr *)&ss, &len) != 0 || ss.ss_family != AF_INET) {
         return SIDE_OTHER;
     }
-    uint32_t a = 0;
-    if (ss.ss_family == AF_INET) {
-        a = lwip_ntohl(((struct sockaddr_in *)&ss)->sin_addr.s_addr);
-#if CONFIG_LWIP_IPV6
-    } else if (ss.ss_family == AF_INET6) {
-        const uint8_t *b = ((struct sockaddr_in6 *)&ss)->sin6_addr.s6_addr;
-        static const uint8_t mapped[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF};
-        if (memcmp(b, mapped, 12) != 0) {
-            return SIDE_OTHER;
-        }
-        a = ((uint32_t)b[12] << 24) | ((uint32_t)b[13] << 16) | ((uint32_t)b[14] << 8) | b[15];
-#endif
-    }
-    if (a == ADAPTER_USB_IP) {
-        return SIDE_USB;
-    }
-    if (a == ADAPTER_AP_IP && adapter_setup_ap_open()) {
-        return SIDE_AP;
-    }
-    return SIDE_OTHER;
+    uint32_t a = lwip_ntohl(((struct sockaddr_in *)&ss)->sin_addr.s_addr);
+    return (a == ADAPTER_AP_IP && adapter_setup_ap_open()) ? SIDE_AP : SIDE_OTHER;
 }
 
 static esp_err_t refuse(httpd_req_t *req)
@@ -78,49 +60,12 @@ static esp_err_t status_get(httpd_req_t *req)
     if (side_of(req) == SIDE_OTHER) {
         return refuse(req);
     }
-    link_status_t st;
-    wifi_link_status(&st);
-    char out[512] = "{\"ssid\":";
-    char ip[16], gw[16], net[19];
-    if (st.connected) {
-        json_put_str(out, sizeof(out), st.ssid);
-        ip_str(st.ip, ip);
-        ip_str(st.gw, gw);
-        cidr_str(st.ip, st.mask, net);
-        size_t l = strlen(out);
-        snprintf(out + l, sizeof(out) - l, ",\"rssi\":%d,\"ip\":\"%s\",\"gateway\":\"%s\",\"subnet\":\"%s\"",
-                 st.rssi, ip, gw, net);
-    } else {
-        strlcat(out, "null,\"rssi\":null,\"ip\":null,\"gateway\":null,\"subnet\":null", sizeof(out));
+    static char out[640];
+    if (!api_status_json(out, sizeof(out))) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "too long");
+        return ESP_OK;
     }
-    static const char *states[] = {"idle", "joining", "connected"};
-    size_t l0 = strlen(out);
-    snprintf(out + l0, sizeof(out) - l0, ",\"state\":\"%s\",\"target\":", states[st.state]);
-    if (st.target[0]) {
-        json_put_str(out, sizeof(out), st.target);
-    } else {
-        strlcat(out, "null", sizeof(out));
-    }
-    strlcat(out, ",\"error\":", sizeof(out));
-    if (st.error) {
-        json_put_str(out, sizeof(out), st.error);
-    } else {
-        strlcat(out, "null", sizeof(out));
-    }
-    if (st.connected && st.dns) {
-        char d[16];
-        ip_str(st.dns, d);
-        l0 = strlen(out);
-        snprintf(out + l0, sizeof(out) - l0, ",\"dns\":\"%s\",\"stump\":%s", d, st.stump ? "true" : "false");
-    } else {
-        l0 = strlen(out);
-        snprintf(out + l0, sizeof(out) - l0, ",\"dns\":null,\"stump\":%s", st.stump ? "true" : "false");
-    }
-    strlcat(out, ",\"firmware\":", sizeof(out));
-    char fw[48];
-    snprintf(fw, sizeof(fw), "s3-usb-wifi %s", esp_app_get_description()->version);
-    json_put_str(out, sizeof(out), fw);
-    strlcat(out, "}\n", sizeof(out));
+    strlcat(out, "\n", sizeof(out));
     httpd_resp_set_type(req, "application/json");
     nocache(req);
     return httpd_resp_sendstr(req, out);
@@ -228,13 +173,14 @@ static esp_err_t join_post(httpd_req_t *req)
                : page(req, "400 Bad Request", "A network name is needed.");
     }
     bool has_pass = form_get(body, (size_t)n, "password", pass, sizeof(pass)) >= 0;
-    esp_err_t r = wifi_link_join(ssid, has_pass ? pass : NULL);
-    if (r == ESP_ERR_INVALID_ARG) {
-        return json ? reply_json(req, "400 Bad Request", "bad_password")
+    const char *err = api_join(ssid, has_pass ? pass : NULL);
+    memset(pass, 0, sizeof(pass));
+    if (err && strcmp(err, "not_stored") != 0) {
+        return json ? reply_json(req, "400 Bad Request", err)
                : page(req, "400 Bad Request", "The password is 8 to 63 characters (or empty for an open network).");
     }
-    if (r != ESP_OK) {
-        return json ? reply_json(req, "500 Internal Server Error", "not_saved")
+    if (err) {
+        return json ? reply_json(req, "500 Internal Server Error", err)
                : page(req, "500 Internal Server Error", "Couldn't save it.");
     }
     return json ? reply_json(req, "200 OK", NULL)
@@ -251,13 +197,12 @@ static esp_err_t forget_post(httpd_req_t *req)
     char body[128], ssid[33];
     int n = read_body(req, body, sizeof(body));
     bool one = n > 0 && form_get(body, (size_t)n, "ssid", ssid, sizeof(ssid)) > 0;
-    esp_err_t r = wifi_link_forget(one ? ssid : NULL);
+    const char *err = api_forget(one ? ssid : NULL);
     if (json) {
-        return r == ESP_OK ? reply_json(req, "200 OK", NULL)
-               : reply_json(req, r == ESP_ERR_NOT_FOUND ? "404 Not Found" : "500 Internal Server Error",
-                            r == ESP_ERR_NOT_FOUND ? "not_saved" : "not_stored");
+        return !err ? reply_json(req, "200 OK", NULL)
+               : reply_json(req, strcmp(err, "not_saved") == 0 ? "404 Not Found" : "500 Internal Server Error", err);
     }
-    return page(req, "200 OK", one ? "Forgotten." : "All forgotten. It now joins only open Stump hotspots.");
+    return page(req, "200 OK", one ? "Forgotten." : "All forgotten.");
 }
 
 static esp_err_t networks_get(httpd_req_t *req)
@@ -311,6 +256,6 @@ esp_err_t web_start(void)
         httpd_register_uri_handler(h, &uris[i]);
     }
     httpd_register_err_handler(h, HTTPD_404_NOT_FOUND, not_found);
-    ESP_LOGI(TAG, "http://10.77.0.1/status.json");
+    ESP_LOGI(TAG, "the setup page on http://10.77.1.1/ (while the setup AP is open)");
     return ESP_OK;
 }

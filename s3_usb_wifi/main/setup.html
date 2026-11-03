@@ -21,7 +21,7 @@
 </head>
 <body>
 <h1>FireFly S3 USB Wi-Fi</h1>
-<p class="dim">The networks this adapter joins for the handheld. With none in range, it joins an open Stump hotspot by itself.</p>
+<p class="dim">The networks this adapter joins for the handheld: it joins whichever saved one is in range, most recent first. The handheld then is on that network itself.</p>
 <div id="st">Status: …</div>
 
 <p>Networks nearby <button class="plain" type="button" onclick="scan()">Refresh</button></p>
@@ -47,7 +47,7 @@ function esc(s){return String(s).replace(/[&<>"']/g,function(c){return '&#'+c.ch
 function status(){
   fetch('/status.json').then(function(r){return r.json();}).then(function(s){
     document.getElementById('st').innerHTML = s.ssid
-      ? 'Joined <b>'+esc(s.ssid)+'</b> ('+esc(s.rssi)+' dBm), '+esc(s.ip)+' on '+esc(s.subnet)
+      ? 'Joined <b>'+esc(s.ssid)+'</b> ('+esc(s.rssi)+' dBm, channel '+esc(s.channel)+')'+(s.usb ? ': the handheld is on it' : '')
       : (s.state==='joining' ? 'Joining <b>'+esc(s.target)+'</b>…'
         : (s.error ? 'Couldn\'t join <b>'+esc(s.target)+'</b>: '+esc(s.error.replace('_',' ')) : 'Not joined to a network yet.'));
   }).catch(function(){});
