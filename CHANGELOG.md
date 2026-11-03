@@ -10,6 +10,12 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.2
+
+- **USB Wi-Fi adapter 0.2.1**: the handheld now takes it as a network card.
+  On the R36MAX (kernel 4.4), `cdc_ncm` refused 0.2.0 with "bind() failure":
+  its MAC address string was empty (see the firmware's changelog).
+
 ## v0.3.0-beta.1
 
 The S3 as the handheld's Wi-Fi card.

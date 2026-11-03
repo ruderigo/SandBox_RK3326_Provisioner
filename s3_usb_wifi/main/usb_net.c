@@ -139,9 +139,15 @@ esp_netif_t *usb_net_start(void)
         .user_context = NULL,
     };
     memcpy(ncfg.mac_addr, host_mac, 6);
-    ESP_ERROR_CHECK(tinyusb_net_init(&ncfg));
+    /* The driver first, then the NCM class: tinyusb_driver_install() resets
+     * the string descriptors to its defaults, where the MAC string is empty,
+     * and tinyusb_net_init() is what puts our host MAC there. With it empty,
+     * Linux's cdc_ncm can't read the MAC and refuses the device ("bind()
+     * failure", seen on the R36MAX's kernel 4.4). The host asks for that
+     * string only after enumerating, long after this. */
     tinyusb_config_t tcfg = TINYUSB_DEFAULT_CONFIG(usb_event, NULL);
     ESP_ERROR_CHECK(tinyusb_driver_install(&tcfg));
+    ESP_ERROR_CHECK(tinyusb_net_init(&ncfg));
 
     ESP_LOGI(TAG, "CDC-NCM up: S3 " MACSTR " at 10.77.0.1, host " MACSTR,
              MAC2STR(dev_mac), MAC2STR(host_mac));

@@ -1,3 +1,11 @@
+## s3-usb-wifi 0.2.1
+
+- **Linux takes it now.** The NCM interface's MAC address string was empty,
+  so `cdc_ncm` refused the device ("bind() failure", on the R36MAX's kernel
+  4.4). esp_tinyusb 3.0.0's `tinyusb_driver_install()` resets the string
+  descriptors to its defaults (an empty MAC). We called `tinyusb_net_init()`,
+  which fills it in, before it; we call it after now.
+
 ## s3-usb-wifi 0.2.0
 
 **The S3 is the handheld's Wi-Fi card**, driven from the gamepad. 0.1.0

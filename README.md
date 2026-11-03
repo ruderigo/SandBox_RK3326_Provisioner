@@ -8,9 +8,9 @@ gamepad. It's an EmulationStation **Ports** entry.
 > **Sandbox.** Work in progress; the plan, decisions and next steps are in
 > [docs/PLAN.md](docs/PLAN.md).
 
-| Board | What it can be given (v0.2.0) |
+| Board | What it can be given (v0.3.0-beta.2) |
 |---|---|
-| **ESP32-S3 (Freenove CAM)** | **Make a Stump** (Stump 1.0.0-beta.48, offline), update its Stump, its settings, check it starts; **USB Wi-Fi adapter** 0.2.0: the S3 becomes the handheld's Wi-Fi card ([below](#the-s3-as-the-handhelds-wi-fi-card), bench test pending) |
+| **ESP32-S3 (Freenove CAM)** | **Make a Stump** (Stump 1.0.0-beta.48, offline), update its Stump, its settings, check it starts; **USB Wi-Fi adapter** 0.2.1: the S3 becomes the handheld's Wi-Fi card ([below](#the-s3-as-the-handhelds-wi-fi-card), bench test pending) |
 | Heltec V3 | *coming*: RNode for a CAM, set for the mesh |
 | Classic ESP32 | WLED 16.0.1 (app slot only), MicroPython 1.29.0 (full install) |
 | Any of them | the serial log (115200); erase the whole flash |

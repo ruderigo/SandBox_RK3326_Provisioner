@@ -1,6 +1,6 @@
 # FireFly S3 USB Wi-Fi: ESP-IDF v5.3 project (target esp32s3).
 cmake_minimum_required(VERSION 3.16)
-set(PROJECT_VER "0.2.0")
+set(PROJECT_VER "0.2.1")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # Reproducible across machines: ESP-IDF maps its own and the project's paths;
 # also map where its tools live, which ends up in the debug info (and so in

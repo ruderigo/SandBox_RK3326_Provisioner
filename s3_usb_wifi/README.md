@@ -8,7 +8,7 @@ Plug it in, open the Provisioner's **S3 USB Wi-Fi** page, pick a network,
 type its password with the gamepad, and the handheld is online through it.
 It remembers the networks and rejoins by itself next time.
 
-> **Sandbox, v0.2.0.** It builds and its DHCP server passes against three
+> **Sandbox, v0.2.1.** It builds and its DHCP server passes against three
 > real Linux DHCP clients. It hasn't met a handheld yet: the bench test is
 > below.
 
@@ -106,7 +106,7 @@ the UART port**, then plug the **USB** port into the handheld.
 
   ```sh
   esptool.py --chip esp32s3 --port /dev/ttyACM0 erase_flash
-  esptool.py --chip esp32s3 --port /dev/ttyACM0 write_flash 0x0 s3-usb-wifi-0.2.0.bin
+  esptool.py --chip esp32s3 --port /dev/ttyACM0 write_flash 0x0 s3-usb-wifi-0.2.1.bin
   ```
 
   The image is `firmware/s3_usb_wifi/s3-usb-wifi-<version>.bin` in this
