@@ -164,9 +164,8 @@ class Display:
         tex, place = self._atlases[fid]
         s = str(s)
         if max_w and self.text_width(fid, s) > max_w:
-            while s and self.text_width(fid, s + "…") > max_w:
-                s = s[:-1]
-            s += "…"
+            fit = max(0, max_w * 64 // f["adv64"] - 1)     # monospace: the cut is a count
+            s = s[:fit] + "…"
         self.sdl.SDL_SetTextureColorMod(tex, *color)
         base, acc = y_top + f["asc"], 0
         src, dst = Rect(), Rect()

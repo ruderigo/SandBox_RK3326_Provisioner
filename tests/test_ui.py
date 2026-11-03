@@ -176,6 +176,64 @@ class Screens(Base):
         self.assertEqual(a.screen, "boards")
         self.assertIsNone(a.log)
 
+    def test_serial_log_pause_cursor_block_export(self):
+        from provisioner.seriallog import SerialLog
+
+        class Board:                    # prints 60 lines, one of them long, then nothing
+            def __init__(self):
+                self.out = b"".join(b"line %d\r\n" % i for i in range(1, 60)) + b"X" * 300 + b"\n"
+
+            def read(self, n):
+                chunk, self.out = self.out[:n], self.out[n:]
+                if not chunk:
+                    time.sleep(0.02)
+                return chunk
+
+            def close(self):
+                pass
+        a = self.app([port("/dev/ttyUSB0", "10c4:ea60", "CP210x USB-serial")])
+        a.open_serial_log = lambda p: SerialLog(p, open_serial=Board)
+        a.log_dir = tempfile.mkdtemp()
+        a.handle("y")
+        end = time.time() + 5
+        while len(a.log.snapshot()) < 60 and time.time() < end:
+            time.sleep(0.02)
+        self.assertEqual(len(a.log.snapshot()), 60)
+        self.shot(a, "15-log-live")
+        a.handle("y")                                   # export everything, live
+        files = os.listdir(a.log_dir)
+        self.assertEqual(len(files), 1)
+        with open(os.path.join(a.log_dir, files[0])) as f:
+            body = f.read().splitlines()
+        self.assertEqual(len(body), 61)                 # a header, then each line with its time
+        self.assertTrue(body[1].endswith("  line 1") and body[1][2] == ":")
+        a.handle("a")                                   # pause: the cursor on the last line (the long one)
+        self.assertEqual(a.logv["cur"], 59)
+        self.shot(a, "16-log-paused-long-line")
+        for _ in range(9):
+            a.handle("up")
+        self.assertEqual(a.logv["cur"], 50)
+        a.handle("x")                                   # a block from line 51...
+        a.handle("left")                                # ...a page up
+        self.assertLess(a.logv["cur"], 50)
+        top = a.logv["cur"]
+        self.shot(a, "17-log-block")
+        a.handle("y")
+        newest = max((os.path.join(a.log_dir, f) for f in os.listdir(a.log_dir)), key=os.path.getmtime)
+        with open(newest) as f:
+            body = f.read().splitlines()
+        self.assertEqual(len(body) - 1, 50 - top + 1)
+        self.assertTrue(body[-1].endswith("line 51"))
+        a.handle("right")
+        a.handle("right")
+        a.handle("right")
+        self.assertEqual(a.logv["cur"], 59)             # stops at the end
+        a.handle("a")                                   # resume
+        self.assertIsNone(a.logv["frozen"])
+        self.assertFalse(a.log.paused)
+        a.handle("b")
+        self.assertIsNone(a.log)
+
     def test_this_handhelds_stump_from_its_own_pages(self):
         import http.server
         import json as J

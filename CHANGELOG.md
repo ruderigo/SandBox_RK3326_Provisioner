@@ -10,6 +10,17 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.4
+
+- **The serial log: pause, look, export.** Paused, a cursor line moves with
+  the D-pad (←→ or L/R a page), a scrollbar shows where it is in the log, and
+  a line too long for the screen is spelled out in full below it. X marks a
+  block from the cursor, Y exports it (or everything) to a text file, each
+  line with the time it arrived: `provisioner-logs/` on the games partition
+  (`/roms`, by card reader or SSH), else in the home folder. Running, Y
+  exports everything. The log keeps reading while the screen is paused
+  (it used to drop what came in), up to 5000 lines.
+
 ## v0.3.0-beta.3
 
 - **USB Wi-Fi adapter 0.3.0: the handheld is on the Wi-Fi itself.** The S3

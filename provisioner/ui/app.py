@@ -11,6 +11,7 @@ Nothing touches a board until you choose it: identifying a board resets it,
 so a port another program has open (the Stump and its Heltec) asks first.
 """
 
+import os
 import threading
 import time
 
@@ -114,6 +115,9 @@ class App:
         self.kb = None                  # the keyboard, while typing (and the field it fills)
         self.kb_key = None
         self.open_link = lambda port: stump.SerialLink(port)
+        self.open_serial_log = SerialLog
+        self.log_dir = None             # None: seriallog.export_dir()
+        self.logv = {"frozen": None, "cur": 0, "mark": None}
         self.here = None                # this handheld's own Stump: {release, name, chain} or {"none": True}
         self.here_fn = here_status
         self.next_here = 0.0
@@ -683,7 +687,8 @@ class App:
 
     def open_log(self):
         self.stop_log()
-        self.log = SerialLog(self.cur["port"])
+        self.log = self.open_serial_log(self.cur["port"])
+        self.logv = {"frozen": None, "cur": 0, "mark": None}
         self.log_from = self.screen if self.screen in ("boards", "jobs") else "boards"
         self.screen = "log"
 
@@ -692,14 +697,61 @@ class App:
             self.log.stop()
             self.log = None
 
+    LOG_ROW = 21
+
+    def log_rows(self):
+        """How many lines the log screen shows (fewer while a long line is spelled out)."""
+        return (676 - (TOP + 40)) // self.LOG_ROW
+
     def on_log(self, act):
+        v, log = self.logv, self.log
         if act == "b":
             self.stop_log()
             self.screen = getattr(self, "log_from", "boards")
-        elif act == "a" and self.log:
-            self.log.paused = not self.log.paused
-        elif act == "x" and self.log:
-            self.log.clear()
+            return
+        if not log:
+            return
+        if v["frozen"] is None:                      # running
+            if act == "a":
+                v["frozen"] = log.timed()
+                v["cur"], v["mark"] = max(0, len(v["frozen"]) - 1), None
+                log.paused = True
+            elif act == "x":
+                log.clear()
+                self.toast("Cleared")
+            elif act == "y":
+                self.log_export(None)
+            return
+        n = len(v["frozen"])                         # paused: the cursor
+        page = max(1, self.log_rows() - 4)
+        step = {"up": -1, "down": 1, "left": -page, "right": page, "l": -page, "r": page}.get(act)
+        if step and n:
+            v["cur"] = max(0, min(n - 1, v["cur"] + step))
+        elif act == "a":
+            v["frozen"], v["mark"] = None, None
+            log.paused = False
+        elif act == "x" and n:
+            if v["mark"] is None:
+                v["mark"] = v["cur"]
+                self.toast("Block from line %d: move, then Y exports it" % (v["cur"] + 1), 3)
+            else:
+                v["mark"] = None
+                self.toast("Block cleared")
+        elif act == "y":
+            if v["mark"] is not None and n:
+                a, b = sorted((v["mark"], v["cur"]))
+                self.log_export(v["frozen"][a:b + 1], "lines %d-%d" % (a + 1, b + 1))
+            else:
+                self.log_export(v["frozen"])
+
+    def log_export(self, lines, what=""):
+        try:
+            path = self.log.export(lines, folder=self.log_dir)
+        except OSError as e:
+            self.toast("Couldn't export: %s" % (e.strerror or e), 4)
+            return
+        short = os.path.join(os.path.basename(os.path.dirname(path)), os.path.basename(path))
+        self.toast("Exported%s to %s" % (" " + what if what else "", short), 5)
 
     # -- drawing --
     def draw(self):
@@ -972,21 +1024,62 @@ class App:
         self.hints([("A", "continue"), ("B", "back")] if t.done else [("", "working: leave it plugged in")])
 
     def draw_log(self):
-        d = self.d
-        if not self.log:
+        d, v, log = self.d, self.logv, self.log
+        if not log:
             return
-        lines = self.log.snapshot()
-        if self.log.error:
-            d.text(F20, 20, TOP + 10, self.log.error, ERROR, W - 40)
+        paused = v["frozen"] is not None
+        lines = [t for _, t in v["frozen"]] if paused else log.snapshot()
+        n, rh, top = len(lines), self.LOG_ROW, TOP + 34
+        if log.error:
+            d.text(F20, 20, TOP + 6, log.error, ERROR, W - 40)
         elif not lines:
-            d.text(F20, 20, TOP + 10, "Listening… (nothing yet: press the board's RESET to see it boot)", MUTED,
+            d.text(F20, 20, TOP + 6, "Listening… (nothing yet: press the board's RESET to see it boot)", MUTED,
                    W - 40)
-        for i, s in enumerate(lines[-27:]):
-            d.text(F16, 16, TOP + 10 + i * 21, s, TEXT, W - 32)
-        if self.log.paused:
-            d.fill_rrect(W - 120, TOP + 6, 104, 26, 6, EMBER)
-            d.text(F16, W - 108, TOP + 9, "paused", BG)
-        self.hints([("A", "pause" if not self.log.paused else "resume"), ("X", "clear"), ("B", "back")])
+        else:
+            d.text(F16, 16, TOP + 8, "%d line%s" % (n, "" if n == 1 else "s"), MUTED)
+        vis = self.log_rows()
+        detail = []
+        if paused and n:
+            cur = v["cur"] = min(v["cur"], n - 1)
+            per = (W - 64) * 64 // d.fonts[F16]["adv64"]
+            full = lines[cur]
+            if len(full) > (W - 48) * 64 // d.fonts[F16]["adv64"]:      # cut on screen: spell it out below
+                detail = [full[k:k + per] for k in range(0, len(full), per)][:6]
+                vis -= len(detail) + 1
+            first = max(0, min(cur - vis // 2, n - vis))
+        else:
+            cur, first = -1, max(0, n - vis)
+        block = sorted((v["mark"], cur)) if paused and v["mark"] is not None else None
+        for k, s in enumerate(lines[first:first + vis]):
+            i, y = first + k, top + k * rh
+            if i == cur:
+                d.fill_rrect(10, y - 1, W - 34, rh, 4, EMBER)
+            elif block and block[0] <= i <= block[1]:
+                d.fill(10, y - 1, W - 34, rh, BORDER)
+            d.text(F16, 16, y, s, BG if i == cur else TEXT, W - 48)
+        if n > vis:                                   # where this is in the whole log
+            track_h = vis * rh
+            d.fill(W - 18, top, 6, track_h, PANEL)
+            th = max(14, track_h * vis // n)
+            ty = top + (track_h - th) * first // max(1, n - vis)
+            d.fill_rrect(W - 19, ty, 8, th, 3, EMBER_BRIGHT if paused else MUTED)
+        if detail:
+            y = top + vis * rh + 8
+            d.fill_rrect(10, y, W - 34, 12 + len(detail) * rh, 6, PANEL)
+            for k, s in enumerate(detail):
+                d.text(F16, 22, y + 6 + k * rh, s, TEXT)
+        tag = ("paused · line %d of %d" % (cur + 1, n)) if paused and n else ("paused" if paused else "live")
+        if block:
+            tag += " · block %d-%d" % (block[0] + 1, block[1] + 1)
+        tw = d.text_width(F16, tag) + 20
+        d.fill_rrect(W - 16 - tw, TOP + 4, tw, 26, 6, EMBER if paused else PANEL)
+        d.text(F16, W - 6 - tw, TOP + 7, tag, BG if paused else MUTED)
+        if paused:
+            self.hints([("A", "resume"), ("↑↓", "line"), ("←→", "page"),
+                        ("X", "block" if v["mark"] is None else "unblock"),
+                        ("Y", "export block" if v["mark"] is not None else "export"), ("B", "back")])
+        else:
+            self.hints([("A", "pause"), ("Y", "export"), ("X", "clear"), ("B", "back")])
 
     def draw_confirm(self):
         d, c = self.d, self.confirm

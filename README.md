@@ -72,6 +72,7 @@ EmulationStation if it isn't listed).
 | A form | ↑↓ · A type (the keyboard) or next choice · ←→ choice · B back |
 | Asking | ←→ No / Yes · A accept · B cancel. Erasing defaults to **No** |
 | Flashing | progress, esptool's lines, then *written and verified* or what to do |
+| Serial log | A pause / resume · paused: ↑↓ line, ←→ page, X block, Y export (the block, or all) · running: Y export, X clear · B back |
 | Anywhere | SELECT+START closes it |
 
 A port another program has open (the Stump's Heltec, its radio) is marked
