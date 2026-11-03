@@ -15,7 +15,7 @@ import os
 import threading
 import time
 
-from .. import boards, catalog, files, flasher, handheld, images, packs, s3wifi, stump
+from .. import boards, catalog, files, flasher, handheld, images, installers, packs, s3wifi, shelf, stump
 from ..seriallog import SerialLog
 from . import keyboard
 from .keyboard import Keyboard
@@ -161,6 +161,17 @@ class App:
         self.wifi = None                # the WIFI screen's state
         self.handheld_fn = handheld.state   # () -> this handheld's Stump row's state, or None (no row)
         self.handheld_run = handheld.run
+        self.hh_inst = None             # the handheld's Stump's installer chosen (a shelf copy's, a clone)
+        self.clones = True              # offer ~/SandBox_RK3326_Stump, ~/R36MAX-Stump when there
+        self.online_fn = shelf.online   # (product, channel) -> the newest release online
+        self.fetch_fn = shelf.fetch
+        self.online_sync = False
+        self.online, self.net, self.net_error, self.net_when = {}, None, "", 0.0
+        self.firefly_fn = installers.firefly_installed
+        self.marks_fn = installers.marks
+        self.app_dir = installers.app_dir()
+        self.prod, self.psel, self.prod_back = None, 0, "handheld"
+        self.stump_src = None           # the Stump the boards get, if not the shelf's default (Official)
         self.handheld = None
         self.next_handheld = 0.0
         self.hsel = 0
@@ -168,7 +179,7 @@ class App:
     def bundle(self):
         if self._bundle is False:
             try:
-                self._bundle = stump.find_bundle(self.bundle_dir)
+                self._bundle = stump.find_bundle(self.bundle_dir or self.stump_dir())
             except Exception:
                 self._bundle = None
         return self._bundle
@@ -243,6 +254,7 @@ class App:
         b = self.known.get(self.cur["port"], {}).get("board", {})
         rows = []
         if b.get("id") == "esp32s3":           # the Freenove CAM: a Stump
+            rows.append({"kind": "src_stump"})
             rows += [{"kind": k} for k in ("stump_new", "stump_update", "stump_settings", "stump_check")]
             rows += [{"kind": "pack", "path": p, "plan": plan, "error": err} for p, plan, err in self.bundled_packs()]
         rows += [{"kind": "fw", "entry": e} for e in catalog.for_board(self.entries, b)]
@@ -251,10 +263,24 @@ class App:
         rows.append({"kind": "erase"})
         return rows
 
+    def stump_copy(self):
+        """The Stump the boards get: the one chosen, else the shelf's (Official, else Sandbox)."""
+        return self.stump_src or stump.default_copy()
+
+    def stump_dir(self):
+        c = self.stump_copy()
+        return c["dir"] if c else None
+
+    def stump_choices(self):
+        out = [c for c in (shelf.best("stump", ch) for ch in shelf.CHANNELS) if c]
+        if self.stump_src and self.stump_src["channel"] == "file":
+            out.append(self.stump_src)
+        return out
+
     def bundled_packs(self):
         if self._packs is None:
             try:
-                self._packs = self.packs_fn()
+                self._packs = self.packs_fn(self.bundle_dir or self.stump_dir())
             except Exception:
                 self._packs = []
         return self._packs
@@ -347,20 +373,29 @@ class App:
         self.screen = "run"
 
     def open_jobs(self):
-        self.jsel = 0
+        self.jsel = 1 if self.jobs()[:1] == [{"kind": "src_stump"}] else 0     # on Make a Stump, under its source
         self.screen = "jobs"
 
     def on_jobs(self, act):
         rows = self.jobs()
         if act in ("up", "down"):
             self.jsel = (self.jsel + (1 if act == "down" else -1)) % len(rows)
+        elif act in ("left", "right") and rows[self.jsel]["kind"] == "src_stump":
+            ch = self.stump_choices()
+            if ch:
+                cur = self.stump_copy()
+                i = next((k for k, c in enumerate(ch) if cur and c["dir"] == cur["dir"] and c["tag"] == cur["tag"]), 0)
+                self.stump_src = ch[(i + (1 if act == "right" else -1)) % len(ch)]
+                self._bundle, self._packs = False, None
         elif act == "b":
             self.screen = "boards"
         elif act == "y":
             self.open_log()
         elif act == "a":
             r = rows[self.jsel]
-            if r["kind"].startswith("stump_"):
+            if r["kind"] == "src_stump":
+                self.open_product("stump", back="jobs")
+            elif r["kind"].startswith("stump_"):
                 self.stump_job(r["kind"])
             elif r["kind"] == "log":
                 self.open_log()
@@ -438,9 +473,11 @@ class App:
                 self.open_form("settings", stump.answers_from(t.result))
             elif t.ok and getattr(t, "after", "") == "jobs":
                 self.open_jobs()
-            elif getattr(t, "after", "") == "handheld":
+            elif getattr(t, "after", "") == "quit" and t.ok:
+                self.handle("quit")                             # a new Provisioner: open it again from Ports
+            elif getattr(t, "after", "") in ("product", "quit"):
                 self.next_here = self.next_handheld = 0.0       # look again: it may have changed
-                self.screen = "handheld"
+                self.screen = "product"
             else:
                 self.screen = "jobs" if self.cur and self.cur["port"] in self.known else "boards"
 
@@ -590,8 +627,10 @@ class App:
         threading.Thread(target=work, daemon=True).start()
 
     # -- + From File --
-    def open_files(self):
-        self.fb = {"path": None, "sel": 0, "entries": [], "show_all": False, "from": self.screen}
+    def open_files(self, product=None):
+        exts = shelf.PRODUCTS[product]["file"] if product else files.USABLE
+        self.fb = {"path": None, "sel": 0, "entries": [], "show_all": False, "from": self.screen, "product": product,
+                   "exts": exts}
         self.files_load(None)
         self.screen = "files"
 
@@ -601,7 +640,7 @@ class App:
             fb["entries"] = [{"name": label, "path": p, "dir": True, "size": 0, "root": True}
                              for label, p in self.roots_fn()]
         else:
-            got = files.listdir(path, show_all=fb["show_all"])
+            got = files.listdir(path, exts=fb.get("exts", files.USABLE), show_all=fb["show_all"])
             if got is None:
                 self.toast("Can't open %s" % path, 3)
                 return
@@ -631,7 +670,7 @@ class App:
         elif act == "y" and fb["path"] is not None:
             fb["show_all"] = not fb["show_all"]
             self.files_load(fb["path"])
-            self.toast("Showing every file" if fb["show_all"] else "Showing .bin and .zip files")
+            self.toast("Showing every file" if fb["show_all"] else "Showing %s files" % " and ".join(fb["exts"]))
         elif act == "a" and n:
             e = fb["entries"][fb["sel"]]
             if e["dir"]:
@@ -640,6 +679,15 @@ class App:
                 self.choose_file(e["path"])
 
     def choose_file(self, path):
+        if self.fb and self.fb.get("product"):
+            try:
+                c = shelf.from_file(self.fb["product"], path)
+            except (shelf.ShelfError, OSError) as e:
+                self.toast("Not used: %s" % e, 5)
+                return
+            self.fb, self.screen = None, "product"
+            self.use_copy(c)
+            return
         board = self.known[self.cur["port"]]["board"]
         if path.lower().endswith(".zip"):
             if board.get("id") != "esp32s3":
@@ -701,7 +749,7 @@ class App:
     def stump_job(self, kind):
         b = self.bundle()
         if not b:
-            self.toast("No Stump bundle here (firmware/stump/): reinstall the Provisioner", 4)
+            self.toast("No Stump on the shelf: This handheld -> The Stump gets one (online), or + From File", 5)
             return
         port = self.cur["port"]
         if kind == "stump_new":
@@ -967,7 +1015,9 @@ class App:
                   "form": ("This handheld  ›  Its Stump" if self.form and self.form["mode"] == "handheld" else
                            "%s  ›  %s" % (self.board_name(), "A new Stump" if self.form and self.form["mode"] == "new"
                                           else "Its settings")),
-                  "handheld": "This handheld's Stump", "files": "%s  ›  From File" % self.board_name(), "log": "Serial log  ·  %s  ·  115200"
+                  "handheld": "This handheld",
+                  "product": "This handheld  ›  %s" % (shelf.PRODUCTS[self.prod]["title"] if self.prod else ""), "files": "%s  ›  From File" % (shelf.PRODUCTS[self.fb["product"]]["short"] if self.fb and self.fb.get("product")
+                                               else self.board_name()), "log": "Serial log  ·  %s  ·  115200"
                   % (self.cur["port"] if self.cur else ""), "wifi": "S3 USB Wi-Fi  ·  its networks"}[self.screen]
         d.text(F20, 16, 52, crumbs, TEXT, W - 32)
         d.fill(0, 86, W, 1, BORDER)
@@ -1019,7 +1069,7 @@ class App:
                     d.text(F16, 24, y, s, MUTED, W - 48)
                     y += 22
                 y += 8
-            self.hints(([("A", "this handheld's Stump")] if self.handheld else []) + [("SELECT+START", "quit")])
+            self.hints(([("A", "this handheld")] if self.handheld else []) + [("SELECT+START", "quit")])
             return
         self.draw_here(TOP + 4)
         d.text(F16, 16, TOP + 4, "BOARDS ON THE HUB", EMBER)
@@ -1088,88 +1138,387 @@ class App:
         fw = (self.adapter or {}).get("firmware", "")
         d.text(F16, 26, y + 56, "%s · %s · A: its networks" % (self.adapter_port or "usb", fw), MUTED, W - 60)
 
-    def handheld_line(self):
-        """(text, colour): the handheld's Stump, now."""
-        h, st = self.here, self.handheld or {}
-        if h and not h.get("none"):
-            return "Stump %s · %s%s" % (h.get("release", "?"), h.get("name", "?"),
-                                        " · " + h["chain"] if h.get("chain") else ""), OK
-        if st.get("installed"):
-            return "Installed, not answering: ~/Stump/stump.log says why", ERROR
-        return "None yet", MUTED
+    # -- this handheld: the Provisioner, its Stump, FireFly, the CAM's Stump (the shelf) --
+    def installed(self, p):
+        """What's installed / in use, for a product: its version, or ''."""
+        if p == "provisioner":
+            return self.version
+        if p == "firefly":
+            return self.firefly_fn() if self.firefly_fn else ""
+        if p == "handheld":
+            return (self.marks_fn().get("handheld") or {}).get("version", "") if self.marks_fn else ""
+        c = self.stump_copy()
+        return c["version"] if c else ""
 
-    def handheld_where(self):
-        st = self.handheld or {}
-        inst = st.get("installer")
-        if st.get("why"):
-            return st["why"], ERROR
-        if not inst:
-            return "No installer here: get SandBox_RK3326_Stump (A says how)", MUTED
-        if not inst["answers"]:
-            return "%s %s can't be run from here: v2.3.0 or newer can" % (inst["repo"], inst["version"]), ERROR
-        return "%s %s · A: install, update, check" % (inst["repo"], inst["version"]), MUTED
+    def installed_line(self, p):
+        """(text, colour) on what this product is here now."""
+        v = self.installed(p)
+        if p == "provisioner":
+            return "v%s, this one" % v, OK
+        if p == "handheld":
+            h, st = self.here, self.handheld or {}
+            if h and not h.get("none"):
+                return "Stump %s · %s%s%s" % (h.get("release", "?"), h.get("name", "?"),
+                                             " · " + h["chain"] if h.get("chain") else "",
+                                             " · installer %s" % v if v else ""), OK
+            if st.get("installed"):
+                return "Installed, not answering: ~/Stump/stump.log says why", ERROR
+            return "None yet", MUTED
+        if p == "firefly":
+            return ("FireFly %s installed" % v, OK) if v else ("Not installed", MUTED)
+        c = self.stump_copy()
+        return ("The boards get %s" % shelf.describe(c), OK) if c else ("No Stump on the shelf", ERROR)
+
+    def newer_online(self, p, ch):
+        """The release online that the shelf doesn't have yet, or None."""
+        o = self.online.get((p, ch))
+        c = shelf.best(p, ch)
+        if o and (not c or shelf.version_key(o["version"]) > shelf.version_key(c["version"])):
+            return o
+        return None
+
+    def shelf_line(self, p):
+        bits = []
+        for ch in shelf.CHANNELS:
+            if not shelf.PRODUCTS[p].get(ch):
+                continue
+            c, o = shelf.best(p, ch), self.newer_online(p, ch)
+            s = "%s %s" % (shelf.CHANNEL_NAMES[ch], c["version"] if c else "none")
+            if o:
+                s += " (online: %s)" % o["version"]
+            bits.append(s)
+        return "Shelf: " + " · ".join(bits), (EMBER_BRIGHT if any(self.newer_online(p, ch) for ch in shelf.CHANNELS)
+                                               else MUTED)
+
+    def net_line(self):
+        if self.net == "checking":
+            return "Looking online (EmulationStation's network)…", EMBER_BRIGHT
+        if self.net == "online":
+            n = sum(1 for p in shelf.ORDER for ch in shelf.CHANNELS if self.newer_online(p, ch))
+            return ("Online: %d newer on GitHub (X on a product's page gets it)" % n if n
+                    else "Online: the shelf has the newest of everything"), OK if not n else EMBER_BRIGHT
+        if self.net == "offline":
+            return "Offline (%s): the shelf and + From File" % (self.net_error or "no network"), MUTED
+        return "The shelf (offline) and + From File", MUTED
+
+    def look_online(self, force=False):
+        """Asks GitHub (over EmulationStation's network) for every product's newest
+        Official and Sandbox, in the background; at most every 10 minutes unless forced."""
+        if not self.online_fn or self.net == "checking":
+            return
+        if not force and self.net_when and time.time() - self.net_when < 600:
+            return
+        self.net = "checking"
+
+        def work():
+            got, err = {}, ""
+            for p in shelf.ORDER:
+                for ch in shelf.CHANNELS:
+                    if not shelf.PRODUCTS[p].get(ch):
+                        continue
+                    try:
+                        got[(p, ch)] = self.online_fn(p, ch)
+                    except Exception as e:
+                        err = str(e)
+                        break
+                if err:
+                    break
+            self.online = got if not err else {}
+            self.net_error, self.net_when = err, time.time()
+            self.net = "offline" if err else "online"
+        if self.online_sync:
+            work()
+        else:
+            threading.Thread(target=work, daemon=True).start()
 
     def draw_handheld_row(self, y, sel):
         d = self.d
-        d.text(F24, 26, y + 6, "This handheld's Stump", EMBER_BRIGHT if sel else TEXT, W - 60)
-        line, tone = self.handheld_line()
-        d.text(F16, 26, y + 36, line, tone, W - 60)
-        where, wt = self.handheld_where()
-        d.text(F16, 26, y + 56, where, wt, W - 60)
+        d.text(F24, 26, y + 6, "This handheld", EMBER_BRIGHT if sel else TEXT, W - 60)
+        hl, _ = self.installed_line("handheld")
+        ff = self.installed("firefly")
+        d.text(F16, 26, y + 36, "Provisioner v%s · %s · FireFly %s" % (self.version, hl if hl != "None yet" else
+                                "no Stump", ff or "none"), MUTED, W - 60)
+        line, tone = self.net_line()
+        d.text(F16, 26, y + 56, line, tone, W - 60)
 
-    # -- this handheld's own Stump --
     def open_handheld(self):
         self.hsel = 0
         self.next_here = 0.0
         self.screen = "handheld"
-
-    def handheld_jobs(self):
-        st = self.handheld or {}
-        rows = [{"kind": "hh_install"}]
-        if st.get("installed"):
-            rows.append({"kind": "hh_update"})
-        rows.append({"kind": "hh_check"})
-        return rows
-
-    def handheld_blocked(self):
-        """Why the installer can't run from here (a toast), or ''."""
-        st = self.handheld or {}
-        inst = st.get("installer")
-        if st.get("why"):
-            return st["why"]
-        if not inst:
-            return "Over SSH, once (internet): " + handheld.GET
-        if not inst["answers"]:
-            return "%s %s takes no answers: cd ~/%s && git pull (v2.3.0+), or: %s" % (
-                inst["repo"], inst["version"], inst["repo"], handheld.GET)
-        return ""
+        self.look_online()
 
     def on_handheld(self, act):
-        rows = self.handheld_jobs()
-        self.hsel = min(self.hsel, len(rows) - 1)
+        n = len(shelf.ORDER)
         if act in ("up", "down"):
-            self.hsel = (self.hsel + (1 if act == "down" else -1)) % len(rows)
+            self.hsel = (self.hsel + (1 if act == "down" else -1)) % n
         elif act == "b":
             self.screen = "boards"
+        elif act == "y":
+            self.look_online(force=True)
         elif act == "a":
-            kind = rows[self.hsel]["kind"]
-            if kind == "hh_check":
-                return self.check_handheld()
-            why = self.handheld_blocked()
-            if why:
-                self.toast(why, 8)
-            elif kind == "hh_install":
-                self.open_form("handheld", handheld.form_defaults(self.here), back="handheld")
-            else:
-                st = self.handheld
-                self.ask("Update this handheld's Stump?",
-                         ["Team Stump's latest SandBox_Stump_On and %s's cockpit (git pull: a newer one needs "
-                          "internet; without it, the same again)." % st["installer"]["repo"],
-                          "Its settings, its identity on the mesh, its files and chain stay.",
-                          "The Stump restarts. A few minutes."],
-                         "Update it", lambda: self.run_handheld("Updating this handheld's Stump",
-                                                                handheld.update_answers(st["folder"])))
+            self.open_product(shelf.ORDER[self.hsel])
 
+    def draw_handheld(self):
+        d = self.d
+        d.fill_rrect(12, TOP + 2, W - 24, 40, 8, PANEL)
+        line, tone = self.net_line()
+        d.text(F16, 26, TOP + 13, line, tone, W - 52)
+        d.text(F16, 16, TOP + 54, "WHAT THIS HANDHELD INSTALLS", EMBER)
+        rh = 84
+        vis = fits(TOP + 78, rh)
+        first = window(self.hsel, len(shelf.ORDER), vis, ahead=0)
+        for k, p in enumerate(shelf.ORDER[first:first + vis]):
+            i, y = first + k, TOP + 78 + k * rh
+            sel = i == self.hsel
+            if sel:
+                d.stroke_rrect(12, y, W - 24, rh - 6, 8, EMBER, PANEL)
+            d.text(F24, 26, y + 6, shelf.PRODUCTS[p]["title"], EMBER_BRIGHT if sel else TEXT, W - 60)
+            line, tone = self.installed_line(p)
+            d.text(F16, 26, y + 36, line, tone, W - 60)
+            line, tone = self.shelf_line(p)
+            d.text(F16, 26, y + 56, line, tone, W - 60)
+        self.hints([("A", "open"), ("Y", "look online"), ("↑↓", "move"), ("B", "boards")])
+
+    # -- one product: Official, Sandbox, + From File (and its own jobs) --
+    def open_product(self, p, back="handheld"):
+        self.prod, self.psel, self.prod_back = p, 0, back
+        self.screen = "product"
+        self.look_online()
+
+    def product_rows(self):
+        p, rows = self.prod, []
+        for ch in shelf.CHANNELS:
+            if shelf.PRODUCTS[p].get(ch):
+                rows.append({"kind": "src", "ch": ch})
+        if p == "handheld":
+            clone = handheld.find_installer() if self.clones else None
+            if clone:
+                rows.append({"kind": "clone", "inst": clone})
+        rows.append({"kind": "fromfile"})
+        if p == "handheld":
+            rows.append({"kind": "hh_check"})
+        if p == "provisioner" and installers.version_in(installers.previous_dir(self.app_dir)):
+            rows.append({"kind": "rollback"})
+        return rows
+
+    def system_why(self, p):
+        """Why this product can't be installed on this handheld, or ''."""
+        if p == "stump":
+            return ""
+        if p == "provisioner":
+            return installers.self_update_why(self.app_dir)
+        if self.handheld is not None:
+            return self.handheld.get("why", "")
+        return handheld.system_why()
+
+    def on_product(self, act):
+        rows = self.product_rows()
+        self.psel = min(self.psel, len(rows) - 1)
+        r, p = rows[self.psel], self.prod
+        if act in ("up", "down"):
+            self.psel = (self.psel + (1 if act == "down" else -1)) % len(rows)
+        elif act == "b":
+            self.screen = self.prod_back
+        elif act == "x" and r["kind"] == "src":
+            self.get_online(p, r["ch"])
+        elif act == "y" and r["kind"] in ("src", "clone") and p == "handheld":
+            self.handheld_source(r, new_answers=True)
+        elif act == "y":
+            self.look_online(force=True)
+            self.toast("Looking online…")
+        elif act == "a":
+            if r["kind"] == "src":
+                c = shelf.best(p, r["ch"])
+                if not c:
+                    o = self.newer_online(p, r["ch"])
+                    self.toast(("Not on the shelf yet: X gets %s %s" % (shelf.CHANNEL_NAMES[r["ch"]], o["version"]))
+                               if o else "Not on the shelf, and nothing online: + From File", 5)
+                else:
+                    self.use_copy(c)
+            elif r["kind"] == "clone":
+                self.handheld_source(r)
+            elif r["kind"] == "fromfile":
+                self.open_files(product=p)
+            elif r["kind"] == "hh_check":
+                self.check_handheld()
+            elif r["kind"] == "rollback":
+                prev = installers.version_in(installers.previous_dir(self.app_dir))
+                self.ask("Go back to the Provisioner v%s?" % prev,
+                         ["The one before the last update, kept for this.", "This one (v%s) is kept in its place, "
+                          "to swap back." % self.version, "Then close it and open it again from Ports."],
+                         "Go back", lambda: self.run_task("Going back to v%s" % prev,
+                                                          lambda t: installers.rollback(self.app_dir), after="quit"))
+
+    def get_online(self, p, ch):
+        if self.net != "online":
+            self.toast("Offline: no network from EmulationStation (Y looks again)" if self.net != "checking"
+                       else "Still looking online…", 4)
+            return
+        o = self.online.get((p, ch))
+        if not o:
+            self.toast("No %s release online" % shelf.CHANNEL_NAMES[ch], 4)
+            return
+        c = shelf.best(p, ch)
+        if c and c["tag"] == o["tag"]:
+            self.toast("The shelf has %s already" % o["version"], 3)
+            return
+        self.run_task("Getting %s %s %s" % (shelf.PRODUCTS[p]["short"], shelf.CHANNEL_NAMES[ch], o["version"]),
+                      lambda t: self._fetched(p, ch, o, t), after="product")
+
+    def _fetched(self, p, ch, o, t):
+        t.step, t.pct = "Downloading and checking (SHA-256)", 0
+        try:
+            c = self.fetch_fn(p, ch, o, self._pct(t), t.line)
+        except Exception as e:
+            return False, "Not taken: %s" % e
+        if p == "stump":
+            self._bundle, self._packs = False, None
+        return True, "On the shelf (offline from now on): %s %s." % (shelf.CHANNEL_NAMES[ch], c["version"])
+
+    def use_copy(self, c):
+        """Installs (or, for the CAM's Stump, chooses) a shelf copy or a file."""
+        p = c["product"]
+        why = self.system_why(p)
+        if why:
+            self.toast(why, 6)
+            return
+        what = "%s (%s)" % (c["version"], "from a file" if c["channel"] == "file" else shelf.CHANNEL_NAMES[c["channel"]])
+        if p == "stump":
+            self.stump_src = c
+            self._bundle, self._packs = False, None
+            self.toast("The boards get the Stump %s now" % what, 4)
+        elif p == "firefly":
+            have = self.installed("firefly")
+            self.ask("%s FireFly %s?" % ("Update to" if have else "Install", what),
+                     ["FireFly's own installer (~/firefly; Ports -> FireFly).",
+                      "Its identity, contacts, messages and settings stay (~/.firefly)." if have else
+                      "A first install needs internet once (packages, Reticulum); reboot after it.",
+                      "Now: %s." % (have or "not installed")],
+                     "Install", lambda: self.run_task("Installing FireFly %s" % c["version"], lambda t: self._marked(
+                         p, c, installers.firefly_install(c, t.line, self._step(t))), after="product"))
+        elif p == "provisioner":
+            self.ask("Install the Provisioner %s?" % what,
+                     ["Its own install.sh, over this one (v%s, kept to go back to)." % self.version,
+                      "Then close it and open it again from Ports."],
+                     "Install", lambda: self.run_task("Installing the Provisioner %s" % c["version"],
+                                                      lambda t: installers.self_update(c, t.line, self._step(t),
+                                                                                       self.app_dir), after="quit"))
+        elif p == "handheld":
+            try:
+                inst = installers.handheld_installer(c)
+            except Exception as e:
+                self.toast("Couldn't unpack it: %s" % e, 5)
+                return
+            self.handheld_source({"kind": "clone", "inst": inst})
+
+    def _marked(self, p, c, result):
+        ok, msg = result
+        if ok:
+            installers.mark(p, c)
+        return ok, msg
+
+    def handheld_source(self, r, new_answers=False):
+        """The handheld's Stump by this installer: Update (keeps settings) when
+        there's one, else (or with Y) the form."""
+        if r["kind"] == "src":
+            c = shelf.best("handheld", r["ch"])
+            if not c:
+                self.toast("Not on the shelf: X gets it, or + From File", 4)
+                return
+            try:
+                inst = installers.handheld_installer(c)
+            except Exception as e:
+                self.toast("Couldn't unpack it: %s" % e, 5)
+                return
+        else:
+            inst = r["inst"]
+        why = self.system_why("handheld")
+        if why:
+            self.toast(why, 6)
+            return
+        if not inst["answers"]:
+            self.toast("%s %s can't take answers from here: v2.3.0-r36max or newer can" % (
+                inst["repo"], inst["version"]), 6)
+            return
+        self.hh_inst = inst
+        st = self.handheld or {}
+        if st.get("installed") and not new_answers:
+            self.ask("Update this handheld's Stump?",
+                     ["By %s %s: Team Stump's latest SandBox_Stump_On (a newer one needs internet) and its cockpit."
+                      % (inst["repo"], inst["version"]),
+                      "Its settings, identity on the mesh, files and chain stay. (Y on the row: new answers.)",
+                      "The Stump restarts. A few minutes."],
+                     "Update it", lambda: self.run_handheld("Updating this handheld's Stump",
+                                                            handheld.update_answers(st.get("folder"))))
+        else:
+            self.open_form("handheld", handheld.form_defaults(self.here), back="product")
+
+    def run_task(self, title, fn, after="product"):
+        def work(t):
+            ok, msg = fn(t)
+            return ok, msg, None
+        self.task = Task(title, work)
+        self.task.after = after
+        self.screen = "run"
+
+    def draw_product(self):
+        d, p = self.d, self.prod
+        rows = self.product_rows()
+        d.fill_rrect(12, TOP + 2, W - 24, 58, 8, PANEL)
+        line, tone = self.installed_line(p)
+        d.text(F20, 26, TOP + 8, line, tone, W - 52)
+        line, tone = self.net_line()
+        d.text(F16, 26, TOP + 34, line, tone, W - 52)
+        d.text(F16, 16, TOP + 72, "INSTALL FROM" if p != "stump" else "THE BOARDS GET", EMBER)
+        rh = 72
+        vis = fits(TOP + 96, rh)
+        first = window(self.psel, len(rows), vis)
+        why = self.system_why(p)
+        now = self.installed(p)
+        for k, r in enumerate(rows[first:first + vis]):
+            i, y = first + k, TOP + 96 + k * rh
+            sel = i == self.psel
+            if sel:
+                d.stroke_rrect(12, y, W - 24, rh - 6, 8, EMBER, PANEL)
+            tag, tc, ready = "", MUTED, not why
+            if r["kind"] == "src":
+                c, o = shelf.best(p, r["ch"]), self.newer_online(p, r["ch"])
+                name = shelf.CHANNEL_NAMES[r["ch"]]
+                title = "%s %s" % (name, c["version"]) if c else "%s: not on the shelf" % name
+                repo = shelf.PRODUCTS[p][r["ch"]].split("/")[-1]
+                about = "%s · %s" % (repo, ("on the shelf" if c else "nothing here yet"))
+                if o:
+                    about += " · online: %s (X gets it)" % o["version"]
+                elif self.net == "online" and c:
+                    about += " · the newest"
+                if c and now and c["version"] == now:
+                    tag, tc = ("the boards get it" if p == "stump" else "installed"), OK
+                ready = ready and bool(c)
+            elif r["kind"] == "clone":
+                title = "Your clone: %s %s" % (r["inst"]["repo"], r["inst"]["version"])
+                about = "~/%s (git): what you put there over SSH" % r["inst"]["repo"]
+            elif r["kind"] == "fromfile":
+                title = "+ From File"
+                about = "A %s from the card or a USB drive, read for what it is first." % " / ".join(
+                    shelf.PRODUCTS[p]["file"])
+            elif r["kind"] == "hh_check":
+                title, about, ready = "Check it", "Asks the Stump on this handheld: release, name, chain.", True
+            else:
+                title = "Go back to v%s" % installers.version_in(installers.previous_dir(self.app_dir))
+                about = "The Provisioner before the last update (kept for this)."
+            tw = d.text_width(F16, tag)
+            d.text(F24, 26, y + 6, title, (EMBER_BRIGHT if sel else TEXT) if ready else MUTED, W - 80 - tw)
+            if tag:
+                d.text(F16, W - 28 - tw, y + 12, tag, tc)
+            d.text(F16, 26, y + 38, about, MUTED, W - 52)
+        cur = rows[min(self.psel, len(rows) - 1)]
+        hints = [("A", "use it" if p == "stump" else "install")]
+        if cur["kind"] == "src":
+            hints.append(("X", "get online"))
+        hints.append(("Y", "new answers" if p == "handheld" and cur["kind"] in ("src", "clone") else "look online"))
+        self.hints(hints + [("B", "back")])
+
+    # -- this handheld's Stump: the form, the installer, the check --
     def handheld_form_rows(self, a):
         rows = [{"key": "name", "label": "Its name", "kind": "text", "max": 20, "blank": "needed"},
                 {"key": "hotspot", "label": "Its Wi-Fi's name", "kind": "text", "max": 32, "blank": "its name"},
@@ -1194,7 +1543,7 @@ class App:
             self.toast(ans["error"], 4)
             return
         lines = ["%s on this handheld, by %s's installer: Team Stump's own wizard, answered from this form." % (
-                 ans["node name"], st["installer"]["repo"])]
+                 ans["node name"], self.hh_inst["repo"])]
         if st.get("installed"):
             lines.append("Its Stump is there: these answers replace its settings; its identity and files stay.")
         else:
@@ -1205,14 +1554,14 @@ class App:
             "Installing this handheld's Stump", ans))
 
     def run_handheld(self, title, ans):
-        inst = self.handheld["installer"]
+        inst = self.hh_inst
 
         def work(t):
             ok, msg = self.handheld_run(inst, ans, t.line, self._step(t))
             return ok, msg, None
         self.form = None
         self.task = Task(title, work)
-        self.task.after = "handheld"
+        self.task.after = "product"
         self.screen = "run"
 
     def check_handheld(self):
@@ -1229,41 +1578,8 @@ class App:
                 return False, "It's installed but doesn't answer: ~/Stump/stump.log says why (Update starts it again).", None
             return False, "No Stump on this handheld yet: Install a Stump.", None
         self.task = Task("Checking this handheld's Stump", work)
-        self.task.after = "handheld"
+        self.task.after = "product"
         self.screen = "run"
-
-    def draw_handheld(self):
-        d = self.d
-        st = self.handheld or {}
-        d.fill_rrect(12, TOP + 2, W - 24, 58, 8, PANEL)
-        line, tone = self.handheld_line()
-        d.text(F20, 26, TOP + 8, line, tone, W - 52)
-        where, wt = self.handheld_where()
-        d.text(F16, 26, TOP + 34, where, wt, W - 52)
-        d.text(F16, 16, TOP + 72, "WHAT IT CAN BE GIVEN", EMBER)
-        rows = self.handheld_jobs()
-        rh = 72
-        blocked = bool(self.handheld_blocked())
-        for k, r in enumerate(rows[:fits(TOP + 96, rh)]):
-            y = TOP + 96 + k * rh
-            sel = k == self.hsel
-            if sel:
-                d.stroke_rrect(12, y, W - 24, rh - 6, 8, EMBER, PANEL)
-            title, about, tag, tc = {
-                "hh_install": ("Install again, new answers" if st.get("installed") else "Install a Stump",
-                               "Its name, Wi-Fi, chain, LoRa, packs; then Team Stump's wizard and the cockpit. "
-                               "The first time needs internet.", "asks first", MUTED),
-                "hh_update": ("Update its Stump", "Team Stump's latest; its settings, identity and files stay.",
-                              "keeps settings", OK),
-                "hh_check": ("Check it", "Asks the Stump on this handheld: release, name, chain.", "", MUTED),
-            }[r["kind"]]
-            ready = r["kind"] == "hh_check" or not blocked
-            tw = d.text_width(F16, tag)
-            d.text(F24, 26, y + 6, title, (EMBER_BRIGHT if sel else TEXT) if ready else MUTED, W - 80 - tw)
-            if tag:
-                d.text(F16, W - 28 - tw, y + 12, tag, tc)
-            d.text(F16, 26, y + 38, about, MUTED, W - 52)
-        self.hints([("A", "choose"), ("B", "boards"), ("↑↓", "move")])
 
     def draw_here(self, y):
         """This handheld's own Stump, on one line at the top right."""
@@ -1355,7 +1671,13 @@ class App:
             if sel:
                 d.stroke_rrect(12, y, W - 24, rh - 6, 8, EMBER, PANEL)
             b = self.bundle()
-            if r["kind"].startswith("stump_"):
+            if r["kind"] == "src_stump":
+                c = self.stump_copy()
+                title = "Stump: %s" % (shelf.describe(c) if c else "none on the shelf")
+                about = ("◀ ▶ Official / Sandbox%s · A: + From File, get the newest online" %
+                         (" / the file" if self.stump_src and self.stump_src["channel"] == "file" else ""))
+                tag, tc, ready = ("◀ ▶" if sel else ""), MUTED, True
+            elif r["kind"].startswith("stump_"):
                 rel = b.release if b else "?"
                 title, about, tag, tc = {
                     "stump_new": ("Make a Stump", "Erases it, writes MicroPython and the Stump %s, asks its name, "
@@ -1455,7 +1777,7 @@ class App:
                 name, info = e["name"], files.human(e["size"])
             iw = d.text_width(F16, info)
             d.text(F20, 26, y + 12, name, (EMBER_BRIGHT if sel else TEXT) if (e["dir"] or not fb["show_all"]
-                   or e["name"].lower().endswith(files.USABLE)) else MUTED, W - 70 - iw)
+                   or e["name"].lower().endswith(fb.get("exts", files.USABLE))) else MUTED, W - 70 - iw)
             d.text(F16, W - 28 - iw, y + 15, info, MUTED)
         if len(es) > vis:
             track = vis * rh

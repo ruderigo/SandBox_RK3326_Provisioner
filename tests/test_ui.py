@@ -4,6 +4,7 @@ boards and the fake esptool. Screenshots go to $SHOTS (default: a temp dir).
     python3 tests/test_ui.py
 """
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -27,6 +28,12 @@ def display():
     if DISPLAY is None:
         DISPLAY = Display(os.path.join(ROOT, "assets", "cockpit_font.bin"), headless=True)
     return DISPLAY
+
+
+def stump_dir():
+    """The shelf copy of the Stump the boards get (Official, else Sandbox)."""
+    from provisioner import stump
+    return stump.default_copy()["dir"]
 
 
 def port(name, usb, chip):
@@ -139,10 +146,11 @@ class Screens(Base):
         self.shot(a, "12-jobs-s3")
         self.assertEqual(a.known["/dev/ttyACM0"]["info"]["psram_mb"], 8)
         kinds = [r["kind"] for r in a.jobs()]
-        self.assertEqual(kinds[:4], ["stump_new", "stump_update", "stump_settings", "stump_check"])
-        self.assertEqual([r["plan"]["name"] for r in a.jobs()[4:6]], ["rnfs", "tavern"])   # the packs it carries
-        self.assertEqual(a.jobs()[6]["entry"]["id"], "s3-usb-wifi")
-        self.assertEqual(a.jobs()[6]["entry"]["status"], "ready")
+        self.assertEqual(kinds[:5], ["src_stump", "stump_new", "stump_update", "stump_settings", "stump_check"])
+        self.assertEqual([r["plan"]["name"] for r in a.jobs()[5:7]], ["rnfs", "tavern"])   # the packs it carries
+        self.assertEqual(a.jobs()[7]["entry"]["id"], "s3-usb-wifi")
+        self.assertEqual(a.jobs()[7]["entry"]["status"], "ready")
+        self.assertEqual(a.jsel, 1)                     # on Make a Stump
 
     def test_a_failure_says_what_to_do(self):
         os.environ.update(FAKE_BOARD="esp32", FAKE_FAIL="connect")
@@ -365,7 +373,7 @@ class MakeAStumpOnScreen(Base):
 
         # Its settings, read back into the form, one changed, saved.
         a.handle("a")
-        a.jsel = 2
+        a.jsel = [r["kind"] for r in a.jobs()].index("stump_settings")
         a.handle("a")
         self.wait(a)
         a.handle("a")
@@ -389,7 +397,7 @@ class MakeAStumpOnScreen(Base):
 
         # Check it starts.
         a.handle("a")
-        a.jsel = 3
+        a.jsel = [r["kind"] for r in a.jobs()].index("stump_check")
         a.handle("a")
         self.wait(a)
         self.shot(a, "27-checked")
@@ -555,7 +563,7 @@ class FromFileAndPacks(Base):
         shutil.copy(os.path.join(fw, "official", "WLED_16.0.1_ESP32.bin"), os.path.join(self.dir, "wled.bin"))
         shutil.copy(os.path.join(fw, "s3_usb_wifi", sorted(os.listdir(os.path.join(fw, "s3_usb_wifi")))[0]),
                     os.path.join(self.dir, "adapter.bin"))
-        shutil.copy(os.path.join(fw, "stump", "packs", "tavern-pack-1.1.zip"), os.path.join(self.dir, "tavern.zip"))
+        shutil.copy(os.path.join(stump_dir(), "tavern-pack-1.1.zip"), os.path.join(self.dir, "tavern.zip"))
         with open(os.path.join(self.dir, "notes.bin"), "wb") as f:
             f.write(b"hello" * 100)
         os.makedirs(os.path.join(self.dir, "older"))
@@ -564,9 +572,7 @@ class FromFileAndPacks(Base):
 
     def browse(self, a):
         a.roots_fn = lambda: [("Card", self.dir)]
-        rows = [r["kind"] for r in a.jobs()]
-        for _ in range(rows.index("fromfile")):
-            a.handle("down")
+        a.jsel = [r["kind"] for r in a.jobs()].index("fromfile")
         a.handle("a")
         self.assertEqual(a.screen, "files")
         a.handle("a")                                   # into the card
@@ -651,8 +657,7 @@ class FromFileAndPacks(Base):
         a = self.stump_board()
         rows = a.jobs()
         k = [i for i, r in enumerate(rows) if r["kind"] == "pack" and r["plan"]["name"] == "tavern"][0]
-        for _ in range(k):
-            a.handle("down")
+        a.jsel = k
         self.shot(a, "42-jobs-packs")
         a.handle("a")
         self.assertEqual(a.confirm["title"], "Add tavern 1.1 to its Stump?")
@@ -669,7 +674,7 @@ class FromFileAndPacks(Base):
     def test_a_pack_with_card_files_from_file(self):
         import shutil
         a = self.stump_board()
-        shutil.copy(os.path.join(ROOT, "firmware", "stump", "packs", "rnfs-pack-1.1.zip"),
+        shutil.copy(os.path.join(stump_dir(), "rnfs-pack-1.1.zip"),
                     os.path.join(self.dir, "rnfs.zip"))
         self.browse(a)
         self.pick(a, "rnfs.zip")
@@ -684,7 +689,7 @@ class FromFileAndPacks(Base):
     def test_a_changed_pack_is_refused(self):
         import zipfile
         a = self.stump_board()
-        src = os.path.join(ROOT, "firmware", "stump", "packs", "tavern-pack-1.1.zip")
+        src = os.path.join(stump_dir(), "tavern-pack-1.1.zip")
         bad = os.path.join(self.dir, "bad.zip")
         with zipfile.ZipFile(src) as zin, zipfile.ZipFile(bad, "w") as zout:
             for i in zin.infolist():
@@ -698,102 +703,227 @@ class FromFileAndPacks(Base):
         self.assertIn("changed since it was hashed", a.toast_text)
 
 
-class TheHandheldsStump(Base):
-    """Installing, updating and checking the handheld's own Stump from the
-    gamepad: a form, then R36MAX-Stump's install.sh --answers (pretend)."""
+class ThisHandheld(Base):
+    """This handheld's page: the Provisioner, its Stump, FireFly, the CAM's
+    Stump, each from Official, Sandbox (the shelf, updated online) or a file."""
 
-    def handheld_app(self, installed=False, answers=True, why=""):
+    def setUp(self):
+        super().setUp()
+        self.card = tempfile.mkdtemp(prefix="shelf-")
+        self.addCleanup(shutil.rmtree, self.card, True)
+        os.environ["PROVISIONER_SHELF"] = self.card            # fetched copies go here; the built-in shelf stays
+        self.addCleanup(os.environ.pop, "PROVISIONER_SHELF", None)
+        self.home = tempfile.mkdtemp(prefix="home-")
+        self.addCleanup(shutil.rmtree, self.home, True)
+
+    def handheld_app(self, installed=False, why="", online=None, offline=False):
         a = self.app([])
-        inst = {"path": "/home/ark/SandBox_RK3326_Stump/handheld/install.sh", "repo": "SandBox_RK3326_Stump",
-                "version": "2.3.0-r36max" if answers else "2.0.0-r36max", "answers": answers}
-        a.handheld_fn = lambda: {"installer": inst, "why": why, "folder": "/home/ark/Stump", "installed": installed}
-        self.runs = []
+        a.handheld_fn = lambda: {"installer": None, "why": why, "folder": "/home/ark/Stump", "installed": installed}
+        a.clones = False
+        self.runs, self.fetched = [], []
 
         def run(inst, ans, line, step):
-            self.runs.append(ans)
+            self.runs.append((inst, ans))
             step("1/6 Packages")
-            line("installing")
-            return True, "The Stump is up: R36-Test 1.0.0-beta.50 on :80, no chain. Its cockpit: Ports -> LaBuche_Stump."
+            return True, "The Stump is up: R36-Test 1.0.0-beta.51 on :80, no chain."
         a.handheld_run = run
-        a.here = {"none": True} if not installed else {"release": "1.0.0-beta.50", "name": "LaBuche-R36",
+        a.here = {"none": True} if not installed else {"release": "1.0.0-beta.51", "name": "LaBuche-R36",
                                                        "chain": "chain member"}
         a.here_fn = lambda: a.here
+        a.firefly_fn = lambda: ""
+        a.marks_fn = lambda: {}
+        online = online or {}
+
+        def on(p, ch):
+            if offline:
+                raise A.shelf.ShelfError("GitHub doesn't answer (no network)")
+            return online.get((p, ch))
+        a.online_fn, a.online_sync = on, True
+
+        def fetch(p, ch, rel, progress, log):
+            self.fetched.append((p, ch, rel["tag"]))
+            return {"version": rel["version"]}
+        a.fetch_fn = fetch
         a.scan()
         return a
 
-    def test_install_from_the_gamepad(self):
-        a = self.handheld_app()
+    def rel(self, version):
+        return {"tag": "v" + version, "version": version, "prerelease": True, "url": "", "repo": "x", "assets": []}
+
+    def test_the_page_and_whats_newer_online(self):
+        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.52")})
         self.assertEqual(a.rows(), [{"handheld": True}])
         self.shot(a, "70-boards-handheld")
         a.handle("a")
-        self.assertEqual(a.screen, "handheld")
+        self.assertEqual((a.screen, a.net), ("handheld", "online"))
+        self.assertIn("1 newer", a.net_line()[0])
+        self.assertIn("Sandbox 1.0.0-beta.51 (online: 1.0.0-beta.52)", a.shelf_line("stump")[0])
+        self.assertIn("Official 1.0.0-beta.48", a.shelf_line("stump")[0])
+        self.assertEqual(a.shelf_line("provisioner")[0], "Shelf: Sandbox none")   # no official Provisioner yet
         self.shot(a, "71-handheld")
-        self.assertEqual([r["kind"] for r in a.handheld_jobs()], ["hh_install", "hh_check"])   # nothing to update
+        a.hsel = A.shelf.ORDER.index("stump")
         a.handle("a")
-        self.assertEqual((a.screen, a.form["mode"]), ("form", "handheld"))
-        a.handle("a")                                   # its name
-        a.handle(("text", "R36-Test"))
-        a.handle("start")
-        a.form["sel"] = 3
-        a.handle("right")                               # chain: first
-        a.handle("right")                               # ... joins another
-        self.shot(a, "72-handheld-form")
-        rows = [r["key"] for r in a.form_rows()]
-        self.assertEqual(rows, ["name", "hotspot", "storage", "chain", "parent", "secret", "heltec", "tavern", "rnfs", "go"])
-        a.form["sel"] = rows.index("go")
+        self.assertEqual(a.screen, "product")
+        a.psel = 1                                      # Sandbox
+        self.shot(a, "72-product-stump")
+        a.handle("x")                                   # get beta.52 onto the shelf
+        self.wait(a)
+        self.assertTrue(a.task.ok, a.task.msg)
+        self.assertEqual(self.fetched, [("stump", "sandbox", "v1.0.0-beta.52")])
         a.handle("a")
-        self.assertIn("address", a.toast_text)          # no address for the Stump it joins: refused
+        self.assertEqual(a.screen, "product")
+        a.handle("a")                                   # use the Sandbox one for the boards
+        self.assertEqual(a.stump_copy()["version"], "1.0.0-beta.51")
+        self.assertEqual(a.bundle().release, "1.0.0-beta.51")
+        self.assertIn("now", a.toast_text)
+
+    def test_offline_the_shelf_and_a_file(self):
+        a = self.handheld_app(offline=True)
+        a.open_handheld()
+        self.assertEqual(a.net, "offline")
+        self.assertIn("Offline", a.net_line()[0])
+        a.open_product("stump")
+        a.handle("x")
+        self.assertIn("Offline", a.toast_text)
+        self.assertIsNone(a.task)
+        # A bundle from a card: + From File
+        src = os.path.join(A.shelf.best("stump", "sandbox")["dir"], "Stump-1.0.0-beta.51.bundle")
+        shutil.copy(src, os.path.join(self.home, "mine.bundle"))
+        a.psel = [r["kind"] for r in a.product_rows()].index("fromfile")
+        a.handle("a")
+        self.assertEqual((a.screen, a.fb["exts"]), ("files", (".bundle",)))
+        a.choose_file(os.path.join(self.home, "mine.bundle"))
+        self.assertEqual(a.screen, "product")
+        self.assertEqual((a.stump_copy()["channel"], a.stump_copy()["version"]), ("file", "1.0.0-beta.51"))
+        a.open_files(product="stump")
+        a.choose_file(__file__)                         # not a bundle
+        self.assertIn("Not used", a.toast_text)
+
+    def test_the_cams_source_row(self):
+        os.environ["FAKE_BOARD"] = "s3"
+        a = self.handheld_app()
+        a.ports_fn = lambda: [port("/dev/ttyACM0", "303a:1001", "ESP32-S3/C3 native USB")]
+        a.next_scan = 0
+        a.scan()
+        a.sel = 0
+        a.handle("a")
+        self.wait(a)
+        a.handle("a")
+        self.assertEqual(a.jobs()[0]["kind"], "src_stump")
+        self.assertEqual(a.stump_copy()["channel"], "official")
+        a.jsel = 0
+        a.handle("right")
+        self.assertEqual(a.stump_copy()["channel"], "sandbox")
+        self.shot(a, "73-jobs-source")
+        a.handle("left")
+        self.assertEqual(a.bundle().release, "1.0.0-beta.48")
+        a.handle("a")
+        self.assertEqual((a.screen, a.prod, a.prod_back), ("product", "stump", "jobs"))
+        a.handle("b")
+        self.assertEqual(a.screen, "jobs")
+
+    def test_firefly(self):
+        a = self.handheld_app()
+        calls = []
+        real = A.installers.firefly_install
+        A.installers.firefly_install = lambda c, line, step: calls.append(c["version"]) or (True, "installed")
+        self.addCleanup(setattr, A.installers, "firefly_install", real)
+        a.open_product("firefly")
+        a.handle("a")                                   # Official 0.8.1
+        self.assertEqual(a.confirm["title"], "Install FireFly 0.8.1 (Official)?")
+        a.handle("a")
+        self.wait(a)
+        self.assertEqual(calls, ["0.8.1"])
+        a = self.handheld_app(why="Runs as root here (AmberELEC, ROCKNIX?): ...")
+        a.open_product("firefly")
+        a.handle("a")
         self.assertIsNone(a.confirm)
-        a.form["a"].update(parent="192.168.1.20", secret="s3cret-test", tavern="yes")
+        self.assertIn("root", a.toast_text)
+
+    def fake_tarball(self, name, top, files):
+        import io
+        import tarfile
+        path = os.path.join(self.home, name)
+        with tarfile.open(path, "w:gz") as t:
+            for n, text in files.items():
+                data = text.encode()
+                ti = tarfile.TarInfo("%s/%s" % (top, n))
+                ti.size = len(data)
+                t.addfile(ti, io.BytesIO(data))
+        return path
+
+    def test_the_handhelds_stump(self):
+        a = self.handheld_app()
+        a.open_product("handheld")
+        self.assertEqual([r["kind"] for r in a.product_rows()], ["src", "src", "fromfile", "hh_check"])
+        self.shot(a, "74-product-handheld")
+        a.handle("a")                                   # Official 2.0.0-r36max: takes no answers
+        self.assertIsNone(a.form)
+        self.assertIn("can't take answers", a.toast_text)
+        path = self.fake_tarball("R36MAX-Stump-handheld-2.3.0-r36max.tar.gz", "R36MAX-Stump-2.3.0-r36max",
+                                 {"handheld/VERSION": "2.3.0-r36max\n",
+                                  "handheld/install.sh": "#!/bin/bash\n# --answers FILE.json\n"})
+        a.open_files(product="handheld")
+        a.choose_file(path)
+        self.assertEqual((a.screen, a.form["mode"]), ("form", "handheld"))
+        self.assertEqual(a.hh_inst["version"], "2.3.0-r36max")
+        a.form["a"].update(name="R36-Test", chain="member", parent="192.168.1.20", secret="s3cret-test")
+        a.form["sel"] = len(a.form_rows()) - 1
         a.handle("a")
         self.assertEqual(a.confirm["title"], "Install this handheld's Stump?")
-        self.shot(a, "73-handheld-confirm")
-        a.handle("a")                                   # Install (the default here: nothing is erased)
+        a.handle("a")
         self.wait(a)
-        self.shot(a, "74-handheld-done")
         self.assertTrue(a.task.ok)
-        ans = self.runs[0]
-        self.assertEqual((ans["node name"], ans["that stump's address"], ans["chain secret"], ans["install tavern"]),
-                         ("R36-Test", "192.168.1.20", "s3cret-test", True))
-        self.assertNotIn("change something", ans)        # a new Stump
+        inst, ans = self.runs[0]
+        self.assertTrue(inst["path"].endswith("handheld/install.sh"))
+        self.assertEqual((ans["node name"], ans["that stump's address"]), ("R36-Test", "192.168.1.20"))
         a.handle("a")
-        self.assertEqual(a.screen, "handheld")
+        self.assertEqual(a.screen, "product")
 
-    def test_update_keeps_everything(self):
+    def test_the_handhelds_stump_update_and_check(self):
         a = self.handheld_app(installed=True)
-        a.open_handheld()
-        self.assertEqual([r["kind"] for r in a.handheld_jobs()], ["hh_install", "hh_update", "hh_check"])
-        a.handle("down")
-        a.handle("a")
+        a.open_product("handheld")
+        path = self.fake_tarball("h.tar.gz", "R36MAX-Stump-2.3.0-r36max",
+                                 {"handheld/VERSION": "2.3.0-r36max\n", "handheld/install.sh": "--answers\n"})
+        a.open_files(product="handheld")
+        a.choose_file(path)
         self.assertEqual(a.confirm["title"], "Update this handheld's Stump?")
         a.handle("a")
         self.wait(a)
-        self.assertEqual(self.runs[0]["change something"], "")
-        a.handle("b")
-        a.handle("up")                                  # install again: the form, with its name
+        self.assertEqual(self.runs[0][1]["change something"], "")
         a.handle("a")
-        self.assertEqual(a.form["a"]["name"], "LaBuche-R36")
-
-    def test_check(self):
-        a = self.handheld_app(installed=True)
-        a.open_handheld()
-        a.hsel = 2
+        a.psel = [r["kind"] for r in a.product_rows()].index("hh_check")
         a.handle("a")
         self.wait(a)
-        self.assertTrue(a.task.ok)
         self.assertIn("LaBuche-R36", a.task.msg)
 
-    def test_an_installer_that_cant_take_answers_says_how(self):
-        a = self.handheld_app(answers=False)
-        a.open_handheld()
-        self.shot(a, "75-handheld-old-installer")
+    def test_the_provisioner_itself(self):
+        a = self.handheld_app()
+        app = os.path.join(self.home, "rk3326_provisioner")
+        os.makedirs(app)
+        with open(os.path.join(app, "VERSION"), "w") as f:
+            f.write("0.3.0-beta.7\n")
+        a.app_dir = app
+        a.open_product("provisioner")
+        self.assertEqual([r["kind"] for r in a.product_rows()], ["src", "fromfile"])     # Sandbox only
         a.handle("a")
-        self.assertIsNone(a.form)
-        self.assertIn("git pull", a.toast_text)
-        a = self.handheld_app(why="Runs as root here (AmberELEC, ROCKNIX?): ...")
-        a.open_handheld()
+        self.assertIn("Not on the shelf", a.toast_text)
+        path = self.fake_tarball("RK3326-Provisioner-0.3.0-beta.8.tar.gz", "RK3326-Provisioner-0.3.0-beta.8",
+                                 {"VERSION": "0.3.0-beta.8\n", "install.sh": "#!/bin/bash\n",
+                                  "provisioner/__main__.py": ""})
+        calls = []
+        real = A.installers.self_update
+        A.installers.self_update = lambda c, line, step, app: calls.append((c["version"], app)) or (True, "ok")
+        self.addCleanup(setattr, A.installers, "self_update", real)
+        a.open_files(product="provisioner")
+        a.choose_file(path)
+        self.assertEqual(a.confirm["title"], "Install the Provisioner 0.3.0-beta.8 (from a file)?")
+        self.shot(a, "75-provisioner-confirm")
         a.handle("a")
-        self.assertIn("root", a.toast_text)
+        self.wait(a)
+        self.assertEqual(calls, [("0.3.0-beta.8", app)])
+        a.handle("a")                                   # done: it closes, to be opened again from Ports
+        self.assertFalse(a.running)
 
 
 class Buttons(unittest.TestCase):
@@ -930,14 +1060,13 @@ class EveryScreenSize(Base):
                 self.assertEqual(a.screen, "jobs")
                 rows = a.jobs()
                 k = [i for i, r in enumerate(rows) if r["kind"] == "pack"][-1]
-                for _ in range(k):
-                    a.handle("down")
+                a.jsel = k
                 self.shot(a, "61-%s-jobs" % tag)
                 a.handle("a")
                 self.assertIsNotNone(a.confirm)
                 self.shot(a, "62-%s-confirm" % tag)
                 a.handle("b")
-                a.jsel = 0
+                a.jsel = 1
                 a.handle("a")                            # Make a Stump: the form
                 self.shot(a, "63-%s-form" % tag)
                 a.handle("a")                            # its first field: the keyboard

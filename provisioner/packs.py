@@ -20,7 +20,6 @@ import zipfile
 from . import stump
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PACKS_DIR = os.path.join(stump.BUNDLE_DIR, "packs")
 CARD_ROOT = "/sd"
 CARD_MOUNT = "import fserv\nif not fserv.sd_ok:\n fserv.mount_sd()\n"
 USB_MAX = 1000000                       # bigger files: by card reader (USB to the board is ~1 KB/s... per chunk)
@@ -167,17 +166,22 @@ def plan_file(path, known=None):
     return plan_from(read_zip(path), known)
 
 
-def bundled():
-    """[(path, plan or None, error or None)] for the packs the Provisioner carries
-    (firmware/stump/packs/*.zip, taken from Team Stump's release)."""
+def bundled(d=None):
+    """[(path, plan or None, error or None)] for the packs next to the Stump
+    the boards get (a shelf copy: the packs of that release)."""
     out = []
+    if d is None:
+        c = stump.default_copy()
+        if not c:
+            return out
+        d = c["dir"]
     try:
-        names = sorted(f for f in os.listdir(PACKS_DIR) if f.endswith(".zip"))
+        names = sorted(f for f in os.listdir(d) if f.endswith(".zip") and "-pack-" in f)
     except OSError:
         return out
-    known = known_names(stump.find_bundle())
+    known = known_names(stump.find_bundle(d))
     for f in names:
-        p = os.path.join(PACKS_DIR, f)
+        p = os.path.join(d, f)
         try:
             out.append((p, plan_file(p, known), None))
         except PackError as e:

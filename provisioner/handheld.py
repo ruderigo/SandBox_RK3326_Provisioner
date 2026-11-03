@@ -63,8 +63,8 @@ def state(home=None, euid=None, which=shutil.which):
     home = home or os.path.expanduser("~")
     inst = find_installer(home)
     why = system_why(home, euid, which)
-    if not inst and (why or not (os.path.isdir("/roms") or os.path.isdir("/roms2"))):
-        return None
+    if not inst and not any(os.path.isdir(r) for r in ("/roms", "/roms2", "/storage/roms")):
+        return None                                     # not a handheld
     folder = os.path.join(home, STUMP)
     return {"installer": inst, "why": why, "folder": folder,
             "installed": os.path.isfile(os.path.join(folder, "stump_pc.py"))}

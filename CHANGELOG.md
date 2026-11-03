@@ -10,6 +10,39 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.8
+
+- **Official, Sandbox, + From File, for everything it installs**, as every
+  project here has them: the Stump for CAM boards (LaBuche-Stump /
+  SandBox_Stump_On), this handheld's Stump (R36MAX-Stump /
+  SandBox_RK3326_Stump), FireFly RK3326 (FireFly_RK3326_R36MAX_R36S /
+  SandBox_FireFly_RK3326) and the Provisioner itself (its sandbox; no
+  official repo yet).
+- **The shelf**: an offline copy of each, carried by the Provisioner
+  (`firmware/shelf/`: Stump 1.0.0-beta.48 and 1.0.0-beta.51 with their
+  packs, R36MAX-Stump 2.0.0-r36max, FireFly 0.8.1 from both). When
+  EmulationStation has a network, it asks GitHub for the newest of each,
+  shows what's newer, and X takes it onto the shelf (`provisioner-shelf/` on
+  the games card): every file checked against GitHub's SHA-256 for it and
+  the release's SHA256SUMS, then read for what it is. Offline from then on.
+- **This handheld** (the boards screen's last row) lists the four: what's
+  installed, the shelf, what's newer online; each one's page installs from
+  Official, Sandbox or a file.
+- **The CAM's Stump**: Official (1.0.0-beta.48) by default, Sandbox
+  (1.0.0-beta.51) or a `.bundle` file; a CAM board's page has the choice as
+  its first row (◀ ▶). It was SandBox_Stump_On 1.0.0-beta.50 until now.
+- **FireFly** installs and updates from here (its own installer).
+- **The Provisioner updates itself** (its own install.sh), keeping the one
+  before: Go back swaps them.
+- **This handheld's Stump** installs from either release, a tarball or a
+  clone, Update keeping everything (Y: new answers).
+- Tests: the shelf with a pretend GitHub (the newest release with its file,
+  a file changed on the way or with no SHA-256 refused, SHA256SUMS
+  checked), what files are, the installers (FireFly's, the Provisioner's
+  own with going back), the pages.
+- `scripts/fill_shelf.py` fills the built-in shelf (it replaces
+  `fetch_stump_bundle.py`).
+
 ## v0.3.0-beta.7
 
 - **This handheld's Stump, from the gamepad.** On ArkOS / dArkOS the boards

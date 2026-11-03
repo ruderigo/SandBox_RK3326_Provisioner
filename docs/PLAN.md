@@ -87,6 +87,11 @@ Making a Stump is the Provisioner's main job (2026-11-02): it comes first.
       `es_input.cfg` (per-pad tables as the fallback), layouts for 480x320,
       640x480, 720x720, 854x480, 1024x768 (rotated panels too), launcher and
       installer for ArkOS, dArkOS, AmberELEC, ROCKNIX (Wayland there)
+- [x] **Official / Sandbox / + From File for everything** (0.3.0-beta.8):
+      the shelf (offline copies, updated online), the CAM's Stump, the
+      handheld's Stump, FireFly, the Provisioner itself (with Go back)
+- [ ] An official repo for the Provisioner (low priority)
+- [ ] FireFly Android from here (another sprint)
 - [ ] Run it on another RK3326 (R36S, an OGA-class 480x320, ROCKNIX) and
       check the rotation direction on a sideways panel
 - [ ] CH340 boards: no RK3326 system has ch341; a userspace driver (libusb)

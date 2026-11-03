@@ -41,6 +41,9 @@ run "core" python3 -W error::ResourceWarning tests/test_core.py
 step "install.sh on ArkOS/dArkOS and AmberELEC/ROCKNIX layouts (a pretend root)"
 run "install" python3 tests/test_install.py
 
+step "The shelf: Official and Sandbox copies, offline and online; the installers"
+run "shelf" python3 -W error::ResourceWarning tests/test_shelf.py
+
 WIZARD=""; [ -n "${STUMP_ON:-}" ] && WIZARD=" (and Team Stump's own wizard, in $STUMP_ON)"
 step "This handheld's Stump: the installer, its answers$WIZARD"
 run "handheld" python3 -W error::ResourceWarning tests/test_handheld.py
@@ -70,7 +73,7 @@ fonts = load_fonts("assets/cockpit_font.bin")
 have = set.intersection(*(set(f["glyphs"]) for f in fonts))
 missing = {}
 for path in ("provisioner/ui/app.py", "provisioner/ui/keyboard.py", "provisioner/stump.py", "provisioner/flasher.py",
-             "provisioner/handheld.py",
+             "provisioner/handheld.py", "provisioner/shelf.py", "provisioner/installers.py",
              "provisioner/s3wifi.py",
              "firmware/catalog.json"):
     src = open(path, encoding="utf-8").read()

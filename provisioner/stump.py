@@ -2,7 +2,7 @@
 
 The same steps as Team Stump's Arborist (SandBox_Stump_On scripts/arborist/
 repl.js, page.html), in Python, from the bundle their release ships
-(firmware/stump/, see scripts/fetch_stump_bundle.py):
+(on the shelf, provisioner/shelf.py: Official from LaBuche-Stump, Sandbox from SandBox_Stump_On):
 
   make     erase the board, write MicroPython, copy the Stump (each file
            checked on the board by SHA-256), write its config.py from the
@@ -30,7 +30,6 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "vendor"))
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BUNDLE_DIR = os.environ.get("PROVISIONER_STUMP", os.path.join(HERE, "firmware", "stump"))
 RAW_BANNER = b"raw REPL; CTRL-B to exit\r\n>"
 QUIET_WATCHDOG = "try:\n import machine\n machine.WDT(timeout=7200000).feed()\nexcept Exception:\n pass\n"
 FEATURES = ["chat", "billboard", "files", "about"]
@@ -39,6 +38,10 @@ MODES = ["open", "hybrid", "mandatory"]
 RADIO_BW = [7800, 10400, 15600, 20800, 31250, 41700, 62500, 125000, 250000, 500000]
 # LaBuche's mesh: what a new Stump starts from (it must match the mesh), as in Arborist.
 RADIO_DEFAULT = {"frequency": 868800000, "bandwidth": 125000, "sf": 8, "cr": 5, "txpower": 22}
+
+
+# Never in a release's config template (a real Stump's names and passwords).
+FORBIDDEN_IN_TEMPLATE = ("Bob's Glitch", "SalutComment", "TeK_Knoh", "'TeK'", "'LaBuche'", "Concierge")
 
 
 class StumpError(Exception):
@@ -80,10 +83,24 @@ class Bundle:
         return sum(len(d) for _, d, _ in self.app())
 
 
+def default_copy():
+    """The shelf's Stump the boards get unless another is chosen: Official, else Sandbox."""
+    from . import shelf
+    return shelf.best("stump", "official") or shelf.best("stump", "sandbox")
+
+
 def find_bundle(d=None):
-    d = d or BUNDLE_DIR
+    """The Stump bundle in folder d (a shelf copy's), by default the default copy's."""
+    if d is None:
+        if os.environ.get("PROVISIONER_STUMP"):
+            d = os.environ["PROVISIONER_STUMP"]
+        else:
+            c = default_copy()
+            if not c:
+                return None
+            d = c["dir"]
     try:
-        names = sorted(f for f in os.listdir(d) if f.startswith("stump-") and f.endswith(".bundle"))
+        names = sorted(f for f in os.listdir(d) if f.lower().startswith("stump-") and f.endswith(".bundle"))
     except OSError:
         return None
     return Bundle(os.path.join(d, names[-1])) if names else None

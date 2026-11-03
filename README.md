@@ -8,34 +8,57 @@ gamepad. It's an EmulationStation **Ports** entry.
 > **Sandbox.** Work in progress; the plan, decisions and next steps are in
 > [docs/PLAN.md](docs/PLAN.md).
 
-| Board | What it can be given (v0.3.0-beta.6) |
+| Board | What it can be given (v0.3.0-beta.8) |
 |---|---|
-| **ESP32-S3 (Freenove CAM)** | **Make a Stump** (Stump 1.0.0-beta.50, offline), update its Stump, its settings, check it starts; **add the Tavern or rnfs pack** (or any pack's .zip, by + From File); **USB Wi-Fi adapter** 0.3.0: the S3 becomes the handheld's Wi-Fi card ([below](#the-s3-as-the-handhelds-wi-fi-card), bench test pending) |
+| **ESP32-S3 (Freenove CAM)** | **Make a Stump** (Official 1.0.0-beta.48 or Sandbox 1.0.0-beta.51, offline), update its Stump, its settings, check it starts; **add the Tavern or rnfs pack** (or any pack's .zip, by + From File); **USB Wi-Fi adapter** 0.3.0: the S3 becomes the handheld's Wi-Fi card ([below](#the-s3-as-the-handhelds-wi-fi-card), bench test pending) |
 | Heltec V3 | *coming*: RNode for a CAM, set for the mesh |
 | Classic ESP32 | WLED 16.0.1 (app slot only), MicroPython 1.29.0 (full install) |
 | Any of them | the serial log (115200); erase the whole flash |
 
-## This handheld's Stump
+## Official, Sandbox, + From File: the shelf
 
-On ArkOS / dArkOS the boards screen ends with **This handheld's Stump**:
-what the handheld runs (release, name, chain) or *None yet*. **A** opens its
-page:
+Everything the Provisioner installs comes from two places, as for every
+project here: the **Official** public repo's newest release, or its
+**Sandbox**'s newest (pre-releases included), or **+ From File**:
 
-- **Install a Stump**: a form (its name, its Wi-Fi's name, storage, the
-  chain: first or joining another by its address, and the chain's secret,
-  the Heltec on USB or Bluetooth or none, the Tavern and rnfs packs), then
-  R36MAX-Stump's installer with those answers: Team Stump's own wizard,
-  the walk-up extras and the cockpit. The first install needs internet
-  (packages, SandBox_Stump_On, the Stump's Python), 10-20 minutes.
-- **Update its Stump**: Team Stump's latest, everything kept.
-- **Check it**: does it answer, and with what.
+| | Official | Sandbox | Onto |
+|---|---|---|---|
+| The Stump | LaBuche-Stump | SandBox_Stump_On | a CAM board (ESP32-S3) |
+| This handheld's Stump | R36MAX-Stump | SandBox_RK3326_Stump | this handheld |
+| FireFly (RK3326) | FireFly_RK3326_R36MAX_R36S | SandBox_FireFly_RK3326 | this handheld |
+| The Provisioner | *(none yet)* | SandBox_RK3326_Provisioner | itself |
 
-It needs the installer on the handheld, once, over SSH (v2.3.0-r36max or
-newer; until it's released, the sandbox):
+**The shelf** holds a copy of each, so all of it works **offline**: the
+Provisioner carries its own (`firmware/shelf/`, filled by
+`scripts/fill_shelf.py`), and what it fetches goes to `provisioner-shelf/` on
+the games card. **When EmulationStation has the handheld on a network** (Wi-Fi,
+a dongle, the S3 adapter), it asks GitHub for the newest of each and says
+what's newer; **X** fetches it onto the shelf, after checking every file
+against the SHA-256 GitHub records for it (and the release's `SHA256SUMS`),
+then reading it for what it is. From then on that version is offline too.
 
-```sh
-ssh ark@r36max.local 'git clone -b answers https://github.com/ruderigo/SandBox_RK3326_Stump ~/SandBox_RK3326_Stump'
-```
+On the boards screen, **This handheld** (last row, first with no board
+plugged in) lists the four, with what's installed, the shelf, and what's
+newer online. Each one's page: Official, Sandbox (**A** installs or uses it,
+**X** gets the newest online), **+ From File** (a `.bundle`, `.tar.gz` or
+`.zip` from a card or USB drive).
+
+- **The Stump**: A chooses what the boards get (Official by default); a CAM
+  board's page also has it as its first row (◀ ▶ switches).
+- **This handheld's Stump**: Install (a form: its name, its Wi-Fi's name,
+  storage, the chain and its secret, the Heltec, the Tavern and rnfs packs),
+  or, once it's there, Update (everything kept; Y: new answers), and Check.
+  It runs R36MAX-Stump's installer with the answers (v2.3.0-r36max or newer
+  can take them), which runs Team Stump's own wizard. A clone in
+  `~/SandBox_RK3326_Stump` or `~/R36MAX-Stump` is offered too. The first
+  install needs internet.
+- **FireFly**: its own installer; an update keeps its identity, contacts,
+  messages and settings. The first install needs internet.
+- **The Provisioner**: its own `install.sh` over this one, which is kept:
+  **Go back** swaps them. Close it and open it again from Ports after.
+
+ArkOS / dArkOS for the handheld's Stump and FireFly (they install with apt,
+as `ark`); the Provisioner and the CAM's Stump anywhere.
 
 ## Making a Stump
 
@@ -52,9 +75,11 @@ writes its settings and restarts it. Join its Wi-Fi from a phone.
 **Its settings** reads, changes and saves them (as `/admin` does); **Check
 it starts** restarts it and listens.
 
-The Stump on the handheld is Team Stump's release, as they published it
-(`firmware/stump/`: their release's `Stump-<release>.bundle`, checked against
-its `SHA256SUMS` and file by file). A newer one: `python3 scripts/fetch_stump_bundle.py v<release>`.
+The Stump the boards get is Team Stump's release, as they published it (their
+`Stump-<release>.bundle`, from the shelf: Official or Sandbox, checked against
+GitHub's SHA-256, the release's `SHA256SUMS` and file by file). Newer ones come
+online from the handheld (This handheld → The Stump → X), or here with
+`python3 scripts/fill_shelf.py`.
 
 ## The S3 as the handheld's Wi-Fi card
 
@@ -149,7 +174,7 @@ buttons without a screen (SDL's dummy driver; screenshots with
 | `provisioner/` | the app (boards, catalogue, flashing, serial log, screens) |
 | `vendor/` | esptool 4.8.1 (GPL-2.0), pyserial (BSD-3), intelhex (BSD): run as they are; licences in `vendor/LICENSES/` |
 | `firmware/` | the catalogue; WLED 16.0.1 (EUPL-1.2) and MicroPython 1.29.0 (MIT), official builds, licences in `firmware/licenses/` |
-| `firmware/stump/` | the Stump bundle from SandBox_Stump_On's release (MIT; MicroPython MIT), with where it came from |
+| `firmware/shelf/` | the shelf it carries: the Stump (Official and Sandbox bundles and packs; MIT, MicroPython MIT), R36MAX-Stump, FireFly; each with where it came from (`meta.json`) |
 | `firmware/s3_usb_wifi/` | the S3 USB Wi-Fi adapter's image, built from `s3_usb_wifi/` (the CI checks it's that source's) |
 | `s3_usb_wifi/` | that firmware's source (ESP-IDF v5.3; esp_tinyusb Apache-2.0 and TinyUSB MIT vendored), its tests and build |
 | `tests/stump_fixtures/` | Team Stump's pretend board and four Stump modules, for the tests (MIT, credited) |
@@ -168,7 +193,9 @@ ESP-IDF's Apache-2.0 and MIT parts, which allow that):
 |---|---|---|
 | esptool, pyserial, intelhex | GPL-2.0, BSD-3, BSD | run as their own program / imported as published (`vendor/LICENSES/`) |
 | WLED, MicroPython | EUPL-1.2, MIT | images written to boards (`firmware/licenses/`) |
-| The Stump bundle, its packs (Tavern, rnfs), test fixtures | MIT (Team Stump) | copied to boards / used by the tests (`firmware/stump/`) |
+| The Stump bundles and their packs (Tavern, rnfs), test fixtures | MIT (Team Stump) | copied to boards / used by the tests (`firmware/shelf/stump/`) |
+| FireFly RK3326 | MIT (Team FireFly) | its release zip, installed by its own installer (`firmware/shelf/firefly/`) |
+| R36MAX-Stump (the handheld's Stump) | ours, no licence file yet | its release tarball, run by its own installer (`firmware/shelf/handheld/`) |
 | The S3 USB Wi-Fi image | MIT (ours), built on ESP-IDF (Apache-2.0, lwIP BSD-3, FreeRTOS MIT), esp_tinyusb (Apache-2.0), TinyUSB (MIT) | an image written to boards; licences in `firmware/licenses/` (`S3-USB-WiFi-NOTICE.txt`), source in `s3_usb_wifi/` |
 | *Coming:* RNode firmware | GPL-3.0 | an image written to the Heltec, shipped with **its full source** for that version |
 | *Coming:* RNS (`rnodeconf`) | Reticulum License (MIT terms + no systems built to harm people, no use in creating AI/ML models) | bundled as published, run as its own program |
