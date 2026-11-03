@@ -9,7 +9,7 @@
       "offset": "0x0",
       "min_flash_mb": 4,
       "file": "s3_usb_wifi/s3-usb-wifi-0.1.0.bin",
-      "sha256": "6ea88f6f42b1d63bfd5dae7b0fea948d19ea6131a865a0263d5e5c06639830fb",
+      "sha256": "8b52558574c96383ef1fdd37bc57c04424c4bca391fc95d67e747b8fa72d2dbb",
       "about": "A USB network card for the handheld: plugged into the board's native USB port, it's usb0 at 10.77.0.2, and it joins a Wi-Fi by itself (the one saved on its setup page, else an open Stump hotspot). Flash it through the board's UART (CH343) port. First build: bench test pending.",
       "licence": "MIT; built on ESP-IDF, esp_tinyusb (Apache-2.0), TinyUSB (MIT), lwIP (BSD-3) (licenses/S3-USB-WiFi-NOTICE.txt)",
       "source": "s3_usb_wifi/ in this repository"
