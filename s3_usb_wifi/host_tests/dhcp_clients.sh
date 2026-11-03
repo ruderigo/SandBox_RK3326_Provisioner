@@ -94,7 +94,12 @@ request subnet-mask, broadcast-address, routers, domain-name-servers, rfc3442-cl
 EOF
     # dhclient-script writes DNS to /etc/resolv.conf: give it a copy to write
     touch "$work/resolv.conf"
+    # only the option 121 hook: others (systemd-resolved's) can end the hook chain early
+    mkdir -p "$work/exit-hooks" "$work/enter-hooks"
+    cp /etc/dhcp/dhclient-exit-hooks.d/rfc3442-classless-routes "$work/exit-hooks/" 2>/dev/null
     in_ns unshare -m sh -c "mount --bind '$work/resolv.conf' /etc/resolv.conf && \
+        mount --bind '$work/exit-hooks' /etc/dhcp/dhclient-exit-hooks.d && \
+        mount --bind '$work/enter-hooks' /etc/dhcp/dhclient-enter-hooks.d && \
         dhclient -4 -v -cf '$work/dhclient.conf' -pf '$work/dhclient.pid' -lf '$work/dhclient.leases' usb0" \
         > "$work/dhclient.log" 2>&1 &
     sleep 4

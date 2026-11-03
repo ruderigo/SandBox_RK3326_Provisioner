@@ -38,6 +38,18 @@ jobs:
         run: |
           . "$IDF_PATH/export.sh"
           bash s3_usb_wifi/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: s3-usb-wifi
+          path: s3_usb_wifi/dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: s3-usb-wifi-build
+          path: |
+            s3_usb_wifi/sdkconfig
+            s3_usb_wifi/build/s3_usb_wifi.elf
+            s3_usb_wifi/build/s3_usb_wifi.map
+            s3_usb_wifi/build/config/sdkconfig.h
       - name: The image in firmware/ is this source's
         shell: bash
         run: |
@@ -45,10 +57,6 @@ jobs:
           cat s3_usb_wifi/dist/SHA256SUMS
           sha256sum "firmware/s3_usb_wifi/s3-usb-wifi-$ver.bin"
           cmp "s3_usb_wifi/dist/s3-usb-wifi-$ver.bin" "firmware/s3_usb_wifi/s3-usb-wifi-$ver.bin"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: s3-usb-wifi
-          path: s3_usb_wifi/dist/
   s3-usb-wifi-dhcp:
     # its DHCP server against real clients (dhclient, dhcpcd, udhcpc) and its unit tests
     runs-on: ubuntu-24.04
