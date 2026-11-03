@@ -8,12 +8,31 @@ gamepad. It's an EmulationStation **Ports** entry.
 > **Sandbox.** Work in progress; the plan, decisions and next steps are in
 > [docs/PLAN.md](docs/PLAN.md).
 
-| Board | What it can be given (v0.1.0) |
+| Board | What it can be given (v0.2.0) |
 |---|---|
+| **ESP32-S3 (Freenove CAM)** | **Make a Stump** (Stump 1.0.0-beta.47, offline), update its Stump, its settings, check it starts; *coming*: a USB Wi-Fi adapter for the handheld |
+| Heltec V3 | *coming*: RNode for a CAM, set for the mesh |
 | Classic ESP32 | WLED 16.0.1 (app slot only), MicroPython 1.29.0 (full install) |
-| Heltec V3 | *coming*: RNode, set for the mesh |
-| ESP32-S3 (Freenove CAM) | *coming*: a USB Wi-Fi adapter for the handheld |
 | Any of them | the serial log (115200); erase the whole flash |
+
+## Making a Stump
+
+Plug the Freenove into the hub, choose it (it's identified), then **Make a
+Stump**. A form asks its name, an admin password, and optionally the home
+Wi-Fi, its own Wi-Fi's name, a chain (first Stump, or joining another with
+its number and the chain's secret) and the Heltec. Text is typed on
+FireFly's keyboard (A types, B deletes, X space, Y shift, L/R page, START
+OK) or a USB keyboard. It asks first, then in about five minutes: erases the
+board, writes MicroPython, copies the Stump (each file checked on the board),
+writes its settings and restarts it. Join its Wi-Fi from a phone.
+
+**Update its Stump** copies a newer release and keeps everything else;
+**Its settings** reads, changes and saves them (as `/admin` does); **Check
+it starts** restarts it and listens.
+
+The Stump on the handheld is Team Stump's release, as they published it
+(`firmware/stump/`, from SandBox_Stump_On's release page, checked file by
+file). A newer one: `python3 scripts/fetch_stump_bundle.py v<release>`.
 
 ## Install on the handheld
 
@@ -37,7 +56,8 @@ EmulationStation if it isn't listed).
 | Screen | Buttons |
 |---|---|
 | Boards | ↑↓ choose · A open (identifies it: the board resets) · X identify again · Y serial log |
-| A board | ↑↓ · A flash / log / erase (asks first) · B back |
+| A board | ↑↓ · A make a Stump / flash / log / erase (asks first) · B back |
+| A form | ↑↓ · A type (the keyboard) or next choice · ←→ choice · B back |
 | Asking | ←→ No / Yes · A accept · B cancel. Erasing defaults to **No** |
 | Flashing | progress, esptool's lines, then *written and verified* or what to do |
 | Anywhere | SELECT+START closes it |
@@ -73,6 +93,8 @@ buttons without a screen (SDL's dummy driver; screenshots with
 | `provisioner/` | the app (boards, catalogue, flashing, serial log, screens) |
 | `vendor/` | esptool 4.8.1 (GPL-2.0), pyserial (BSD-3), intelhex (BSD): run as they are; licences in `vendor/LICENSES/` |
 | `firmware/` | the catalogue; WLED 16.0.1 (EUPL-1.2) and MicroPython 1.29.0 (MIT), official builds, licences in `firmware/licenses/` |
+| `firmware/stump/` | the Stump bundle from SandBox_Stump_On's release (MIT; MicroPython MIT), with where it came from |
+| `tests/stump_fixtures/` | Team Stump's pretend board and four Stump modules, for the tests (MIT, credited) |
 | `assets/cockpit_font.bin` | DejaVu Sans Mono, pre-rendered (the Stump cockpit's; `FONT_LICENSE`) |
 
 The approach (bundled esptool, offline catalogue, read-back) comes from

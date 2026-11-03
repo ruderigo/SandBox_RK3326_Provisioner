@@ -1,0 +1,43 @@
+# Tests on every push and pull request; a tag v<VERSION> also publishes the
+# release (the tarball the handheld installs from, offline).
+name: ci
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Packages
+        run: sudo apt-get update -q && sudo apt-get install -y -q libsdl2-2.0-0 shellcheck pyflakes3
+      - name: run_tests.sh
+        run: bash tests/run_tests.sh
+      - name: Screenshots
+        if: always()
+        run: mkdir -p shots && SHOTS=shots python3 tests/test_ui.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: shots/
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash package.sh --no-tests
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/RK3326-Provisioner-*.tar.gz dist/SHA256SUMS \
+            --title "RK3326 Provisioner $GITHUB_REF_NAME" --notes-file dist/RELEASE_NOTES.md --verify-tag
