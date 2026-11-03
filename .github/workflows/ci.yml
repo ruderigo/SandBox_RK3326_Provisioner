@@ -142,5 +142,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A beta (v0.3.0-beta.7) is a pre-release: the Provisioner offers it as "Sandbox".
+          PRE=""; case "$GITHUB_REF_NAME" in *-*) PRE="--prerelease" ;; esac
           gh release create "$GITHUB_REF_NAME" dist/RK3326-Provisioner-*.tar.gz dist/SHA256SUMS \
-            --title "RK3326 Provisioner $GITHUB_REF_NAME" --notes-file dist/RELEASE_NOTES.md --verify-tag
+            --title "RK3326 Provisioner $GITHUB_REF_NAME" --notes-file dist/RELEASE_NOTES.md --verify-tag $PRE
