@@ -2,18 +2,19 @@
 """Takes the Stump a SandBox_Stump_On release ships, for the Provisioner to
 put on boards offline.
 
-    python3 scripts/fetch_stump_bundle.py v1.0.0-beta.47 [--from Arborist-*.html --sums SHA256SUMS]
+    python3 scripts/fetch_stump_bundle.py v1.0.0-beta.48 [--from FILE --sums SHA256SUMS]
 
-Each SandBox_Stump_On release has Arborist-<release>.html, built by Team
-Stump's CI: inside it, one bundle holding MicroPython (pinned by SHA-256 in
-their build), the Stump compiled for it, and a config.py template with
-every name, password and Wi-Fi taken out. This script:
+Since 1.0.0-beta.48 each SandBox_Stump_On release has
+Stump-<release>.bundle (asked by this team): one file, built by Team Stump's
+CI, holding MicroPython (pinned by SHA-256 in their build), the Stump
+compiled for it, a config.py template with every name, password and Wi-Fi
+taken out, and the default Wi-Fi name. Older releases carry the same bundle
+inside Arborist-<release>.html, which is used for them. This script:
 
-  1. downloads that page and the release's SHA256SUMS (from GitHub; or
-     takes them from --from / --sums), and checks the page against them;
-  2. takes the bundle out, checks every file in it against its SHA-256,
-     and the template against the names and passwords that must never be
-     in it;
+  1. downloads the bundle (or the page) and the release's SHA256SUMS (from
+     GitHub; or takes them from --from / --sums), and checks it against them;
+  2. checks every file in the bundle against its SHA-256, and the template
+     against the names and passwords that must never be in it;
   3. writes firmware/stump/stump-<release>.bundle (the bundle as Team
      Stump built it, unchanged) and stump-<release>.json (where it came
      from, its hashes), replacing older ones.
@@ -90,16 +91,29 @@ def main(argv):
         raise SystemExit(__doc__)
     tag = argv[0]
     rel = tag[1:] if tag.startswith("v") else tag
-    page_name = "Arborist-%s.html" % rel
     args = dict(zip(argv[1::2], argv[2::2]))
-    page = open(args["--from"], "rb").read() if "--from" in args else gh_asset(tag, page_name)
     sums = open(args["--sums"], encoding="utf-8").read() if "--sums" in args else gh_asset(tag, "SHA256SUMS").decode()
-    want = next((l.split()[0] for l in sums.splitlines() if l.strip().endswith(page_name)), None)
-    got = hashlib.sha256(page).hexdigest()
+    listed = [l.split()[-1].lstrip("*") for l in sums.splitlines() if l.strip()]
+    # The bundle file (beta.48 on), else the Arborist page that carries it.
+    src_name = "Stump-%s.bundle" % rel
+    if src_name not in listed:
+        src_name = "Arborist-%s.html" % rel
+    if "--from" in args:
+        src_name = os.path.basename(args["--from"])
+        data = open(args["--from"], "rb").read()
+    else:
+        data = gh_asset(tag, src_name)
+    want = next((l.split()[0] for l in sums.splitlines() if l.strip().endswith(src_name)), None)
+    got = hashlib.sha256(data).hexdigest()
     if want != got:
-        raise SystemExit("%s: SHA-256 %s, the release says %s" % (page_name, got, want))
-    blob, ssid = from_page(page.decode("utf-8"))
-    head, files = check_bundle(blob)
+        raise SystemExit("%s: SHA-256 %s, the release says %s" % (src_name, got, want))
+    if src_name.endswith(".bundle"):
+        blob = data
+        head, files = check_bundle(blob)
+        ssid = head.get("default_ssid", "")
+    else:
+        blob, ssid = from_page(data.decode("utf-8"))
+        head, files = check_bundle(blob)
     if head["release"] != rel:
         raise SystemExit("the page holds %s, not %s" % (head["release"], rel))
     os.makedirs(OUT, exist_ok=True)
@@ -110,7 +124,7 @@ def main(argv):
     with open(path, "wb") as f:
         f.write(blob)
     meta = {"release": rel, "source": "https://github.com/%s/releases/tag/%s" % (REPO, tag),
-            "arborist": page_name, "arborist_sha256": got, "bundle_sha256": hashlib.sha256(blob).hexdigest(),
+            "taken_from": src_name, "taken_from_sha256": got, "bundle_sha256": hashlib.sha256(blob).hexdigest(),
             "micropython": head["micropython"], "micropython_sha256": head["micropython_sha256"],
             "mpy": head.get("mpy"), "default_ssid": ssid,
             "files": len([n for n in files if n.startswith("app/")]),

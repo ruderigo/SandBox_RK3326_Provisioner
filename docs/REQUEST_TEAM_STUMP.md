@@ -1,5 +1,14 @@
 # Request to Team Stump: three things for making Stumps from the handheld
 
+> **Answered in SandBox_Stump_On 1.0.0-beta.48 (2026-11-03):**
+> 1. **Done:** `Stump-<release>.bundle` on each release, in `SHA256SUMS`, with
+>    `default_ssid` in its header. The Provisioner takes it from there now.
+> 2. **On hold on their side:** `--heltec-for-cam` is a placeholder (exits 2).
+>    The RNode firmware stays out of their releases (GPL-3); they'd publish its
+>    upstream version, SHA-256 and flash layout. See the plan for what we do.
+> 3. **Done:** `provisioner.py --pc --answers FILE.json` (and
+>    `--answers-template`), keyed by each question's own text.
+
 From Team RK3326 Provisioner · 2026-11-02 · about
 [SandBox_RK3326_Provisioner](https://github.com/ruderigo/SandBox_RK3326_Provisioner) v0.2.0
 

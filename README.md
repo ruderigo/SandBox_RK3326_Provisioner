@@ -10,7 +10,7 @@ gamepad. It's an EmulationStation **Ports** entry.
 
 | Board | What it can be given (v0.2.0) |
 |---|---|
-| **ESP32-S3 (Freenove CAM)** | **Make a Stump** (Stump 1.0.0-beta.47, offline), update its Stump, its settings, check it starts; *coming*: a USB Wi-Fi adapter for the handheld |
+| **ESP32-S3 (Freenove CAM)** | **Make a Stump** (Stump 1.0.0-beta.48, offline), update its Stump, its settings, check it starts; *coming*: a USB Wi-Fi adapter for the handheld |
 | Heltec V3 | *coming*: RNode for a CAM, set for the mesh |
 | Classic ESP32 | WLED 16.0.1 (app slot only), MicroPython 1.29.0 (full install) |
 | Any of them | the serial log (115200); erase the whole flash |
@@ -31,8 +31,8 @@ writes its settings and restarts it. Join its Wi-Fi from a phone.
 it starts** restarts it and listens.
 
 The Stump on the handheld is Team Stump's release, as they published it
-(`firmware/stump/`, from SandBox_Stump_On's release page, checked file by
-file). A newer one: `python3 scripts/fetch_stump_bundle.py v<release>`.
+(`firmware/stump/`: their release's `Stump-<release>.bundle`, checked against
+its `SHA256SUMS` and file by file). A newer one: `python3 scripts/fetch_stump_bundle.py v<release>`.
 
 ## Install on the handheld
 
