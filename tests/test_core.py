@@ -143,6 +143,18 @@ class Flash(unittest.TestCase):
         self.assertLess(calls.index("erase_flash"), calls.index("write_flash"))
         self.assertIn("0x1000 ", calls)
 
+    def test_the_usb_wifi_adapter_erases_then_writes_at_0x0(self):
+        os.environ["FAKE_BOARD"] = "s3"
+        board = {"id": "esp32s3", "chip": "esp32s3", "flash_mb": 8}
+        ok, msg = flasher.flash("/dev/ttyACM0", self.entries["s3-usb-wifi"], board)
+        self.assertTrue(ok, msg)
+        with open(self.calls) as f:
+            calls = f.read()
+        self.assertLess(calls.index("erase_flash"), calls.index("write_flash"))
+        self.assertIn("--chip esp32s3", calls)
+        self.assertIn("keep 0x0 ", calls)
+        self.assertIn("verify_flash 0x0 ", calls)
+
     def test_full_image_needs_the_flash_it_says(self):
         ok, msg = flasher.flash("/dev/ttyUSB0", self.entries["micropython-1.29.0-esp32"], dict(self.board, flash_mb=2))
         self.assertFalse(ok)

@@ -20,7 +20,7 @@ command line) since it costs nothing extra.
 
 | | |
 |---|---|
-| Repo | this one, SandBox_RK3326_Provisioner; the S3 adapter firmware in its own repo (ESP-IDF, its own CI) |
+| Repo | this one, SandBox_RK3326_Provisioner; the S3 adapter firmware in `s3_usb_wifi/` here (ESP-IDF, its own CI jobs), kept in this sandbox rather than a repo of its own |
 | First version | S3 adapter + Heltec RNode + the classic-ESP32 catalogue; the full CAM Stump later (Arborist covers it from a computer) |
 | Where | the handheld first; a computer gets the same app for free |
 | Not carried over | the flasher's *SIGINT ESP32 Link* image (scans nearby Wi-Fi/BLE devices and reads them: device tracking, out of scope; prebuilt, no source). Its `app.py` code is not reused (no licence in the fork): only its approach, and the upstream libraries it bundles (esptool GPL-2, pyserial BSD, intelhex BSD) with their licences |
@@ -65,9 +65,12 @@ Making a Stump is the Provisioner's main job (2026-11-02): it comes first.
 - [ ] **v0.3.0: this handheld's Stump, installed or updated from the
       gamepad**: possible now: Team Stump's `provisioner.py --pc --answers
       FILE.json` (beta.48) runs their wizard from a form's answers
-- [ ] The S3 USB Wi-Fi adapter firmware (its own repo): ESP-IDF, on
-      Espressif's esp-iot-bridge (Apache-2.0): CDC-NCM (ECM fallback), NAT,
-      DHCP with option 121 and no router/DNS, the setup AP, `status.json`
+- [x] **The S3 USB Wi-Fi adapter firmware 0.1.0** (`s3_usb_wifi/`):
+      ESP-IDF 5.3, esp_tinyusb: CDC-NCM, NAT, our own DHCP (10.77.0.2,
+      option 121, no router/DNS; tested against dhclient, dhcpcd, udhcpc),
+      the saved network or an open Stump hotspot, the setup AP,
+      `status.json`; in the catalogue. **Bench test pending** (below)
+- [ ] The adapter's ECM build (the memo's fallback), if a handheld lacks `cdc_ncm`
 - [ ] Your own images: `.bin` files in `/roms/ESP32-Firmware/` (app only)
 - [ ] 640x480 layout tuned for the R36S (it's scaled for now)
 - [x] The bundle from its own release file (Team Stump's beta.48)
@@ -87,3 +90,9 @@ Making a Stump is the Provisioner's main job (2026-11-02): it comes first.
    **Passed 2026-11-02** (v0.2.0): a CAM made by the handheld, linked to its
    Heltec V3 (set up by Team Stump's Provisioner on a computer), visible to
    visitors, to Android clients and to FireFly on the R36MAX.
+6. **The S3 USB Wi-Fi adapter** (`s3_usb_wifi/README.md`, *The bench test*):
+   flashed from the Provisioner through the CAM's UART port, then its USB
+   port into the R36MAX: 10.77.0.2/24 within 10 s, `cdc_ncm` in dmesg, the
+   default route still only `wlan0`, `status.json`, the Stump's
+   `/node.json` through it, unplug and replug. Then LoRa, and the setup
+   page from a phone.

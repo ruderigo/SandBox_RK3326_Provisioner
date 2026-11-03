@@ -1,10 +1,11 @@
 # Tests on every push and pull request; a tag v<VERSION> also publishes the
-# release (the tarball the handheld installs from, offline).
+# release (the tarball the handheld installs from, offline). The S3 USB Wi-Fi
+# firmware is built here too; a tag s3-usb-wifi-v<version> publishes its image.
 name: ci
 on:
   push:
     branches: ["**"]
-    tags: ["v*"]
+    tags: ["v*", "s3-usb-wifi-v*"]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -26,6 +27,60 @@ jobs:
         with:
           name: screenshots
           path: shots/
+  s3-usb-wifi:
+    # ESP-IDF v5.3.2's own image; the vendored components need nothing else
+    runs-on: ubuntu-24.04
+    container: espressif/idf:v5.3.2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh"
+          bash s3_usb_wifi/build.sh
+      - name: The image in firmware/ is this source's
+        shell: bash
+        run: |
+          ver=$(sed -n 's/^set(PROJECT_VER "\(.*\)")/\1/p' s3_usb_wifi/CMakeLists.txt)
+          cat s3_usb_wifi/dist/SHA256SUMS
+          sha256sum "firmware/s3_usb_wifi/s3-usb-wifi-$ver.bin"
+          cmp "s3_usb_wifi/dist/s3-usb-wifi-$ver.bin" "firmware/s3_usb_wifi/s3-usb-wifi-$ver.bin"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: s3-usb-wifi
+          path: s3_usb_wifi/dist/
+  s3-usb-wifi-dhcp:
+    # its DHCP server against real clients (dhclient, dhcpcd, udhcpc) and its unit tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Packages
+        run: sudo apt-get update -q && sudo apt-get install -y -q isc-dhcp-client dhcpcd-base busybox
+      - name: Unit tests
+        run: bash s3_usb_wifi/host_tests/run.sh
+      - name: Real DHCP clients
+        run: sudo bash s3_usb_wifi/host_tests/dhcp_clients.sh
+  s3-usb-wifi-release:
+    if: startsWith(github.ref, 'refs/tags/s3-usb-wifi-v')
+    needs: [s3-usb-wifi, s3-usb-wifi-dhcp]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: s3-usb-wifi
+          path: dist
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ver="${GITHUB_REF_NAME#s3-usb-wifi-v}"
+          test -f "dist/s3-usb-wifi-$ver.bin" || { echo "tag $GITHUB_REF_NAME doesn't match the firmware's version"; exit 1; }
+          cp firmware/licenses/S3-USB-WiFi-NOTICE.txt dist/
+          gh release create "$GITHUB_REF_NAME" dist/* --title "S3 USB Wi-Fi $ver" \
+            --notes-file s3_usb_wifi/CHANGELOG.md --verify-tag
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [test]

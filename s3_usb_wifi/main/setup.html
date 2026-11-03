@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FireFly S3 setup</title>
+<style>
+  :root { color-scheme: dark; --bg:#0b0f0c; --fg:#d8e6d0; --dim:#7f9378; --acc:#9fdc6a; --line:#22301f; }
+  body { background:var(--bg); color:var(--fg); font:16px/1.4 ui-monospace,Menlo,Consolas,monospace; margin:0; padding:16px; max-width:520px; }
+  h1 { font-size:18px; color:var(--acc); margin:0 0 4px; }
+  p.dim, .dim { color:var(--dim); font-size:14px; }
+  #st { border:1px solid var(--line); padding:8px 10px; margin:12px 0; }
+  ul { list-style:none; padding:0; margin:8px 0; }
+  li button { width:100%; text-align:left; background:none; color:var(--fg); border:1px solid var(--line); padding:10px; margin:0 0 6px; font:inherit; cursor:pointer; }
+  li button:hover, li button:focus { border-color:var(--acc); }
+  label { display:block; margin:10px 0 4px; }
+  input { width:100%; box-sizing:border-box; background:#111811; color:var(--fg); border:1px solid var(--line); padding:10px; font:inherit; }
+  .go { background:var(--acc); color:#0b0f0c; border:0; padding:10px 14px; font:inherit; margin-top:12px; cursor:pointer; }
+  .plain { background:none; color:var(--dim); border:1px solid var(--line); padding:8px 12px; font:inherit; cursor:pointer; }
+</style>
+</head>
+<body>
+<h1>FireFly S3 USB Wi-Fi</h1>
+<p class="dim">The network this adapter joins for the handheld. It also joins open Stump hotspots by itself.</p>
+<div id="st">Status: …</div>
+
+<p>Networks nearby <button class="plain" type="button" onclick="scan()">Refresh</button></p>
+<ul id="nets"><li class="dim">Looking…</li></ul>
+
+<form method="post" action="/save">
+  <label for="ssid">Network name</label>
+  <input id="ssid" name="ssid" maxlength="32" required autocomplete="off" autocapitalize="none">
+  <label for="pw">Password <span class="dim">(empty for an open network)</span></label>
+  <input id="pw" name="password" type="password" maxlength="63" autocomplete="off">
+  <button class="go" type="submit">Save and join</button>
+</form>
+
+<form method="post" action="/forget" style="margin-top:24px">
+  <button class="plain" type="submit">Forget the saved network</button>
+</form>
+
+<script>
+function esc(s){return String(s).replace(/[&<>"']/g,function(c){return '&#'+c.charCodeAt(0)+';';});}
+function status(){
+  fetch('/status.json').then(function(r){return r.json();}).then(function(s){
+    document.getElementById('st').innerHTML = s.ssid
+      ? 'Joined <b>'+esc(s.ssid)+'</b> ('+esc(s.rssi)+' dBm), '+esc(s.ip)+' on '+esc(s.subnet)
+      : 'Not joined to a network yet.';
+  }).catch(function(){});
+}
+function scan(){
+  var ul=document.getElementById('nets');
+  fetch('/scan.json').then(function(r){return r.json();}).then(function(list){
+    ul.innerHTML='';
+    if(!list.length){ul.innerHTML='<li class="dim">None found (try Refresh).</li>';return;}
+    list.forEach(function(n){
+      var li=document.createElement('li'), b=document.createElement('button');
+      b.type='button';
+      b.textContent=n.ssid+'   '+n.rssi+' dBm'+(n.open?'   open':'');
+      b.onclick=function(){document.getElementById('ssid').value=n.ssid;var p=document.getElementById('pw');p.value='';p.focus();};
+      li.appendChild(b); ul.appendChild(li);
+    });
+  }).catch(function(){ul.innerHTML='<li class="dim">Couldn\'t list networks.</li>';});
+}
+status(); scan(); setInterval(status, 4000);
+</script>
+</body>
+</html>

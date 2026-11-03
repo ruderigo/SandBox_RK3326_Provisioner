@@ -10,7 +10,7 @@ gamepad. It's an EmulationStation **Ports** entry.
 
 | Board | What it can be given (v0.2.0) |
 |---|---|
-| **ESP32-S3 (Freenove CAM)** | **Make a Stump** (Stump 1.0.0-beta.48, offline), update its Stump, its settings, check it starts; *coming*: a USB Wi-Fi adapter for the handheld |
+| **ESP32-S3 (Freenove CAM)** | **Make a Stump** (Stump 1.0.0-beta.48, offline), update its Stump, its settings, check it starts; **USB Wi-Fi adapter** 0.1.0 for the handheld ([s3_usb_wifi/](s3_usb_wifi/README.md), bench test pending) |
 | Heltec V3 | *coming*: RNode for a CAM, set for the mesh |
 | Classic ESP32 | WLED 16.0.1 (app slot only), MicroPython 1.29.0 (full install) |
 | Any of them | the serial log (115200); erase the whole flash |
@@ -94,21 +94,26 @@ buttons without a screen (SDL's dummy driver; screenshots with
 | `vendor/` | esptool 4.8.1 (GPL-2.0), pyserial (BSD-3), intelhex (BSD): run as they are; licences in `vendor/LICENSES/` |
 | `firmware/` | the catalogue; WLED 16.0.1 (EUPL-1.2) and MicroPython 1.29.0 (MIT), official builds, licences in `firmware/licenses/` |
 | `firmware/stump/` | the Stump bundle from SandBox_Stump_On's release (MIT; MicroPython MIT), with where it came from |
+| `firmware/s3_usb_wifi/` | the S3 USB Wi-Fi adapter's image, built from `s3_usb_wifi/` (the CI checks it's that source's) |
+| `s3_usb_wifi/` | that firmware's source (ESP-IDF v5.3; esp_tinyusb Apache-2.0 and TinyUSB MIT vendored), its tests and build |
 | `tests/stump_fixtures/` | Team Stump's pretend board and four Stump modules, for the tests (MIT, credited) |
 | `assets/cockpit_font.bin` | DejaVu Sans Mono, pre-rendered (the Stump cockpit's; `FONT_LICENSE`) |
 
 ## Licences
 
-The Provisioner's own code (`provisioner/`, `scripts/`, `tests/`, the
-launcher and scripts) is **MIT** ([LICENSE](LICENSE)). Everything else keeps
-its own licence, next to its files, and is shipped **side by side as
-separate programs or data**, never merged into our code:
+The Provisioner's own code (`provisioner/`, `scripts/`, `tests/`,
+`s3_usb_wifi/main/`, the launcher and scripts) is **MIT**
+([LICENSE](LICENSE)). Everything else keeps its own licence, next to its
+files, and is shipped **side by side as separate programs or data**, never
+merged into our code (the S3 image is the one exception: it's built with
+ESP-IDF's Apache-2.0 and MIT parts, which allow that):
 
 | | Licence | How it's used |
 |---|---|---|
 | esptool, pyserial, intelhex | GPL-2.0, BSD-3, BSD | run as their own program / imported as published (`vendor/LICENSES/`) |
 | WLED, MicroPython | EUPL-1.2, MIT | images written to boards (`firmware/licenses/`) |
 | The Stump bundle, test fixtures | MIT (Team Stump) | copied to boards / used by the tests |
+| The S3 USB Wi-Fi image | MIT (ours), built on ESP-IDF (Apache-2.0, lwIP BSD-3, FreeRTOS MIT), esp_tinyusb (Apache-2.0), TinyUSB (MIT) | an image written to boards; licences in `firmware/licenses/` (`S3-USB-WiFi-NOTICE.txt`), source in `s3_usb_wifi/` |
 | *Coming:* RNode firmware | GPL-3.0 | an image written to the Heltec, shipped with **its full source** for that version |
 | *Coming:* RNS (`rnodeconf`) | Reticulum License (MIT terms + no systems built to harm people, no use in creating AI/ML models) | bundled as published, run as its own program |
 

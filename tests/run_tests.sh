@@ -22,7 +22,7 @@ lint() {
   local bad=0 f
   for f in install.sh package.sh ports/RK3326_Provisioner.sh tests/run_tests.sh; do bash -n "$f" || bad=1; done
   if command -v shellcheck >/dev/null; then
-    shellcheck -S warning install.sh package.sh ports/RK3326_Provisioner.sh tests/run_tests.sh || bad=1
+    shellcheck -S warning install.sh package.sh ports/RK3326_Provisioner.sh tests/run_tests.sh s3_usb_wifi/build.sh s3_usb_wifi/host_tests/*.sh || bad=1
   else echo "(no shellcheck: syntax only)"; fi
   return "$bad"
 }

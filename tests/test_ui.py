@@ -127,7 +127,7 @@ class Screens(Base):
         self.assertEqual(a.screen, "jobs")
         self.assertIn("Coming", a.toast_text)
 
-    def test_s3_with_psram_lists_the_adapter_as_coming(self):
+    def test_s3_with_psram_lists_the_stump_jobs_then_the_adapter(self):
         os.environ["FAKE_BOARD"] = "s3"
         a = self.app([port("/dev/ttyACM0", "303a:1001", "ESP32-S3/C3 native USB")])
         a.handle("a")
@@ -138,6 +138,7 @@ class Screens(Base):
         kinds = [r["kind"] for r in a.jobs()]
         self.assertEqual(kinds[:4], ["stump_new", "stump_update", "stump_settings", "stump_check"])
         self.assertEqual(a.jobs()[4]["entry"]["id"], "s3-usb-wifi")
+        self.assertEqual(a.jobs()[4]["entry"]["status"], "ready")
 
     def test_a_failure_says_what_to_do(self):
         os.environ.update(FAKE_BOARD="esp32", FAKE_FAIL="connect")
