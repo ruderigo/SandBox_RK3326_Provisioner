@@ -18,6 +18,7 @@ from provisioner.ui.gamepad import Gamepad  # noqa: E402
 from provisioner.ui.sdl import Display, write_png  # noqa: E402
 
 SHOTS = os.environ.get("SHOTS") or tempfile.mkdtemp(prefix="provisioner-shots-")
+os.makedirs(SHOTS, exist_ok=True)
 DISPLAY = None
 
 
@@ -78,7 +79,7 @@ class Screens(Base):
         self.assertEqual(a.screen, "jobs")
         self.shot(a, "04-jobs-esp32")
         self.assertEqual([r.get("entry", {}).get("id", r["kind"]) for r in a.jobs()],
-                         ["wled-16.0.1-esp32", "micropython-1.29.0-esp32", "log", "erase"])
+                         ["wled-16.0.1-esp32", "micropython-1.29.0-esp32", "fromfile", "log", "erase"])
         a.handle("a")                                   # WLED: asks first, Yes highlighted (app only)
         self.assertEqual((a.confirm["title"], a.confirm["choice"]), ("Flash WLED 16.0.1?", 1))
         self.shot(a, "05-confirm-app")
@@ -138,8 +139,9 @@ class Screens(Base):
         self.assertEqual(a.known["/dev/ttyACM0"]["info"]["psram_mb"], 8)
         kinds = [r["kind"] for r in a.jobs()]
         self.assertEqual(kinds[:4], ["stump_new", "stump_update", "stump_settings", "stump_check"])
-        self.assertEqual(a.jobs()[4]["entry"]["id"], "s3-usb-wifi")
-        self.assertEqual(a.jobs()[4]["entry"]["status"], "ready")
+        self.assertEqual([r["plan"]["name"] for r in a.jobs()[4:6]], ["rnfs", "tavern"])   # the packs it carries
+        self.assertEqual(a.jobs()[6]["entry"]["id"], "s3-usb-wifi")
+        self.assertEqual(a.jobs()[6]["entry"]["status"], "ready")
 
     def test_a_failure_says_what_to_do(self):
         os.environ.update(FAKE_BOARD="esp32", FAKE_FAIL="connect")
@@ -539,6 +541,162 @@ class TheWifiAdapter(Base):
         return [{k: v for k, v in c.items() if k not in ("id", "cmd")} for c in self.s3.calls if c["cmd"] == "join"]
 
 
+class FromFileAndPacks(Base):
+    """+ From File (a .bin read for what it is, a pack's zip) and the packs the
+    Provisioner carries, put on Team Stump's pretend board."""
+
+    def setUp(self):
+        super().setUp()
+        import shutil
+        self.dir = tempfile.mkdtemp(prefix="card-")
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        fw = os.path.join(ROOT, "firmware")
+        shutil.copy(os.path.join(fw, "official", "WLED_16.0.1_ESP32.bin"), os.path.join(self.dir, "wled.bin"))
+        shutil.copy(os.path.join(fw, "s3_usb_wifi", sorted(os.listdir(os.path.join(fw, "s3_usb_wifi")))[0]),
+                    os.path.join(self.dir, "adapter.bin"))
+        shutil.copy(os.path.join(fw, "stump", "packs", "tavern-pack-1.1.zip"), os.path.join(self.dir, "tavern.zip"))
+        with open(os.path.join(self.dir, "notes.bin"), "wb") as f:
+            f.write(b"hello" * 100)
+        os.makedirs(os.path.join(self.dir, "older"))
+        with open(os.path.join(self.dir, "readme.txt"), "w") as f:
+            f.write("not shown")
+
+    def browse(self, a):
+        a.roots_fn = lambda: [("Card", self.dir)]
+        rows = [r["kind"] for r in a.jobs()]
+        for _ in range(rows.index("fromfile")):
+            a.handle("down")
+        a.handle("a")
+        self.assertEqual(a.screen, "files")
+        a.handle("a")                                   # into the card
+        return [e["name"] for e in a.fb["entries"]]
+
+    def pick(self, a, name):
+        a.fb["sel"] = [e["name"] for e in a.fb["entries"]].index(name)
+        a.handle("a")
+
+    def test_a_bin_is_read_for_what_it_is(self):
+        os.environ.update(FAKE_BOARD="esp32", FAKE_CALLS=os.path.join(self.dir, "calls"))
+        a = self.app([port("/dev/ttyUSB0", "10c4:ea60", "CP210x USB-serial")])
+        a.handle("a")
+        self.wait(a)
+        a.handle("a")
+        names = self.browse(a)
+        self.assertEqual(names, ["older", "adapter.bin", "notes.bin", "tavern.zip", "wled.bin"])   # folders first
+        self.shot(a, "40-from-file")
+        self.pick(a, "notes.bin")
+        self.assertIsNone(a.confirm)
+        self.assertIn("isn't ESP firmware", a.toast_text)
+        self.pick(a, "adapter.bin")
+        self.assertIsNone(a.confirm)
+        self.assertIn("built for the ESP32S3", a.toast_text)
+        self.pick(a, "tavern.zip")
+        self.assertIn("is for a Stump", a.toast_text)
+        self.pick(a, "wled.bin")                        # an app image for this chip: asks, then the app slot
+        self.assertEqual(a.confirm["title"], "Flash wled.bin?")
+        self.assertIn("An app image", a.confirm["lines"][0])
+        self.assertEqual(a.confirm["choice"], 1)
+        self.shot(a, "41-from-file-confirm")
+        a.handle("a")
+        self.wait(a)
+        self.assertTrue(a.task.ok, a.task.msg)
+        with open(os.path.join(self.dir, "calls")) as f:
+            calls = f.read()
+        self.assertIn("write_flash --flash_mode keep --flash_size keep 0x10000", calls)
+        self.assertNotIn("erase_flash", calls)
+
+    def test_browsing_up_down_and_every_file(self):
+        os.environ["FAKE_BOARD"] = "esp32"
+        a = self.app([port("/dev/ttyUSB0", "10c4:ea60", "CP210x USB-serial")])
+        a.handle("a")
+        self.wait(a)
+        a.handle("a")
+        self.browse(a)
+        a.handle("y")                                   # every file
+        self.assertIn("readme.txt", [e["name"] for e in a.fb["entries"]])
+        self.pick(a, "older")
+        self.assertEqual(a.fb["path"], os.path.join(self.dir, "older"))
+        a.handle("b")                                   # up: back where it was, on that folder
+        self.assertEqual(a.fb["path"], self.dir)
+        self.assertEqual(a.fb["entries"][a.fb["sel"]]["name"], "older")
+        a.handle("b")                                   # the card is a root: the list of places
+        self.assertIsNone(a.fb["path"])
+        a.handle("b")
+        self.assertEqual(a.screen, "jobs")
+
+    def stump_board(self):
+        import shutil
+        from provisioner import stump
+        from test_stump import PipeLink
+        os.environ.update(FAKE_BOARD="s3", FAKE_MPY="6.3")
+        self.root = tempfile.mkdtemp(prefix="board-")
+        self.addCleanup(shutil.rmtree, self.root, True)
+        for name, body in (("config.py", "NODE_NAME = 'Oak'\n"), ("plugins.py", "API_VERSION = 1\n"),
+                           ("fserv.py", "import os\nsd_ok = False\ndef mount_sd():\n global sd_ok\n"
+                                        " try:\n  os.mkdir('/sd')\n except OSError:\n  pass\n sd_ok = True\n")):
+            with open(os.path.join(self.root, name), "w") as f:
+                f.write(body)
+        links = []
+        self.addCleanup(lambda: [l.close() for l in links])
+        a = self.app([port("/dev/ttyUSB1", "1a86:55d3", "CH343 USB-serial")])
+        a._bundle = stump.find_bundle()
+        a.open_link = lambda p: links.append(PipeLink(self.root)) or links[-1]
+        a.handle("a")
+        self.wait(a)
+        a.handle("a")
+        return a
+
+    def test_the_tavern_pack_onto_a_stump(self):
+        a = self.stump_board()
+        rows = a.jobs()
+        k = [i for i, r in enumerate(rows) if r["kind"] == "pack" and r["plan"]["name"] == "tavern"][0]
+        for _ in range(k):
+            a.handle("down")
+        self.shot(a, "42-jobs-packs")
+        a.handle("a")
+        self.assertEqual(a.confirm["title"], "Add tavern 1.1 to its Stump?")
+        self.shot(a, "43-pack-confirm")
+        a.handle("a")
+        self.wait(a)
+        self.assertTrue(a.task.ok, a.task.msg)
+        self.assertTrue(os.path.isfile(os.path.join(self.root, "tavern", "install.py")))
+        self.assertFalse(os.path.exists(os.path.join(self.root, "tavern", "plugin.json")))   # not for the board
+        import json as J
+        with open(os.path.join(self.root, "themes.json")) as f:
+            self.assertIn("tavern", J.load(f))
+
+    def test_a_pack_with_card_files_from_file(self):
+        import shutil
+        a = self.stump_board()
+        shutil.copy(os.path.join(ROOT, "firmware", "stump", "packs", "rnfs-pack-1.1.zip"),
+                    os.path.join(self.dir, "rnfs.zip"))
+        self.browse(a)
+        self.pick(a, "rnfs.zip")
+        self.assertEqual(a.confirm["title"], "Add rnfs 1.1 to its Stump?")
+        a.handle("a")
+        self.wait(a)
+        self.assertTrue(a.task.ok, a.task.msg)
+        self.assertTrue(os.path.isfile(os.path.join(self.root, "rnfs", "install.py")))
+        tools = os.listdir(os.path.join(self.root, "sd", "tools", "rnfs"))
+        self.assertIn("rnfs-install.sh", tools)
+
+    def test_a_changed_pack_is_refused(self):
+        import zipfile
+        a = self.stump_board()
+        src = os.path.join(ROOT, "firmware", "stump", "packs", "tavern-pack-1.1.zip")
+        bad = os.path.join(self.dir, "bad.zip")
+        with zipfile.ZipFile(src) as zin, zipfile.ZipFile(bad, "w") as zout:
+            for i in zin.infolist():
+                data = zin.read(i)
+                if i.filename.endswith("tavern/install.py"):
+                    data += b"\n# changed\n"
+                zout.writestr(i, data)
+        self.browse(a)
+        self.pick(a, "bad.zip")
+        self.assertIsNone(a.confirm)
+        self.assertIn("changed since it was hashed", a.toast_text)
+
+
 class Buttons(unittest.TestCase):
     def test_r36max_codes(self):
         g = Gamepad([])
@@ -556,6 +714,7 @@ class Buttons(unittest.TestCase):
 
 if __name__ == "__main__":
     try:
-        unittest.main(verbosity=1, exit=False)
+        ok = unittest.main(verbosity=1, exit=False).result.wasSuccessful()
     finally:
         print("screenshots:", SHOTS)
+    sys.exit(0 if ok else 1)          # a failing screen test fails the run (it didn't before beta.5)

@@ -1,0 +1,14 @@
+{
+  "rnfs-pack-1.1.zip": {
+    "name": "rnfs",
+    "sha256": "18895c140493c7867ee5bd13a2543236bcb6aab7f784686f1ee8e5b2a5185e28",
+    "source": "https://github.com/ruderigo/SandBox_Stump_On/releases/tag/v1.0.0-beta.50",
+    "version": "1.1"
+  },
+  "tavern-pack-1.1.zip": {
+    "name": "tavern",
+    "sha256": "f8c69338c27e43bdb2f42ddbd28577ebcb70dff8e1bb6b9ff0cdb8d3ab2d33fa",
+    "source": "https://github.com/ruderigo/SandBox_Stump_On/releases/tag/v1.0.0-beta.50",
+    "version": "1.1"
+  }
+}

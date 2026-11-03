@@ -15,7 +15,7 @@ import os
 import threading
 import time
 
-from .. import boards, catalog, flasher, s3wifi, stump
+from .. import boards, catalog, files, flasher, images, packs, s3wifi, stump
 from ..seriallog import SerialLog
 from .keyboard import Keyboard
 from .sdl import F16, F20, F24, F30B, W, rgb
@@ -115,6 +115,10 @@ class App:
         self.kb = None                  # the keyboard, while typing (and the field it fills)
         self.kb_key = None
         self.open_link = lambda port: stump.SerialLink(port)
+        self.packs_fn = packs.bundled
+        self.roots_fn = files.roots
+        self._packs = None
+        self.fb = None                  # the file browser (+ From File)
         self.open_serial_log = SerialLog
         self.log_dir = None             # None: seriallog.export_dir()
         self.logv = {"frozen": None, "cur": 0, "mark": None}
@@ -196,10 +200,20 @@ class App:
         rows = []
         if b.get("id") == "esp32s3":           # the Freenove CAM: a Stump
             rows += [{"kind": k} for k in ("stump_new", "stump_update", "stump_settings", "stump_check")]
+            rows += [{"kind": "pack", "path": p, "plan": plan, "error": err} for p, plan, err in self.bundled_packs()]
         rows += [{"kind": "fw", "entry": e} for e in catalog.for_board(self.entries, b)]
+        rows.append({"kind": "fromfile"})
         rows.append({"kind": "log"})
         rows.append({"kind": "erase"})
         return rows
+
+    def bundled_packs(self):
+        if self._packs is None:
+            try:
+                self._packs = self.packs_fn()
+            except Exception:
+                self._packs = []
+        return self._packs
 
     # -- what the buttons do --
     def handle(self, act):
@@ -303,6 +317,13 @@ class App:
                 self.open_log()
             elif r["kind"] == "erase":
                 self.ask_erase()
+            elif r["kind"] == "fromfile":
+                self.open_files()
+            elif r["kind"] == "pack":
+                if r["plan"]:
+                    self.ask_pack(r["plan"])
+                else:
+                    self.toast("%s: %s" % (os.path.basename(r["path"]), r["error"]), 4)
             elif r["entry"]["status"] != "ready":
                 self.toast("Coming: %s" % r["entry"]["title"], 3)
             else:
@@ -515,6 +536,111 @@ class App:
             w["retype"].discard(ssid)
             w["next"] = 0.0
         threading.Thread(target=work, daemon=True).start()
+
+    # -- + From File --
+    def open_files(self):
+        self.fb = {"path": None, "sel": 0, "entries": [], "show_all": False, "from": self.screen}
+        self.files_load(None)
+        self.screen = "files"
+
+    def files_load(self, path, select=None):
+        fb = self.fb
+        if path is None:
+            fb["entries"] = [{"name": label, "path": p, "dir": True, "size": 0, "root": True}
+                             for label, p in self.roots_fn()]
+        else:
+            got = files.listdir(path, show_all=fb["show_all"])
+            if got is None:
+                self.toast("Can't open %s" % path, 3)
+                return
+            fb["entries"] = got
+        fb["path"], fb["sel"] = path, 0
+        if select:
+            fb["sel"] = next((i for i, e in enumerate(fb["entries"]) if e["path"] == select), 0)
+
+    def at_root(self, path):
+        return any(path == p for _, p in self.roots_fn())
+
+    def on_files(self, act):
+        fb = self.fb
+        n = len(fb["entries"])
+        page = 8
+        step = {"up": -1, "down": 1, "left": -page, "right": page, "l": -page, "r": page}.get(act)
+        if step and n:
+            fb["sel"] = max(0, min(n - 1, fb["sel"] + step)) if act not in ("up", "down") \
+                else (fb["sel"] + step) % n
+        elif act == "b":
+            if fb["path"] is None:
+                self.fb, self.screen = None, fb["from"]
+            elif self.at_root(fb["path"]):
+                self.files_load(None, select=fb["path"])
+            else:
+                self.files_load(os.path.dirname(fb["path"]), select=fb["path"])
+        elif act == "y" and fb["path"] is not None:
+            fb["show_all"] = not fb["show_all"]
+            self.files_load(fb["path"])
+            self.toast("Showing every file" if fb["show_all"] else "Showing .bin and .zip files")
+        elif act == "a" and n:
+            e = fb["entries"][fb["sel"]]
+            if e["dir"]:
+                self.files_load(e["path"])
+            else:
+                self.choose_file(e["path"])
+
+    def choose_file(self, path):
+        board = self.known[self.cur["port"]]["board"]
+        if path.lower().endswith(".zip"):
+            if board.get("id") != "esp32s3":
+                self.toast("A pack's .zip is for a Stump (ESP32-S3)", 4)
+                return
+            try:
+                plan = packs.plan_file(path, packs.known_names(self.bundle()))
+            except packs.PackError as e:
+                self.toast("Not installed: %s" % e, 5)
+                return
+            self.ask_pack(plan, os.path.basename(path))
+            return
+        try:
+            if os.path.getsize(path) > 32 * 1024 * 1024:
+                self.toast("Too big to be ESP firmware", 3)
+                return
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError as e:
+            self.toast("Can't read it: %s" % (e.strerror or e), 4)
+            return
+        info = images.inspect(data)
+        if info["kind"] == "unknown":
+            self.toast("Not flashed: %s" % info["why"], 5)
+            return
+        if info["chip"] != board["chip"]:
+            self.toast("Not flashed: it's built for the %s; this board is an %s" % (
+                info["chip"].upper(), board["chip"].upper()), 5)
+            return
+        sha = packs.sha(data)
+        entry = {"id": "file", "title": os.path.basename(path), "chip": board["chip"], "mode": info["kind"],
+                 "offset": "0x%X" % info["offset"], "path": path, "sha256": sha, "status": "ready",
+                 "min_flash_mb": info["flash_mb"] if info["kind"] == "full" else 0, "licence": "as its author says"}
+        lines = [images.describe(info), "%s · %s" % (files.human(len(data)), path),
+                 "SHA-256 %s…" % sha[:16]]
+        need = info.get("flash_mb") or 0
+        have = board.get("flash_mb") or 0
+        if info["kind"] == "full" and need and have and need > have:
+            self.toast("Not flashed: it's for %d MB of flash; the board has %g MB" % (need, have), 5)
+            return
+        self.ask("Flash %s?" % entry["title"], lines, "Flash it", lambda: self.start_flash(entry),
+                 danger=(info["kind"] == "full"))
+
+    def ask_pack(self, plan, src=""):
+        lines = ["%s · by %s · %s" % (packs.summary(plan), plan["author"], plan["license"]),
+                 plan["description"][:220] + ("…" if len(plan["description"]) > 220 else ""),
+                 "Every file checked against the pack's hashes. It starts with the Stump; /admin changes its settings."]
+        if plan["by_reader"]:
+            lines.append("Too big for USB, to copy by card reader: %s" % ", ".join(plan["by_reader"]))
+        port = self.cur["port"]
+        self.ask("Add %s %s to its Stump?" % (plan["name"], plan["version"]), lines, "Add it",
+                 lambda: self.run_stump("Adding %s %s" % (plan["name"], plan["version"]), lambda t: packs.install(
+                     plan, self.link_for(port), self._step(t), self._pct(t), t.line)))
 
     # -- a Stump --
     def link_for(self, port):
@@ -779,7 +905,7 @@ class App:
         crumbs = {"boards": "Boards on the hub", "jobs": "Boards  ›  %s" % self.board_name(),
                   "run": self.task.title if self.task else "",
                   "form": "%s  ›  %s" % (self.board_name(), "A new Stump" if self.form and self.form["mode"] == "new"
-                                         else "Its settings"), "log": "Serial log  ·  %s  ·  115200"
+                                         else "Its settings"), "files": "%s  ›  From File" % self.board_name(), "log": "Serial log  ·  %s  ·  115200"
                   % (self.cur["port"] if self.cur else ""), "wifi": "S3 USB Wi-Fi  ·  its networks"}[self.screen]
         d.text(F20, 16, 52, crumbs, TEXT, W - 32)
         d.fill(0, 86, W, 1, BORDER)
@@ -979,6 +1105,17 @@ class App:
                 tc = (ERROR if e["mode"] == "full" else OK) if ready else MUTED
             elif r["kind"] == "log":
                 title, about, tag, tc, ready = "Serial log", "What the board prints, at 115200.", "", MUTED, True
+            elif r["kind"] == "fromfile":
+                title, about, tag, tc, ready = ("+ From File", "A .bin from the card or a USB drive (what it is is read "
+                                                "from the file), or a pack's .zip for a Stump.", "", MUTED, True)
+            elif r["kind"] == "pack":
+                pl = r["plan"]
+                if pl:
+                    title, about = "Add the %s pack %s" % (pl["name"].capitalize(), pl["version"]), pl["description"]
+                    tag, tc, ready = "keeps settings", OK, True
+                else:
+                    title, about, tag, tc, ready = (os.path.basename(r["path"]), r["error"], "won't install",
+                                                    ERROR, False)
             else:
                 title, about, tag, tc, ready = ("Erase the whole flash", "Everything on the board goes.",
                                                 "erases", ERROR, True)
@@ -1022,6 +1159,44 @@ class App:
         for i, s in enumerate(t.tail(n)):
             d.text(F16, 20, y + 24 + i * 20, s, MUTED, W - 40)
         self.hints([("A", "continue"), ("B", "back")] if t.done else [("", "working: leave it plugged in")])
+
+    def draw_files(self):
+        d, fb = self.d, self.fb
+        if not fb:
+            return
+        where = fb["path"] or "Where to look"
+        d.text(F16, 16, TOP + 6, where, EMBER, W - 32)
+        es = fb["entries"]
+        if not es:
+            d.text(F20, 26, TOP + 44, "Nothing here to flash (Y shows every file)." if fb["path"] else
+                   "No card or drive found.", MUTED, W - 52)
+        rh, vis = 52, 10
+        first = max(0, min(fb["sel"] - (vis - 2), len(es) - vis))
+        for k, e in enumerate(es[first:first + vis]):
+            i, y = first + k, TOP + 34 + k * rh
+            sel = i == fb["sel"]
+            if sel:
+                d.stroke_rrect(12, y, W - 24, rh - 6, 8, EMBER, PANEL)
+            if e.get("root"):
+                name, info = e["name"], e["path"]
+            elif e["dir"]:
+                name, info = e["name"] + "/", "folder"
+            else:
+                name, info = e["name"], files.human(e["size"])
+            iw = d.text_width(F16, info)
+            d.text(F20, 26, y + 12, name, (EMBER_BRIGHT if sel else TEXT) if (e["dir"] or not fb["show_all"]
+                   or e["name"].lower().endswith(files.USABLE)) else MUTED, W - 70 - iw)
+            d.text(F16, W - 28 - iw, y + 15, info, MUTED)
+        if len(es) > vis:
+            track = vis * rh
+            th = max(14, track * vis // len(es))
+            d.fill(W - 10, TOP + 34, 4, track, PANEL)
+            d.fill(W - 10, TOP + 34 + (track - th) * first // max(1, len(es) - vis), 4, th, MUTED)
+        if fb["path"] is None:
+            self.hints([("A", "open"), ("↑↓", "move"), ("B", "back")])
+        else:
+            self.hints([("A", "open / choose"), ("B", "up"), ("Y", "all files" if not fb["show_all"] else ".bin .zip"),
+                        ("←→", "page")])
 
     def draw_log(self):
         d, v, log = self.d, self.logv, self.log
@@ -1084,21 +1259,35 @@ class App:
     def draw_confirm(self):
         d, c = self.d, self.confirm
         tone = ERROR if c["danger"] else OK
-        d.stroke_rrect(50, 170, W - 100, 330, 10, tone, PANEL)
-        d.text(F24, 74, 190, c["title"], tone, W - 148)
-        y = 236
-        for s in c["lines"]:
-            for part in wrap(d, F20, s, W - 150):
-                d.text(F20, 74, y, part, TEXT, W - 148)
-                y += 26
+        # The box fits its text: the body in F20, or F16 when F20 won't fit
+        # between the header and the hints.
+        room = (W - 56) - (TOP + 20) - 70 - 54 - 30
+        for font, lh in ((F20, 26), (F16, 21)):
+            body = [wrap(d, font, s, W - 150) for s in c["lines"]]
+            h = sum(len(b) * lh + 4 for b in body)
+            if h <= room:
+                break
+        h = min(h, room)
+        box_h = 70 + h + 20 + 54 + 20
+        top = max(TOP + 10, (W - 56 - box_h) // 2 + 10)
+        d.stroke_rrect(50, top, W - 100, box_h, 10, tone, PANEL)
+        d.text(F24, 74, top + 20, c["title"], tone, W - 148)
+        y, end = top + 66, top + 66 + h
+        for b in body:
+            for part in b:
+                if y + lh > end + 2:
+                    break
+                d.text(font, 74, y, part, TEXT, W - 148)
+                y += lh
             y += 4
+        by = top + box_h - 74
         for i in range(2):
             sel = c["choice"] == i
             bx = 74 + i * 290
             lbl = "No, cancel" if i == 0 else c["yes"]
             if sel:
-                d.fill_rrect(bx, 420, 270, 54, 8, EMBER if i == 0 else tone)
+                d.fill_rrect(bx, by, 270, 54, 8, EMBER if i == 0 else tone)
             else:
-                d.stroke_rrect(bx, 420, 270, 54, 8, BORDER, PANEL2)
-            d.text(F24, bx + (270 - d.text_width(F24, lbl)) // 2, 432, lbl, BG if sel else TEXT)
+                d.stroke_rrect(bx, by, 270, 54, 8, BORDER, PANEL2)
+            d.text(F24, bx + (270 - d.text_width(F24, lbl)) // 2, by + 12, lbl, BG if sel else TEXT)
         self.hints([("←→", "choose"), ("A", "accept"), ("B", "cancel")])

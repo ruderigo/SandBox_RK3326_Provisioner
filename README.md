@@ -10,7 +10,7 @@ gamepad. It's an EmulationStation **Ports** entry.
 
 | Board | What it can be given (v0.3.0-beta.3) |
 |---|---|
-| **ESP32-S3 (Freenove CAM)** | **Make a Stump** (Stump 1.0.0-beta.48, offline), update its Stump, its settings, check it starts; **USB Wi-Fi adapter** 0.3.0: the S3 becomes the handheld's Wi-Fi card ([below](#the-s3-as-the-handhelds-wi-fi-card), bench test pending) |
+| **ESP32-S3 (Freenove CAM)** | **Make a Stump** (Stump 1.0.0-beta.50, offline), update its Stump, its settings, check it starts; **add the Tavern or rnfs pack** (or any pack's .zip, by + From File); **USB Wi-Fi adapter** 0.3.0: the S3 becomes the handheld's Wi-Fi card ([below](#the-s3-as-the-handhelds-wi-fi-card), bench test pending) |
 | Heltec V3 | *coming*: RNode for a CAM, set for the mesh |
 | Classic ESP32 | WLED 16.0.1 (app slot only), MicroPython 1.29.0 (full install) |
 | Any of them | the serial log (115200); erase the whole flash |
@@ -72,6 +72,7 @@ EmulationStation if it isn't listed).
 | A form | ↑↓ · A type (the keyboard) or next choice · ←→ choice · B back |
 | Asking | ←→ No / Yes · A accept · B cancel. Erasing defaults to **No** |
 | Flashing | progress, esptool's lines, then *written and verified* or what to do |
+| + From File | ↑↓ · A open a folder / choose the file (asks first) · B up · Y every file or just .bin/.zip · ←→ page |
 | Serial log | A pause / resume · paused: ↑↓ line, ←→ page, X block, Y export (the block, or all) · running: Y export, X clear · B back |
 | Anywhere | SELECT+START closes it |
 
@@ -125,7 +126,7 @@ ESP-IDF's Apache-2.0 and MIT parts, which allow that):
 |---|---|---|
 | esptool, pyserial, intelhex | GPL-2.0, BSD-3, BSD | run as their own program / imported as published (`vendor/LICENSES/`) |
 | WLED, MicroPython | EUPL-1.2, MIT | images written to boards (`firmware/licenses/`) |
-| The Stump bundle, test fixtures | MIT (Team Stump) | copied to boards / used by the tests |
+| The Stump bundle, its packs (Tavern, rnfs), test fixtures | MIT (Team Stump) | copied to boards / used by the tests (`firmware/stump/`) |
 | The S3 USB Wi-Fi image | MIT (ours), built on ESP-IDF (Apache-2.0, lwIP BSD-3, FreeRTOS MIT), esp_tinyusb (Apache-2.0), TinyUSB (MIT) | an image written to boards; licences in `firmware/licenses/` (`S3-USB-WiFi-NOTICE.txt`), source in `s3_usb_wifi/` |
 | *Coming:* RNode firmware | GPL-3.0 | an image written to the Heltec, shipped with **its full source** for that version |
 | *Coming:* RNS (`rnodeconf`) | Reticulum License (MIT terms + no systems built to harm people, no use in creating AI/ML models) | bundled as published, run as its own program |

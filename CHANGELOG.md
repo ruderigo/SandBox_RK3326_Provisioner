@@ -10,6 +10,31 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.5
+
+- **+ From File.** A new row on every board: a file browser over the games
+  card(s), the home folder and USB drives (folders, then `.bin` and `.zip`
+  files; Y shows every file). A `.bin` is read for what it is before
+  anything is written: a full image (bootloader, partition table, app; at
+  0x0, or 0x1000 for a classic ESP32 image starting with its bootloader) or
+  an app image (to the app slot, the board's settings kept). It's refused if
+  it isn't ESP firmware, is built for another chip, or needs more flash than
+  the board has. A pack's `.zip` goes onto a Stump.
+- **Stump packs: Tavern and rnfs.** Team Stump's packs from 1.0.0-beta.50
+  ship with the Provisioner (checked against that release's SHA256SUMS) and
+  have their own rows on an S3: *Add the Tavern pack 1.1*, *Add the Rnfs
+  pack 1.1*. Installed the way Arborist does it: every file checked against
+  the pack's hashes first (one that doesn't match refuses the whole pack),
+  plugins to the board's flash, `tools/` and `home/` to its SD card, the
+  theme into `themes.json`, the Stump's settings kept. A file over 1 MB for
+  the card is listed to copy by card reader. Any other pack: + From File.
+- **The Stump bundle is 1.0.0-beta.50** (was beta.48).
+- The confirm box fits its text (smaller type when it's long); it used to
+  run under its buttons.
+- Tests: the screen tests' runner now fails when a test fails (it always
+  passed), with tests for + From File, a bin's kind, both packs and a
+  changed pack.
+
 ## v0.3.0-beta.4
 
 - **The serial log: pause, look, export.** Paused, a cursor line moves with

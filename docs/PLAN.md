@@ -77,8 +77,14 @@ Making a Stump is the Provisioner's main job (2026-11-02): it comes first.
       keyboard, forget; tested against a pretend S3 (`tests/fake_s3.py`).
       **Bench test pending** (below)
 - [ ] The adapter's ECM build (the memo's fallback), if a handheld lacks `cdc_ncm`
-- [ ] Your own images: `.bin` files in `/roms/ESP32-Firmware/` (app only)
-- [ ] 640x480 layout tuned for the R36S (it's scaled for now)
+- [x] **+ From File** (0.3.0-beta.5): any `.bin` (full or app image, read
+      from its bytes) or a pack's `.zip`, from the card, home or a USB drive
+- [x] **Packs** (0.3.0-beta.5): Tavern and rnfs from Stump 1.0.0-beta.50,
+      installed as Arborist does
+- [ ] **Every RK3326 handheld** (imperative): controls from ES's
+      `es_input.cfg` (per-device evdev tables as the fallback), layouts for
+      480x320, 640x480, 720x720, 854x480 (rotated panels too), launcher and
+      installer for ArkOS, dArkOS, AmberELEC, ROCKNIX (Wayland there)
 - [x] The bundle from its own release file (Team Stump's beta.48)
 
 ## Bench (on the R36MAX)

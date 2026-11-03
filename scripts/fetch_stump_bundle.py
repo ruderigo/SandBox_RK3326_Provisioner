@@ -17,7 +17,11 @@ inside Arborist-<release>.html, which is used for them. This script:
      against the names and passwords that must never be in it;
   3. writes firmware/stump/stump-<release>.bundle (the bundle as Team
      Stump built it, unchanged) and stump-<release>.json (where it came
-     from, its hashes), replacing older ones.
+     from, its hashes), replacing older ones;
+  4. takes the release's packs (<name>-pack-<version>.zip, in SHA256SUMS),
+     checks each against SHA256SUMS and every file in it against the pack's
+     own hashes (provisioner/packs.py, as Arborist does), and writes them to
+     firmware/stump/packs/ with packs.json (where each came from).
 
 Nothing is rebuilt here: what goes on a board is what Team Stump released.
 """
@@ -134,6 +138,43 @@ def main(argv):
         f.write("\n")
     print("firmware/stump/stump-%s.bundle: %d files, MicroPython %s, %d KB" % (
         rel, meta["files"], meta["micropython"], len(blob) // 1024))
+    take_packs(tag, sums, path)
+
+
+def take_packs(tag, sums, bundle_path):
+    sys.path.insert(0, ROOT)
+    from provisioner import packs, stump
+    listed = [(l.split()[0], l.split()[-1].lstrip("*")) for l in sums.splitlines() if l.strip()]
+    zips = [(h, n) for h, n in listed if re.match(r"^[a-z][a-z0-9_-]*-pack-[^/]+\.zip$", n)]
+    out_dir = os.path.join(OUT, "packs")
+    if os.path.isdir(out_dir):
+        for f in os.listdir(out_dir):
+            os.remove(os.path.join(out_dir, f))
+    if not zips:
+        print("no packs in %s" % tag)
+        return
+    os.makedirs(out_dir, exist_ok=True)
+    known = packs.known_names(stump.Bundle(bundle_path))
+    index = {}
+    for want, name in zips:
+        data = gh_asset(tag, name)
+        got = hashlib.sha256(data).hexdigest()
+        if got != want:
+            raise SystemExit("%s: SHA-256 %s, the release says %s" % (name, got, want))
+        p = os.path.join(out_dir, name)
+        with open(p, "wb") as f:
+            f.write(data)
+        try:
+            plan = packs.plan_file(p, known)
+        except packs.PackError as e:
+            os.remove(p)
+            raise SystemExit("%s: %s" % (name, e))
+        index[name] = {"name": plan["name"], "version": plan["version"], "sha256": got,
+                       "source": "https://github.com/%s/releases/tag/%s" % (REPO, tag)}
+        print("firmware/stump/packs/%s: %s %s, %s" % (name, plan["name"], plan["version"], packs.summary(plan)))
+    with open(os.path.join(out_dir, "packs.json"), "w", encoding="utf-8") as f:
+        json.dump(index, f, indent=2, sort_keys=True)
+        f.write("\n")
 
 
 if __name__ == "__main__":
