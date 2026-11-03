@@ -53,7 +53,12 @@ wait_route() {
     return 1
 }
 
-dns_is() { grep -q "^nameserver $1\$" "$work/resolv.conf" 2>/dev/null; }
+# the DNS it took: from resolv.conf, or (dhcpcd, whose hooks may hand it to
+# resolvconf or systemd-resolved instead) from its lease
+dns_is() {
+    grep -q "^nameserver $1\$" "$work/resolv.conf" 2>/dev/null && return 0
+    [ "${client:-}" = dhcpcd ] && in_ns dhcpcd -4 -U usb0 2>/dev/null | grep -q "^domain_name_servers='\?$1'\?\$"
+}
 
 wait_dns() {
     for _ in $(seq $(($1 * 2))); do dns_is "$2" && return 0; sleep 0.5; done
@@ -123,7 +128,7 @@ EOF
         exec dhcpcd -B -4 -f '$work/dhcpcd.conf' usb0" > "$work/dhcpcd.log" 2>&1 &
     dpid=$!
     sleep 4
-    check_client "dhcpcd"
+    client=dhcpcd check_client "dhcpcd"
     kill "$dpid" 2>/dev/null
     sleep 0.5
 fi
