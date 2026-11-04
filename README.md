@@ -46,7 +46,7 @@ Over SSH, **from your computer** (the commands run on the handheld; on your
 computer itself, `install.sh` refuses and changes nothing):
 
 ```sh
-ssh -t ark@r36max.local 'git clone -b provisioner-next https://github.com/ruderigo/SandBox_RK3326_Provisioner.git ~/SandBox_RK3326_Provisioner && bash ~/SandBox_RK3326_Provisioner/install.sh'
+ssh -t ark@r36max.local 'git clone https://github.com/ruderigo/SandBox_RK3326_Provisioner.git ~/SandBox_RK3326_Provisioner && bash ~/SandBox_RK3326_Provisioner/install.sh'
 ```
 
 With no internet on the handheld: copy a release's
