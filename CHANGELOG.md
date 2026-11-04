@@ -32,8 +32,6 @@ its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
   - installing again resends its passwords (the wizard rebuilds `config.py`).
 - **The CAM's form**: **its password** (/admin and the fserv bot; the
   fserv operator's, which was missing) and an optional separate /admin one.
-- docs/REQUEST_TEAM_STUMP.md: request 4 (`AUTH_ADMIN_PASSWORD` blank in
-  their `config.py`, as the plugin says).
 - Tests: through Team Stump's real wizard (new, again, update: /admin takes
   its password), a repo one cleared, setting one by stdin, the pages, the
   CAM's form.
