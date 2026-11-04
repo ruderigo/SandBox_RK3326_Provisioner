@@ -58,7 +58,7 @@ class Base(unittest.TestCase):
         write_png(os.path.join(SHOTS, name + ".png"), w, h, px)
 
     def wait(self, a):
-        end = time.time() + 20
+        end = time.time() + float(os.environ.get("WAIT_S", "60"))   # a slow machine: rnfs is 1 MB through the pretend link
         while not a.task.done and time.time() < end:
             time.sleep(0.05)
         self.assertTrue(a.task.done)
