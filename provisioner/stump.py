@@ -69,7 +69,8 @@ class Bundle:
                 self.meta = json.load(f)
         except (OSError, ValueError):
             self.meta = {}
-        self.default_ssid = self.meta.get("default_ssid") or "Stump"
+        # In the bundle's own header from 1.0.0-beta.48; the fetch script's notes before that.
+        self.default_ssid = self.head.get("default_ssid") or self.meta.get("default_ssid") or "Stump"
 
     def app(self):
         """[(path on the board, bytes, sha256)]"""

@@ -56,18 +56,21 @@ Making a Stump is the Provisioner's main job (2026-11-02): it comes first.
       Check as in Arborist, offline, from the gamepad; FireFly's keyboard;
       Team Stump's release bundle, checked; this handheld's Stump shown;
       tests on Team Stump's pretend board with the real bundle
-- [ ] **The Heltec for that CAM**, offline: needs Team Stump's answer to
-      request 2 (`docs/REQUEST_TEAM_STUMP.md`): the RNode build, its flash
-      layout and the non-interactive provisioning and settings
-- [ ] **This handheld's Stump, installed or updated from the gamepad**:
-      request 3 (the `--pc` wizard answered from a file)
+- [ ] **The Heltec for that CAM**, offline. Team Stump keeps the RNode
+      firmware out of their releases (beta.48: request 2 on hold); they'll
+      publish its upstream version, SHA-256 and flash layout. With those, the
+      Provisioner fetches that upstream release and its source itself (GPL-3,
+      side by side, full source shipped), bundles RNS as published and runs
+      `rnodeconf` as its own program
+- [ ] **v0.3.0: this handheld's Stump, installed or updated from the
+      gamepad**: possible now: Team Stump's `provisioner.py --pc --answers
+      FILE.json` (beta.48) runs their wizard from a form's answers
 - [ ] The S3 USB Wi-Fi adapter firmware (its own repo): ESP-IDF, on
       Espressif's esp-iot-bridge (Apache-2.0): CDC-NCM (ECM fallback), NAT,
       DHCP with option 121 and no router/DNS, the setup AP, `status.json`
 - [ ] Your own images: `.bin` files in `/roms/ESP32-Firmware/` (app only)
 - [ ] 640x480 layout tuned for the R36S (it's scaled for now)
-- [ ] The bundle from its own release file once Team Stump publishes it
-      (request 1)
+- [x] The bundle from its own release file (Team Stump's beta.48)
 
 ## Bench (on the R36MAX)
 
@@ -80,7 +83,7 @@ Making a Stump is the Provisioner's main job (2026-11-02): it comes first.
    (needs the CH343's driver in dArkOS's kernel: `dmesg | tail` on plug-in).
 5. **Make a Stump** on it: the form, about five minutes, then its Wi-Fi
    from a phone and `/admin` with the password chosen. Then Update, its
-   Settings and Check. Not proven off the bench: the board's port coming
-   back after MicroPython is written (the CH343 port should stay; the native
-   port re-enumerates), DTR/RTS held low not resetting it, and the copy's
-   speed over the hub.
+   Settings and Check.
+   **Passed 2026-11-02** (v0.2.0): a CAM made by the handheld, linked to its
+   Heltec V3 (set up by Team Stump's Provisioner on a computer), visible to
+   visitors, to Android clients and to FireFly on the R36MAX.

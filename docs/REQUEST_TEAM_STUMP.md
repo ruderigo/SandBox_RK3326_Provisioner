@@ -1,5 +1,14 @@
 # Request to Team Stump: three things for making Stumps from the handheld
 
+> **Answered in SandBox_Stump_On 1.0.0-beta.48 (2026-11-03):**
+> 1. **Done:** `Stump-<release>.bundle` on each release, in `SHA256SUMS`, with
+>    `default_ssid` in its header. The Provisioner takes it from there now.
+> 2. **On hold on their side:** `--heltec-for-cam` is a placeholder (exits 2).
+>    The RNode firmware stays out of their releases (GPL-3); they'd publish its
+>    upstream version, SHA-256 and flash layout. See the plan for what we do.
+> 3. **Done:** `provisioner.py --pc --answers FILE.json` (and
+>    `--answers-template`), keyed by each question's own text.
+
 From Team RK3326 Provisioner · 2026-11-02 · about
 [SandBox_RK3326_Provisioner](https://github.com/ruderigo/SandBox_RK3326_Provisioner) v0.2.0
 
@@ -36,16 +45,33 @@ interface, and nothing else changes for you.
 one typing into rnodeconf and no internet:
 
 - the RNode firmware build the CAM's Heltec runs, as a release asset with its
-  SHA-256 (GPL-3: we ship it with its licence and source link), and its
-  flash layout (files and offsets for `esptool write_flash`);
-- the exact non-interactive steps after flashing: the device provisioning
-  that `--autoinstall` does (EEPROM: product, model, hardware revision,
-  signing), then the settings your route sets: radio (`--freq --bw --txp
-  --sf --cr`), the access code, and its Wi-Fi as a station on the CAM's
-  own network at its fixed address (`-w STATION --ssid … --psk …`).
+  SHA-256, **and the exact source it was built from** (that version's
+  source archive), and its flash layout (files and offsets for
+  `esptool write_flash`);
+- the exact non-interactive `rnodeconf` commands after flashing: the device
+  provisioning that `--autoinstall` does (EEPROM: product, model, hardware
+  revision, signing), then the settings your route sets: radio (`--freq
+  --bw --txp --sf --cr`), the access code, and its Wi-Fi as a station on
+  the CAM's own network at its fixed address (`-w STATION --ssid … --psk …`).
 
 A `provisioner.py --heltec-for-cam PORT --answers FILE.json` mode would do
 just as well; we'd call it.
+
+**Licences, and how we'd keep them apart.** RNode firmware is GPL-3.0;
+`rnodeconf` is part of RNS, under the Reticulum License (MIT's terms plus two
+restrictions: no systems built to harm people, no use in creating AI/ML
+models). The Provisioner is MIT. We keep them as separate programs side by
+side (GPL-3's "aggregate"), as esptool (GPL-2.0) already is:
+
+- the RNode binary ships with **its full source** for that exact version in
+  our release (not only a link), and its GPL-3.0 text;
+- RNS is bundled **as published** (its wheel, its licence), and `rnodeconf`
+  is **run as its own program**: none of its code is copied into ours;
+- each licence sits next to its files (`firmware/licenses/`,
+  `vendor/LICENSES/`).
+
+If you'd rather a different arrangement (e.g. you publish the firmware and
+its source together and we fetch both by SHA-256), tell us.
 
 **Why:** with this the handheld makes the whole CAM bundle, Freenove and
 Heltec, in the field.

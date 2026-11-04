@@ -23,16 +23,21 @@ Stump's Arborist, from the gamepad.
 - **FireFly's keyboard** for the form: real upper and lower case, symbols,
   accents; a USB keyboard types straight in.
 - **The Stump is Team Stump's release, unchanged**: SandBox_Stump_On
-  1.0.0-beta.47's bundle (MicroPython pinned by their build), taken from the
-  release's Arborist page and checked file by file
-  (`scripts/fetch_stump_bundle.py`).
+  1.0.0-beta.48's `Stump-1.0.0-beta.48.bundle` (MicroPython pinned by their
+  build), checked against the release's `SHA256SUMS` and file by file
+  (`scripts/fetch_stump_bundle.py`; older releases from their Arborist page).
+  Bench-tested on 1.0.0-beta.47; beta.48 changes only the release number on
+  the board (`example_node.mpy`).
+- **The Provisioner is MIT** ([LICENSE](LICENSE)); every other part keeps its
+  own licence, shipped side by side (README, Licences).
 - **This handheld's own Stump** shown at the top of the boards (release,
   name, chain).
 - Tests: a whole Stump made from the real bundle on Team Stump's pretend
   board (raw REPL, raw-paste, soft reset), updated, its settings changed,
   checked; every refusal; the form and keyboard through the screens.
-- `docs/REQUEST_TEAM_STUMP.md`: the bundle as its own release file, the
-  Heltec for a CAM offline, the computer wizard answered from a file.
+- `docs/REQUEST_TEAM_STUMP.md`: the bundle as its own release file and the
+  computer wizard answered from a file (both answered in Team Stump's
+  1.0.0-beta.48), the Heltec for a CAM offline (on hold on their side).
 
 ## v0.1.0
 
