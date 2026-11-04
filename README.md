@@ -1,6 +1,6 @@
 # RK3326 Provisioner
 
-Turns an RK3326 handheld (R36MAX, R36S) into a workbench for the boards of
+Turns an RK3326 handheld (R36MAX, R36S and the others, [below](#rk3326-handhelds-and-systems)) into a workbench for the boards of
 the Stump/FireFly mesh: plug an ESP32 board into the hub, it's recognised,
 offered the firmware that fits, flashed and checked, **offline**, from the
 gamepad. It's an EmulationStation **Ports** entry.
@@ -8,12 +8,57 @@ gamepad. It's an EmulationStation **Ports** entry.
 > **Sandbox.** Work in progress; the plan, decisions and next steps are in
 > [docs/PLAN.md](docs/PLAN.md).
 
-| Board | What it can be given (v0.3.0-beta.3) |
+| Board | What it can be given (v0.3.0-beta.8) |
 |---|---|
-| **ESP32-S3 (Freenove CAM)** | **Make a Stump** (Stump 1.0.0-beta.48, offline), update its Stump, its settings, check it starts; **USB Wi-Fi adapter** 0.3.0: the S3 becomes the handheld's Wi-Fi card ([below](#the-s3-as-the-handhelds-wi-fi-card), bench test pending) |
+| **ESP32-S3 (Freenove CAM)** | **Make a Stump** (Official 1.0.0-beta.48 or Sandbox 1.0.0-beta.51, offline), update its Stump, its settings, check it starts; **add the Tavern or rnfs pack** (or any pack's .zip, by + From File); **USB Wi-Fi adapter** 0.3.0: the S3 becomes the handheld's Wi-Fi card ([below](#the-s3-as-the-handhelds-wi-fi-card), bench test pending) |
 | Heltec V3 | *coming*: RNode for a CAM, set for the mesh |
 | Classic ESP32 | WLED 16.0.1 (app slot only), MicroPython 1.29.0 (full install) |
 | Any of them | the serial log (115200); erase the whole flash |
+
+## Official, Sandbox, + From File: the shelf
+
+Everything the Provisioner installs comes from two places, as for every
+project here: the **Official** public repo's newest release, or its
+**Sandbox**'s newest (pre-releases included), or **+ From File**:
+
+| | Official | Sandbox | Onto |
+|---|---|---|---|
+| The Stump | LaBuche-Stump | SandBox_Stump_On | a CAM board (ESP32-S3) |
+| This handheld's Stump | R36MAX-Stump | SandBox_RK3326_Stump | this handheld |
+| FireFly (RK3326) | FireFly_RK3326_R36MAX_R36S | SandBox_FireFly_RK3326 | this handheld |
+| The Provisioner | *(none yet)* | SandBox_RK3326_Provisioner | itself |
+
+**The shelf** holds a copy of each, so all of it works **offline**: the
+Provisioner carries its own (`firmware/shelf/`, filled by
+`scripts/fill_shelf.py`), and what it fetches goes to `provisioner-shelf/` on
+the games card. **When EmulationStation has the handheld on a network** (Wi-Fi,
+a dongle, the S3 adapter), it asks GitHub for the newest of each and says
+what's newer; **X** fetches it onto the shelf, after checking every file
+against the SHA-256 GitHub records for it (and the release's `SHA256SUMS`),
+then reading it for what it is. From then on that version is offline too.
+
+On the boards screen, **This handheld** (last row, first with no board
+plugged in) lists the four, with what's installed, the shelf, and what's
+newer online. Each one's page: Official, Sandbox (**A** installs or uses it,
+**X** gets the newest online), **+ From File** (a `.bundle`, `.tar.gz` or
+`.zip` from a card or USB drive).
+
+- **The Stump**: A chooses what the boards get (Official by default); a CAM
+  board's page also has it as its first row (◀ ▶ switches).
+- **This handheld's Stump**: Install (a form: its name, its Wi-Fi's name,
+  storage, the chain and its secret, the Heltec, the Tavern and rnfs packs),
+  or, once it's there, Update (everything kept; Y: new answers), and Check.
+  It runs R36MAX-Stump's installer with the answers (v2.3.0-r36max or newer
+  can take them), which runs Team Stump's own wizard. A clone in
+  `~/SandBox_RK3326_Stump` or `~/R36MAX-Stump` is offered too. The first
+  install needs internet.
+- **FireFly**: its own installer; an update keeps its identity, contacts,
+  messages and settings. The first install needs internet.
+- **The Provisioner**: its own `install.sh` over this one, which is kept:
+  **Go back** swaps them. Close it and open it again from Ports after.
+
+ArkOS / dArkOS for the handheld's Stump and FireFly (they install with apt,
+as `ark`); the Provisioner and the CAM's Stump anywhere.
 
 ## Making a Stump
 
@@ -30,9 +75,11 @@ writes its settings and restarts it. Join its Wi-Fi from a phone.
 **Its settings** reads, changes and saves them (as `/admin` does); **Check
 it starts** restarts it and listens.
 
-The Stump on the handheld is Team Stump's release, as they published it
-(`firmware/stump/`: their release's `Stump-<release>.bundle`, checked against
-its `SHA256SUMS` and file by file). A newer one: `python3 scripts/fetch_stump_bundle.py v<release>`.
+The Stump the boards get is Team Stump's release, as they published it (their
+`Stump-<release>.bundle`, from the shelf: Official or Sandbox, checked against
+GitHub's SHA-256, the release's `SHA256SUMS` and file by file). Newer ones come
+online from the handheld (This handheld → The Stump → X), or here with
+`python3 scripts/fill_shelf.py`.
 
 ## The S3 as the handheld's Wi-Fi card
 
@@ -45,6 +92,24 @@ FireFly's keyboard (START joins). Y forgets a network. The S3 remembers up to
 as with a Wi-Fi dongle: its own address there, SSH, FireFly, its Stump's portal.
 How it works, its limits and the bench test: [s3_usb_wifi/README.md](s3_usb_wifi/README.md).
 
+## RK3326 handhelds and systems
+
+| | |
+|---|---|
+| Screens | 720x720 (R36MAX, R36Pro, K36) and 854x480 (OGS, RGB10 Max) drawn 1:1; 640x480 (R36S, R33S, R35S, RG351V/MP, RGB20S, RGB10X, XU10, Chi) and 480x320 (OGA, RK2020, RGB10, RG351P/M) a little scaled, never below 0.8 so it stays readable; 1024x768 too. A panel mounted sideways is turned (the device tree's `rotation`, else 270°; `PROVISIONER_ROTATE=0/90/180/270` to change it) |
+| Buttons | EmulationStation's own mapping (`es_input.cfg`), so A is ES's A on every pad; else a table per pad (the RG351's OSH pad, the XU10's swapped A/B). Check over SSH: `python3 -m provisioner controls` |
+| ArkOS, dArkOS, stock R36S | as `ark` (sudo once); `~/rk3326_provisioner`, `/roms/ports` and `/roms2/ports`, KMSDRM |
+| AmberELEC | as root; `/storage/rk3326_provisioner`, `/storage/roms/ports`, udev rules in `/storage/.config`, KMSDRM |
+| ROCKNIX | as root; same paths as AmberELEC; EmulationStation runs under sway, so the launcher uses Wayland first |
+| Python | 3.6 or newer (ArkOS has 3.7, ROCKNIX 3.14); any SDL2 from 2.0 on |
+| USB-serial | CDC-ACM (ESP32-S3/C3 native USB, CH343/CH9102) works on all of them. ArkOS, dArkOS and AmberELEC also have CP210x, FTDI and PL2303, **none has the CH340's driver** (ch341), and ROCKNIX has no USB-serial driver but CDC-ACM. A board the system can't talk to is named on the boards screen with the driver it lacks |
+
+Bench-tested on the R36MAX. The other screens, systems and pads are
+laid out, tested in CI (every size above, both install layouts, the button
+tables) and built from those systems' sources, but not yet run on the
+devices themselves: their `provisioner.log` (in the app's folder) says what
+screen, driver and buttons it found.
+
 ## Install on the handheld
 
 With the handheld online once (to get this repo), or with a release
@@ -53,6 +118,8 @@ unpacked on it:
 ```sh
 ssh -t ark@r36max.local 'git clone https://github.com/ruderigo/SandBox_RK3326_Provisioner.git ~/SandBox_RK3326_Provisioner && bash ~/SandBox_RK3326_Provisioner/install.sh'
 ```
+
+On AmberELEC or ROCKNIX, the same as `root@` (the folder lands in `/storage`).
 
 From a release instead (no internet on the handheld): copy
 `RK3326-Provisioner-<version>.tar.gz` over, then
@@ -72,7 +139,9 @@ EmulationStation if it isn't listed).
 | A form | ↑↓ · A type (the keyboard) or next choice · ←→ choice · B back |
 | Asking | ←→ No / Yes · A accept · B cancel. Erasing defaults to **No** |
 | Flashing | progress, esptool's lines, then *written and verified* or what to do |
-| Anywhere | SELECT+START closes it |
+| + From File | ↑↓ · A open a folder / choose the file (asks first) · B up · Y every file or just .bin/.zip · ←→ page |
+| Serial log | A pause / resume · paused: ↑↓ line, ←→ page, X block, Y export (the block, or all) · running: Y export, X clear · B back |
+| Anywhere | SELECT+START closes it (A, B, ... are EmulationStation's) |
 
 A port another program has open (the Stump's Heltec, its radio) is marked
 *in use* and asks before anything touches it. A board that doesn't answer:
@@ -105,7 +174,7 @@ buttons without a screen (SDL's dummy driver; screenshots with
 | `provisioner/` | the app (boards, catalogue, flashing, serial log, screens) |
 | `vendor/` | esptool 4.8.1 (GPL-2.0), pyserial (BSD-3), intelhex (BSD): run as they are; licences in `vendor/LICENSES/` |
 | `firmware/` | the catalogue; WLED 16.0.1 (EUPL-1.2) and MicroPython 1.29.0 (MIT), official builds, licences in `firmware/licenses/` |
-| `firmware/stump/` | the Stump bundle from SandBox_Stump_On's release (MIT; MicroPython MIT), with where it came from |
+| `firmware/shelf/` | the shelf it carries: the Stump (Official and Sandbox bundles and packs; MIT, MicroPython MIT), R36MAX-Stump, FireFly; each with where it came from (`meta.json`) |
 | `firmware/s3_usb_wifi/` | the S3 USB Wi-Fi adapter's image, built from `s3_usb_wifi/` (the CI checks it's that source's) |
 | `s3_usb_wifi/` | that firmware's source (ESP-IDF v5.3; esp_tinyusb Apache-2.0 and TinyUSB MIT vendored), its tests and build |
 | `tests/stump_fixtures/` | Team Stump's pretend board and four Stump modules, for the tests (MIT, credited) |
@@ -124,7 +193,9 @@ ESP-IDF's Apache-2.0 and MIT parts, which allow that):
 |---|---|---|
 | esptool, pyserial, intelhex | GPL-2.0, BSD-3, BSD | run as their own program / imported as published (`vendor/LICENSES/`) |
 | WLED, MicroPython | EUPL-1.2, MIT | images written to boards (`firmware/licenses/`) |
-| The Stump bundle, test fixtures | MIT (Team Stump) | copied to boards / used by the tests |
+| The Stump bundles and their packs (Tavern, rnfs), test fixtures | MIT (Team Stump) | copied to boards / used by the tests (`firmware/shelf/stump/`) |
+| FireFly RK3326 | MIT (Team FireFly) | its release zip, installed by its own installer (`firmware/shelf/firefly/`) |
+| R36MAX-Stump (the handheld's Stump) | ours, no licence file yet | its release tarball, run by its own installer (`firmware/shelf/handheld/`) |
 | The S3 USB Wi-Fi image | MIT (ours), built on ESP-IDF (Apache-2.0, lwIP BSD-3, FreeRTOS MIT), esp_tinyusb (Apache-2.0), TinyUSB (MIT) | an image written to boards; licences in `firmware/licenses/` (`S3-USB-WiFi-NOTICE.txt`), source in `s3_usb_wifi/` |
 | *Coming:* RNode firmware | GPL-3.0 | an image written to the Heltec, shipped with **its full source** for that version |
 | *Coming:* RNS (`rnodeconf`) | Reticulum License (MIT terms + no systems built to harm people, no use in creating AI/ML models) | bundled as published, run as its own program |

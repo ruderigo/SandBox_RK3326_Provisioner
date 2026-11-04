@@ -89,4 +89,4 @@ chain) and should install or update it from the gamepad too. R36MAX-Stump's
 ## Not asked
 
 Nothing in the firmware changes. We follow your releases: a new bundle is
-`python3 scripts/fetch_stump_bundle.py v<release>` here, then our tests.
+`python3 scripts/fill_shelf.py` here (or the handheld fetches it), then our tests.

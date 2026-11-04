@@ -10,6 +10,156 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.10
+
+- **One password, as Team Stump means it, reaching /admin.** Their Stump
+  takes the fserv operator password for /admin too, unless a separate
+  `AUTH_ADMIN_PASSWORD` is set (stumpid's `check_admin_password`). Their
+  computer wizard asks it, but leaves `AUTH_ADMIN_PASSWORD` as
+  SandBox_Stump_On's `config.py` has it (not blank) unless "Change any of
+  those now?" gets a yes: on the handheld, /admin took that one instead (found
+  on the bench). Now:
+  - the handheld's form asks for **its password** (needed: /admin and the
+    fserv bot) and, optionally, **a separate /admin password**; the answers
+    say yes to "Change any of those now?" and give /admin's (blank), so the
+    wizard writes it instead of leaving the repo's;
+  - after any install, a repo `AUTH_ADMIN_PASSWORD` left in place is
+    cleared, so /admin takes its password;
+  - its page has **Its password** and **A separate /admin password**: typed
+    twice, set with the Stump's own `settings.write_config` (as /admin does;
+    `config.py.bak` kept), then the Stump restarts. It says in red when
+    /admin's password isn't its own;
+  - installing again resends its passwords (the wizard rebuilds `config.py`).
+- **The CAM's form**: **its password** (/admin and the fserv bot; the
+  fserv operator's, which was missing) and an optional separate /admin one.
+- Tests: through Team Stump's real wizard (new, again, update: /admin takes
+  its password), a repo one cleared, setting one by stdin, the pages, the
+  CAM's form.
+
+## v0.3.0-beta.9
+
+- **install.sh stops on anything that isn't the handheld, before touching
+  anything**: not Linux (a Mac), or no `roms/ports` folder. Run on a Mac,
+  beta.8 copied the app into the home folder and a udev rule into
+  `/etc/udev/rules.d` before saying it wasn't the handheld. It now says how
+  to run it on the handheld (over SSH) and that nothing was changed.
+
+## v0.3.0-beta.8
+
+- **Official, Sandbox, + From File, for everything it installs**, as every
+  project here has them: the Stump for CAM boards (LaBuche-Stump /
+  SandBox_Stump_On), this handheld's Stump (R36MAX-Stump /
+  SandBox_RK3326_Stump), FireFly RK3326 (FireFly_RK3326_R36MAX_R36S /
+  SandBox_FireFly_RK3326) and the Provisioner itself (its sandbox; no
+  official repo yet).
+- **The shelf**: an offline copy of each, carried by the Provisioner
+  (`firmware/shelf/`: Stump 1.0.0-beta.48 and 1.0.0-beta.51 with their
+  packs, R36MAX-Stump 2.0.0-r36max, FireFly 0.8.1 from both). When
+  EmulationStation has a network, it asks GitHub for the newest of each,
+  shows what's newer, and X takes it onto the shelf (`provisioner-shelf/` on
+  the games card): every file checked against GitHub's SHA-256 for it and
+  the release's SHA256SUMS, then read for what it is. Offline from then on.
+- **This handheld** (the boards screen's last row) lists the four: what's
+  installed, the shelf, what's newer online; each one's page installs from
+  Official, Sandbox or a file.
+- **The CAM's Stump**: Official (1.0.0-beta.48) by default, Sandbox
+  (1.0.0-beta.51) or a `.bundle` file; a CAM board's page has the choice as
+  its first row (◀ ▶). It was SandBox_Stump_On 1.0.0-beta.50 until now.
+- **FireFly** installs and updates from here (its own installer).
+- **The Provisioner updates itself** (its own install.sh), keeping the one
+  before: Go back swaps them.
+- **This handheld's Stump** installs from either release, a tarball or a
+  clone, Update keeping everything (Y: new answers).
+- Tests: the shelf with a pretend GitHub (the newest release with its file,
+  a file changed on the way or with no SHA-256 refused, SHA256SUMS
+  checked), what files are, the installers (FireFly's, the Provisioner's
+  own with going back), the pages.
+- `scripts/fill_shelf.py` fills the built-in shelf (it replaces
+  `fetch_stump_bundle.py`).
+
+## v0.3.0-beta.7
+
+- **This handheld's Stump, from the gamepad.** On ArkOS / dArkOS the boards
+  screen has a row for the handheld's own Stump (what it runs, or *None
+  yet*). Its page installs one (a form: its name, its Wi-Fi's name, storage,
+  the chain and its secret, the Heltec, the Tavern and rnfs packs), updates
+  it (everything kept), or checks it answers. It runs R36MAX-Stump's
+  installer, `handheld/install.sh --answers FILE.json` (SandBox_RK3326_Stump
+  v2.3.0-r36max on), which hands the answers to Team Stump's own wizard
+  (`provisioner.py --pc --answers`, 1.0.0-beta.48 on); the installer's
+  steps and lines show as it goes. The answers file lives only while it
+  runs (it can hold the chain's secret). The first install needs internet;
+  an older installer, or root (AmberELEC, ROCKNIX), is said plainly.
+- Tests: the answers through Team Stump's real wizard (a new chain member
+  with Tavern, the same Stump again with new answers, an update that keeps
+  them), a pretend installer (steps, its stop message, the file gone), and
+  the screens from the boards row to the result.
+
+## v0.3.0-beta.6
+
+- **Every RK3326 handheld's screen.** The layout takes the screen's shape
+  instead of scaling a 720x720 square: 640x480 (R36S and co.) is drawn on a
+  720x540 canvas, 854x480 (OGS, RGB10 Max) 1:1, 480x320 (OGA, RK2020,
+  RG351P/M) on 600x400, so the type stays readable everywhere. Lists show as
+  many rows as fit; the confirm box, the keyboard and the hints fit short
+  screens. A sideways panel (OGA, OGS, RGB10 Max, XU Mini M on systems
+  that don't turn it) is turned. The canvas is scaled in one go (no seams).
+- **Buttons from EmulationStation.** Its `es_input.cfg` decides which button
+  is A, B, the D-pad, L/R, SELECT, START (SDL's numbering turned back into
+  the pad's codes); else a table per pad: the RG351's OSH pad (its Y is
+  another pad's L1, its D-pad a hat), the XU10 / XU Mini M (A and B
+  swapped), the common one. Sticks and hats work. `python3 -m provisioner
+  controls` shows what it found and what each press means.
+- **ArkOS, dArkOS, AmberELEC, ROCKNIX.** install.sh runs as root too (their
+  only user), puts the app in `/storage` and the udev rule in
+  `/storage/.config/udev.rules.d` on the read-only systems, the Ports entry
+  in `/storage/roms/ports` (once, even through the `/roms` link), and writes
+  the app's path into the launcher. The launcher finds a Wayland compositor
+  (ROCKNIX's sway) and uses it first, then KMSDRM.
+- **A board with no driver is named.** A CH340 board on ArkOS (no ch341
+  driver on any RK3326 system), any non-CDC chip on ROCKNIX: the boards
+  screen says which chip and which driver is missing, instead of nothing.
+- Checked for Python 3.6 and newer (vermin, in CI); only SDL 2.0.0
+  functions.
+- The log records the screen, canvas, rotation, display driver and where
+  the buttons came from.
+
+## v0.3.0-beta.5
+
+- **+ From File.** A new row on every board: a file browser over the games
+  card(s), the home folder and USB drives (folders, then `.bin` and `.zip`
+  files; Y shows every file). A `.bin` is read for what it is before
+  anything is written: a full image (bootloader, partition table, app; at
+  0x0, or 0x1000 for a classic ESP32 image starting with its bootloader) or
+  an app image (to the app slot, the board's settings kept). It's refused if
+  it isn't ESP firmware, is built for another chip, or needs more flash than
+  the board has. A pack's `.zip` goes onto a Stump.
+- **Stump packs: Tavern and rnfs.** Team Stump's packs from 1.0.0-beta.50
+  ship with the Provisioner (checked against that release's SHA256SUMS) and
+  have their own rows on an S3: *Add the Tavern pack 1.1*, *Add the Rnfs
+  pack 1.1*. Installed the way Arborist does it: every file checked against
+  the pack's hashes first (one that doesn't match refuses the whole pack),
+  plugins to the board's flash, `tools/` and `home/` to its SD card, the
+  theme into `themes.json`, the Stump's settings kept. A file over 1 MB for
+  the card is listed to copy by card reader. Any other pack: + From File.
+- **The Stump bundle is 1.0.0-beta.50** (was beta.48).
+- The confirm box fits its text (smaller type when it's long); it used to
+  run under its buttons.
+- Tests: the screen tests' runner now fails when a test fails (it always
+  passed), with tests for + From File, a bin's kind, both packs and a
+  changed pack.
+
+## v0.3.0-beta.4
+
+- **The serial log: pause, look, export.** Paused, a cursor line moves with
+  the D-pad (←→ or L/R a page), a scrollbar shows where it is in the log, and
+  a line too long for the screen is spelled out in full below it. X marks a
+  block from the cursor, Y exports it (or everything) to a text file, each
+  line with the time it arrived: `provisioner-logs/` on the games partition
+  (`/roms`, by card reader or SSH), else in the home folder. Running, Y
+  exports everything. The log keeps reading while the screen is paused
+  (it used to drop what came in), up to 5000 lines.
+
 ## v0.3.0-beta.3
 
 - **USB Wi-Fi adapter 0.3.0: the handheld is on the Wi-Fi itself.** The S3

@@ -1,0 +1,13 @@
+{
+ "channel": "official",
+ "fetched": "2026-11-03 16:16",
+ "files": {
+  "Stump-1.0.0-beta.48.bundle": "474c5ceb8a74d6942fab252695034f1b99fe68ab667d35b2ce6f83548a205a4f",
+  "rnfs-pack-1.1.zip": "4e8d95c5d8caf7802b80304ddd784b0536017d9219fa4e1bd3ba515f34cd91c1",
+  "tavern-pack-1.1.zip": "baad2a77d6ea3237c49212bc0d88406ef29683ae32178bced7872e88249d94e6"
+ },
+ "product": "stump",
+ "repo": "ruderigo/LaBuche-Stump",
+ "tag": "v1.0.0-beta.48",
+ "version": "1.0.0-beta.48"
+}

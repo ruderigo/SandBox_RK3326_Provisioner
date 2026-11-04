@@ -1,0 +1,11 @@
+{
+ "channel": "official",
+ "fetched": "2026-11-03 16:15",
+ "files": {
+  "FireFly-RK3326-0.8.1.zip": "3e7f726ad5ddc2ae3e085c758b2f3223dd5dc47d25cbe9c48cc955fc70b2317a"
+ },
+ "product": "firefly",
+ "repo": "ruderigo/FireFly_RK3326_R36MAX_R36S",
+ "tag": "v0.8.1",
+ "version": "0.8.1"
+}

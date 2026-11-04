@@ -62,9 +62,11 @@ Making a Stump is the Provisioner's main job (2026-11-02): it comes first.
       Provisioner fetches that upstream release and its source itself (GPL-3,
       side by side, full source shipped), bundles RNS as published and runs
       `rnodeconf` as its own program
-- [ ] **v0.3.0: this handheld's Stump, installed or updated from the
-      gamepad**: possible now: Team Stump's `provisioner.py --pc --answers
-      FILE.json` (beta.48) runs their wizard from a form's answers
+- [x] **This handheld's Stump, installed or updated from the gamepad**
+      (0.3.0-beta.7): a form, then SandBox_RK3326_Stump's `install.sh
+      --answers` (v2.3.0-r36max), which runs Team Stump's `provisioner.py
+      --pc --answers` (beta.48); checked against their real wizard in CI.
+      Bench: install, update, check on the R36MAX
 - [x] **The S3 USB Wi-Fi adapter firmware** (`s3_usb_wifi/`): ESP-IDF
       5.3, esp_tinyusb, CDC-NCM, NAT, our own DHCP; in the catalogue.
       **2026-11-03: it's the handheld's Wi-Fi card**, not the memo's
@@ -77,8 +79,23 @@ Making a Stump is the Provisioner's main job (2026-11-02): it comes first.
       keyboard, forget; tested against a pretend S3 (`tests/fake_s3.py`).
       **Bench test pending** (below)
 - [ ] The adapter's ECM build (the memo's fallback), if a handheld lacks `cdc_ncm`
-- [ ] Your own images: `.bin` files in `/roms/ESP32-Firmware/` (app only)
-- [ ] 640x480 layout tuned for the R36S (it's scaled for now)
+- [x] **+ From File** (0.3.0-beta.5): any `.bin` (full or app image, read
+      from its bytes) or a pack's `.zip`, from the card, home or a USB drive
+- [x] **Packs** (0.3.0-beta.5): Tavern and rnfs from Stump 1.0.0-beta.50,
+      installed as Arborist does
+- [x] **Every RK3326 handheld** (0.3.0-beta.6): controls from ES's
+      `es_input.cfg` (per-pad tables as the fallback), layouts for 480x320,
+      640x480, 720x720, 854x480, 1024x768 (rotated panels too), launcher and
+      installer for ArkOS, dArkOS, AmberELEC, ROCKNIX (Wayland there)
+- [x] **Official / Sandbox / + From File for everything** (0.3.0-beta.8):
+      the shelf (offline copies, updated online), the CAM's Stump, the
+      handheld's Stump, FireFly, the Provisioner itself (with Go back)
+- [ ] An official repo for the Provisioner (low priority)
+- [ ] FireFly Android from here (another sprint)
+- [ ] Run it on another RK3326 (R36S, an OGA-class 480x320, ROCKNIX) and
+      check the rotation direction on a sideways panel
+- [ ] CH340 boards: no RK3326 system has ch341; a userspace driver (libusb)
+      would be the way, if wanted
 - [x] The bundle from its own release file (Team Stump's beta.48)
 
 ## Bench (on the R36MAX)

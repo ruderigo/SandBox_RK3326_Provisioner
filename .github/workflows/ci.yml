@@ -16,9 +16,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Packages
-        run: sudo apt-get update -q && sudo apt-get install -y -q libsdl2-2.0-0 shellcheck pyflakes3
+        run: sudo apt-get update -q && sudo apt-get install -y -q libsdl2-2.0-0 shellcheck pyflakes3 && pipx install -q vermin
+      - name: Team Stump's SandBox_Stump_On (the handheld's Stump's wizard, for its answers)
+        uses: actions/checkout@v4
+        with:
+          repository: ruderigo/SandBox_Stump_On
+          path: SandBox_Stump_On
       - name: run_tests.sh
-        run: bash tests/run_tests.sh
+        run: STUMP_ON="$PWD/SandBox_Stump_On" bash tests/run_tests.sh
       - name: Screenshots
         if: always()
         run: mkdir -p shots && SHOTS=shots python3 tests/test_ui.py
@@ -137,5 +142,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A beta (v0.3.0-beta.7) is a pre-release: the Provisioner offers it as "Sandbox".
+          PRE=""; case "$GITHUB_REF_NAME" in *-*) PRE="--prerelease" ;; esac
           gh release create "$GITHUB_REF_NAME" dist/RK3326-Provisioner-*.tar.gz dist/SHA256SUMS \
-            --title "RK3326 Provisioner $GITHUB_REF_NAME" --notes-file dist/RELEASE_NOTES.md --verify-tag
+            --title "RK3326 Provisioner $GITHUB_REF_NAME" --notes-file dist/RELEASE_NOTES.md --verify-tag $PRE

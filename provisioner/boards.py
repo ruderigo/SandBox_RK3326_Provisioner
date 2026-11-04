@@ -23,6 +23,14 @@ USB_SERIAL = {
     "067b:2303": "PL2303 USB-serial",
 }
 
+# The Linux driver each chip's serial port needs. ROCKNIX's RK3326 kernel
+# has none of these but cdc_acm; ArkOS, dArkOS and AmberELEC have all but
+# ch341 (the CH340's).
+DRIVERS = {"10c4:ea60": "cp210x", "1a86:7523": "ch341", "1a86:5523": "ch341",
+           "0403:6001": "ftdi_sio", "0403:6015": "ftdi_sio", "0403:6010": "ftdi_sio", "067b:2303": "pl2303",
+           "1a86:55d3": "cdc_acm", "1a86:55d4": "cdc_acm"}
+NAMES = {"1a86:5523": "CH341 USB-serial", "0403:6010": "FTDI USB-serial"}
+
 # Boards, by (chip, USB id). The first match wins; None matches any.
 BOARDS = [
     {"id": "heltec_v3", "name": "Heltec V3 (LoRa)", "chip": "esp32s3", "usb": ("10c4:ea60",)},
@@ -149,4 +157,26 @@ def by_id_links(by_id="/dev/serial/by-id"):
     out = {}
     for p in glob.glob(os.path.join(by_id, "*")):
         out[os.path.realpath(p)] = os.path.basename(p)
+    return out
+
+
+def unbound(sys_usb="/sys/bus/usb/devices"):
+    """[{usb, usb_chip, driver}] of USB-serial chips plugged in that no
+    driver took (no serial port for them): this system lacks their driver."""
+    out = []
+    try:
+        names = sorted(os.listdir(sys_usb))
+    except OSError:
+        return out
+    for n in names:
+        if ":" in n:                    # an interface, not a device
+            continue
+        d = os.path.join(sys_usb, n)
+        usb = "%s:%s" % (_read(os.path.join(d, "idVendor")).lower(), _read(os.path.join(d, "idProduct")).lower())
+        if usb not in DRIVERS:
+            continue
+        ifaces = [os.path.join(d, i) for i in os.listdir(d) if i.startswith(n + ":")] if os.path.isdir(d) else []
+        if ifaces and not any(os.path.lexists(os.path.join(i, "driver")) for i in ifaces):
+            out.append({"usb": usb, "usb_chip": USB_SERIAL.get(usb) or NAMES.get(usb, "USB-serial"),
+                        "driver": DRIVERS[usb]})
     return out
