@@ -18,7 +18,7 @@ STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/$NAME"
 (cd "$ROOT" && git ls-files -co --exclude-standard) | while IFS= read -r f; do
-  case "$f" in dist/*|tests/*|.github/*) continue ;; esac
+  case "$f" in dist/*|tests/*|.github/*|s3_usb_wifi/*) continue ;; esac  # the firmware's source stays in the repo; its image is in firmware/
   mkdir -p "$STAGE/$NAME/$(dirname "$f")"
   cp -p "$ROOT/$f" "$STAGE/$NAME/$f"
 done

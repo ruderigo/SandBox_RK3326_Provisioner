@@ -167,8 +167,11 @@ def flash(port, entry, board, on_line=None, on_step=None, on_progress=None):
             return False, why[0].upper() + why[1:]
     step("Writing %s" % entry["title"])
     prog(0)
-    args = ["--chip", chip, "--port", port, "--baud", str(BAUD), "write_flash", "--flash_mode", "keep",
-            "--flash_size", "keep", entry["offset"], entry["path"]]
+    # --after no_reset: the new firmware mustn't start before the read-back, or
+    # it writes its settings (NVS, inside a full image's range) and the
+    # read-back differs; verify_flash resets it into its download mode, then runs it.
+    args = ["--chip", chip, "--port", port, "--baud", str(BAUD), "--after", "no_reset", "write_flash",
+            "--flash_mode", "keep", "--flash_size", "keep", entry["offset"], entry["path"]]
     ok, out = run(args, lines, timeout=600)
     if not ok and BAUD != SLOW_BAUD:
         step("Writing again, slower")
@@ -199,8 +202,8 @@ def write_image(port, chip, path, offset="0x0", on_line=None, on_progress=None):
     ok, out = run(["--chip", chip, "--port", port, "--baud", str(BAUD), "erase_flash"], lines, timeout=180)
     if not ok:
         return False, explain(out)
-    args = ["--chip", chip, "--port", port, "--baud", str(BAUD), "write_flash", "--flash_mode", "keep",
-            "--flash_size", "keep", offset, path]
+    args = ["--chip", chip, "--port", port, "--baud", str(BAUD), "--after", "no_reset", "write_flash",
+            "--flash_mode", "keep", "--flash_size", "keep", offset, path]   # see flash()
     ok, out = run(args, lines, timeout=600)
     if not ok and BAUD != SLOW_BAUD:
         ok, out = run(args[:5] + [str(SLOW_BAUD)] + args[6:], lines, timeout=900)

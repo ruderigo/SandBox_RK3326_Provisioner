@@ -1,0 +1,18 @@
+FireFly S3 USB Wi-Fi (firmware/s3_usb_wifi/s3-usb-wifi-<version>.bin)
+
+The firmware's own code (s3_usb_wifi/main/ in this repository) is MIT, as is
+the rest of the RK3326 Provisioner (LICENSE at the top of the repository).
+Its full source, and the exact sources of everything below that is built
+into the image, are in s3_usb_wifi/ (vendored components) and in ESP-IDF
+v5.3.2 (https://github.com/espressif/esp-idf/tree/v5.3.2).
+
+Built into the image, each under its own licence:
+
+- ESP-IDF v5.3.2, Espressif Systems: Apache-2.0 (Apache-2.0.txt), including
+  Espressif's Wi-Fi and PHY libraries (Apache-2.0) and mbedTLS (Apache-2.0)
+- lwIP (in ESP-IDF): BSD-3-Clause (lwIP-LICENSE.txt)
+- FreeRTOS kernel (in ESP-IDF): MIT (FreeRTOS-LICENSE.txt)
+- esp_tinyusb 3.0.0, Espressif Systems: Apache-2.0 (Apache-2.0.txt),
+  from https://github.com/espressif/esp-usb commit 6a577e5c946edefdcefc45af94ded4e5f2f5ed0f
+- TinyUSB, Ha Thach (tinyusb.org): MIT (TinyUSB-LICENSE.txt),
+  commit 894ea01409e0407a7dbe0ee29b2d58a4691f9046

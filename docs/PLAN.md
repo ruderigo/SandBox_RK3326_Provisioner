@@ -20,7 +20,7 @@ command line) since it costs nothing extra.
 
 | | |
 |---|---|
-| Repo | this one, SandBox_RK3326_Provisioner; the S3 adapter firmware in its own repo (ESP-IDF, its own CI) |
+| Repo | this one, SandBox_RK3326_Provisioner; the S3 adapter firmware in `s3_usb_wifi/` here (ESP-IDF, its own CI jobs), kept in this sandbox rather than a repo of its own |
 | First version | S3 adapter + Heltec RNode + the classic-ESP32 catalogue; the full CAM Stump later (Arborist covers it from a computer) |
 | Where | the handheld first; a computer gets the same app for free |
 | Not carried over | the flasher's *SIGINT ESP32 Link* image (scans nearby Wi-Fi/BLE devices and reads them: device tracking, out of scope; prebuilt, no source). Its `app.py` code is not reused (no licence in the fork): only its approach, and the upstream libraries it bundles (esptool GPL-2, pyserial BSD, intelhex BSD) with their licences |
@@ -62,14 +62,40 @@ Making a Stump is the Provisioner's main job (2026-11-02): it comes first.
       Provisioner fetches that upstream release and its source itself (GPL-3,
       side by side, full source shipped), bundles RNS as published and runs
       `rnodeconf` as its own program
-- [ ] **v0.3.0: this handheld's Stump, installed or updated from the
-      gamepad**: possible now: Team Stump's `provisioner.py --pc --answers
-      FILE.json` (beta.48) runs their wizard from a form's answers
-- [ ] The S3 USB Wi-Fi adapter firmware (its own repo): ESP-IDF, on
-      Espressif's esp-iot-bridge (Apache-2.0): CDC-NCM (ECM fallback), NAT,
-      DHCP with option 121 and no router/DNS, the setup AP, `status.json`
-- [ ] Your own images: `.bin` files in `/roms/ESP32-Firmware/` (app only)
-- [ ] 640x480 layout tuned for the R36S (it's scaled for now)
+- [x] **This handheld's Stump, installed or updated from the gamepad**
+      (0.3.0-beta.7): a form, then SandBox_RK3326_Stump's `install.sh
+      --answers` (v2.3.0-r36max), which runs Team Stump's `provisioner.py
+      --pc --answers` (beta.48); checked against their real wizard in CI.
+      Bench: install, update, check on the R36MAX
+- [x] **The S3 USB Wi-Fi adapter firmware** (`s3_usb_wifi/`): ESP-IDF
+      5.3, esp_tinyusb, CDC-NCM, NAT, our own DHCP; in the catalogue.
+      **2026-11-03: it's the handheld's Wi-Fi card**, not the memo's
+      Stump-only link: 0.2.x as a router (the handheld hidden behind it),
+      **0.3.0 as a bridge** (the handheld on the Wi-Fi itself), up to 8
+      saved networks, a control port on the same cable
+      (`docs/NOTE_TEAM_FIREFLY.md` tells Team FireFly)
+- [x] **The Provisioner's S3 USB Wi-Fi page**: the adapter shown on the
+      boards screen; its networks, join with a password on FireFly's
+      keyboard, forget; tested against a pretend S3 (`tests/fake_s3.py`).
+      **Bench test pending** (below)
+- [ ] The adapter's ECM build (the memo's fallback), if a handheld lacks `cdc_ncm`
+- [x] **+ From File** (0.3.0-beta.5): any `.bin` (full or app image, read
+      from its bytes) or a pack's `.zip`, from the card, home or a USB drive
+- [x] **Packs** (0.3.0-beta.5): Tavern and rnfs from Stump 1.0.0-beta.50,
+      installed as Arborist does
+- [x] **Every RK3326 handheld** (0.3.0-beta.6): controls from ES's
+      `es_input.cfg` (per-pad tables as the fallback), layouts for 480x320,
+      640x480, 720x720, 854x480, 1024x768 (rotated panels too), launcher and
+      installer for ArkOS, dArkOS, AmberELEC, ROCKNIX (Wayland there)
+- [x] **Official / Sandbox / + From File for everything** (0.3.0-beta.8):
+      the shelf (offline copies, updated online), the CAM's Stump, the
+      handheld's Stump, FireFly, the Provisioner itself (with Go back)
+- [ ] An official repo for the Provisioner (low priority)
+- [ ] FireFly Android from here (another sprint)
+- [ ] Run it on another RK3326 (R36S, an OGA-class 480x320, ROCKNIX) and
+      check the rotation direction on a sideways panel
+- [ ] CH340 boards: no RK3326 system has ch341; a userspace driver (libusb)
+      would be the way, if wanted
 - [x] The bundle from its own release file (Team Stump's beta.48)
 
 ## Bench (on the R36MAX)
@@ -87,3 +113,23 @@ Making a Stump is the Provisioner's main job (2026-11-02): it comes first.
    **Passed 2026-11-02** (v0.2.0): a CAM made by the handheld, linked to its
    Heltec V3 (set up by Team Stump's Provisioner on a computer), visible to
    visitors, to Android clients and to FireFly on the R36MAX.
+6. **The S3 as the R36MAX's Wi-Fi card** (`s3_usb_wifi/README.md`, *The
+   bench test*): flashed from the Provisioner through the CAM's UART port,
+   then its USB port into the R36MAX: 10.77.0.2/24 within 10 s, `cdc_ncm` in
+   dmesg; the Provisioner's S3 USB Wi-Fi page joins the home Wi-Fi with its
+   password (*internet OK*); default route and DNS 10.77.0.1; a Stump's
+   `/node.json` through it; unplug and replug. Then LoRa, and the setup page
+   from a phone.
+   **2026-11-03, v0.3.0-beta.2 / S3 0.2.1, with the Blueway still in:** `usb0`
+   10.77.0.2/24 by DHCP; the network joined from the Provisioner's page;
+   default route via 10.77.0.1 (metric 100, ahead of `wlan0`'s 600); DNS
+   10.77.0.1 first; `curl --interface usb0 https://example.com`: HTTP/2 200
+   (DNS, NAT and TLS through the S3). Found on the way: 0.2.0's empty MAC
+   string ("bind() failure" in `cdc_ncm`), and the read-back after flashing.
+   ES's network screen doesn't list it (it shows `wlan0` only). Next: without
+   the Blueway (does ES let the scraper and updates run?), replug, LoRa.
+   **Then, with the Blueway out:** no SSH to the handheld, FireFly and the
+   handheld's Stump unreachable (its portal at 10.77.0.2). The S3 was a
+   router: the handheld was hidden behind it. **S3 0.3.0 bridges instead**
+   (v0.3.0-beta.3): the handheld is on the Wi-Fi itself, the page talks to the
+   S3 over the serial port on the same cable. Bench it again from the top.

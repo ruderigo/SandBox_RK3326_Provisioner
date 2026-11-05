@@ -12,7 +12,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.environ["PROVISIONER_ESPTOOL"] = os.path.join(ROOT, "tests", "fake_esptool.py")
-from provisioner import boards, catalog, flasher  # noqa: E402
+from provisioner import boards, catalog, flasher, s3wifi  # noqa: E402
 
 
 def _w(path, text):
@@ -65,6 +65,59 @@ class Detect(unittest.TestCase):
     def test_a_classic_esp32_part_name_is_the_esp32_family(self):
         info = boards.parse_probe("Chip is ESP32-D0WD-V3 (revision v3.1)\nDetected flash size: 4MB\n")
         self.assertEqual((info["chip"], info["chip_text"], info["flash_mb"]), ("esp32", "ESP32-D0WD-V3", 4))
+
+
+class NoDriver(unittest.TestCase):
+    """A CH340 on ArkOS (no ch341 there), a CP2102 on ROCKNIX (no USB serial
+    drivers but cdc_acm): seen, and said why there's no port."""
+
+    def test_a_chip_no_driver_took(self):
+        import tempfile
+        usb = tempfile.mkdtemp(prefix="usb-")
+
+        def dev(name, vid, pid, bound):
+            d = os.path.join(usb, name)
+            os.makedirs(os.path.join(d, name + ":1.0"))
+            for k, v in (("idVendor", vid), ("idProduct", pid)):
+                with open(os.path.join(d, k), "w") as f:
+                    f.write(v + "\n")
+            if bound:
+                os.symlink("/sys/bus/usb/drivers/cp210x", os.path.join(d, name + ":1.0", "driver"))
+        dev("1-1.2", "1a86", "7523", False)          # CH340, no driver
+        dev("1-1.3", "10c4", "ea60", True)           # CP2102, cp210x took it
+        dev("1-1.4", "046d", "c52b", False)          # not a serial chip
+        got = boards.unbound(usb)
+        self.assertEqual(got, [{"usb": "1a86:7523", "usb_chip": "CH340 USB-serial", "driver": "ch341"}])
+        self.assertEqual(boards.unbound("/nonexistent"), [])
+
+
+class TheWifiAdapterFound(unittest.TestCase):
+    def test_its_control_port_by_vendor_and_product(self):
+        ports = [{"port": "/dev/ttyACM0", "usb": "1a86:55d3", "product": "USB Single Serial"},
+                 {"port": "/dev/ttyACM1", "usb": "303a:1001", "product": "USB JTAG/serial debug unit"},
+                 {"port": "/dev/ttyACM2", "usb": "303a:4002", "product": "FireFly S3 USB Wi-Fi"}]
+        self.assertEqual(s3wifi.find(ports), "/dev/ttyACM2")
+        self.assertIsNone(s3wifi.find(ports[:2]))
+        self.assertIsNone(s3wifi.find([{"port": "/dev/ttyUSB0", "usb": "10c4:ea60", "product": "FireFly S3 USB Wi-Fi"}]))
+
+    def test_its_network_interface_from_sysfs(self):
+        d = tempfile.mkdtemp()
+        def iface(name, product):
+            usb = os.path.join(d, "devices", name + "-usb")
+            os.makedirs(os.path.join(usb, "if"))
+            with open(os.path.join(usb, "product"), "w") as f:
+                f.write(product + "\n")
+            os.makedirs(os.path.join(d, "net", name))
+            os.symlink(os.path.join(usb, "if"), os.path.join(d, "net", name, "device"))
+        iface("wlan0", "802.11 n WLAN")
+        iface("usb0", "FireFly S3 USB Wi-Fi")
+        os.makedirs(os.path.join(d, "net", "lo"))          # no device: skipped
+        self.assertEqual(s3wifi.interface(os.path.join(d, "net")), "usb0")
+        self.assertIsNone(s3wifi.interface(os.path.join(d, "nothing")))
+        self.assertIsNone(s3wifi.handheld_address("nosuchif0"))
+
+    def test_bars(self):
+        self.assertEqual([s3wifi.bars(r) for r in (None, -40, -60, -70, -90)], [0, 4, 3, 2, 1])
 
 
 class Catalogue(unittest.TestCase):
@@ -142,6 +195,23 @@ class Flash(unittest.TestCase):
             calls = f.read()
         self.assertLess(calls.index("erase_flash"), calls.index("write_flash"))
         self.assertIn("0x1000 ", calls)
+
+    def test_the_usb_wifi_adapter_erases_then_writes_at_0x0(self):
+        os.environ["FAKE_BOARD"] = "s3"
+        board = {"id": "esp32s3", "chip": "esp32s3", "flash_mb": 8}
+        ok, msg = flasher.flash("/dev/ttyACM0", self.entries["s3-usb-wifi"], board)
+        self.assertTrue(ok, msg)
+        with open(self.calls) as f:
+            calls = f.read()
+        self.assertLess(calls.index("erase_flash"), calls.index("write_flash"))
+        self.assertIn("--chip esp32s3", calls)
+        self.assertIn("keep 0x0 ", calls)
+        self.assertIn("verify_flash 0x0 ", calls)
+        # it mustn't start (and write its NVS) before the read-back; the read-back starts it
+        write = [l for l in calls.splitlines() if "write_flash" in l][0]
+        verify = [l for l in calls.splitlines() if "verify_flash" in l][0]
+        self.assertIn("--after no_reset write_flash", write)
+        self.assertNotIn("no_reset", verify)
 
     def test_full_image_needs_the_flash_it_says(self):
         ok, msg = flasher.flash("/dev/ttyUSB0", self.entries["micropython-1.29.0-esp32"], dict(self.board, flash_mb=2))

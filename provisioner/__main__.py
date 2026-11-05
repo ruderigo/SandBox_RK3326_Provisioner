@@ -4,6 +4,10 @@
     python3 -m provisioner list               the boards on USB, identified
     python3 -m provisioner flash PORT ID      flash a catalogue image (ID from `catalog`)
     python3 -m provisioner catalog            what it can flash
+    python3 -m provisioner controls           the buttons it found, then what each press means (30 s)
+
+PROVISIONER_SCREEN=640x480 opens a window that size (to see another
+handheld's layout); PROVISIONER_ROTATE=0/90/180/270 turns the picture.
 """
 
 import os
@@ -76,13 +80,46 @@ def cmd_flash(port, fid):
     return 0 if ok else 1
 
 
+def cmd_controls(secs=30):
+    from .ui.gamepad import Gamepad
+    pad = Gamepad()
+    for line in pad.describe():
+        print(line)
+    for p in pad.pads:
+        print("  %s: %s" % (p.name, ", ".join("%d=%s" % (c, a) for c, a in sorted(p.keys.items()))))
+    print("Press buttons (SELECT+START or %d s ends it)." % secs)
+    end = time.time() + secs
+    try:
+        while time.time() < end:
+            for act in pad.actions():
+                print(act, flush=True)
+                if act == "quit":
+                    return 0
+            time.sleep(0.02)
+    finally:
+        pad.close()
+    return 0
+
+
+def screen_size():
+    v = os.environ.get("PROVISIONER_SCREEN", "")
+    try:
+        w, h = (int(x) for x in v.lower().split("x"))
+        return (w, h) if w > 0 and h > 0 else None
+    except ValueError:
+        return None
+
+
 def cmd_ui(headless=False, frames=0, script=None, shots=None):
     from .ui.app import App
     from .ui.gamepad import Gamepad
     from .ui.sdl import Display, write_png
-    d = Display(os.path.join(HERE, "assets", "cockpit_font.bin"), headless=headless)
+    d = Display(os.path.join(HERE, "assets", "cockpit_font.bin"), headless=headless, screen=screen_size())
+    print("screen %dx%d, canvas %dx%d, turned %d" % (d.out_size + d.size + (d.rot,)), flush=True)
     app = App(d, version=version())
     pad = Gamepad([]) if headless else Gamepad()
+    for line in pad.describe():
+        print(line, flush=True)
     n = 0
     try:
         while app.running:
@@ -113,6 +150,8 @@ def main(argv):
         return 0
     if argv[:1] == ["list"]:
         return cmd_list()
+    if argv[:1] == ["controls"]:
+        return cmd_controls()
     if argv[:1] == ["catalog"]:
         return cmd_catalog()
     if argv[:1] == ["flash"] and len(argv) == 3:

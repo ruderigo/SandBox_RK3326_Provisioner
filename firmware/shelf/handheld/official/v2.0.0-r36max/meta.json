@@ -1,0 +1,11 @@
+{
+ "channel": "official",
+ "fetched": "2026-11-03 16:15",
+ "files": {
+  "R36MAX-Stump-handheld-2.0.0-r36max.tar.gz": "8714cbf6219faff50ad0ced9ec2dff11449dc6bb0aae9ae50b0b27c033a8227d"
+ },
+ "product": "handheld",
+ "repo": "ruderigo/R36MAX-Stump",
+ "tag": "v2.0.0-r36max",
+ "version": "2.0.0-r36max"
+}

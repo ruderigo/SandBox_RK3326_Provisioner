@@ -22,7 +22,7 @@ lint() {
   local bad=0 f
   for f in install.sh package.sh ports/RK3326_Provisioner.sh tests/run_tests.sh; do bash -n "$f" || bad=1; done
   if command -v shellcheck >/dev/null; then
-    shellcheck -S warning install.sh package.sh ports/RK3326_Provisioner.sh tests/run_tests.sh || bad=1
+    shellcheck -S warning install.sh package.sh ports/RK3326_Provisioner.sh tests/run_tests.sh s3_usb_wifi/build.sh s3_usb_wifi/host_tests/*.sh || bad=1
   else echo "(no shellcheck: syntax only)"; fi
   return "$bad"
 }
@@ -37,6 +37,20 @@ run "python" pyflakes_or_compile
 
 step "Core: detection, catalogue, flashing (fake esptool)"
 run "core" python3 -W error::ResourceWarning tests/test_core.py
+
+step "install.sh on ArkOS/dArkOS and AmberELEC/ROCKNIX layouts (a pretend root)"
+run "install" python3 tests/test_install.py
+
+step "The shelf: Official and Sandbox copies, offline and online; the installers"
+run "shelf" python3 -W error::ResourceWarning tests/test_shelf.py
+
+WIZARD=""; [ -n "${STUMP_ON:-}" ] && WIZARD=" (and Team Stump's own wizard, in $STUMP_ON)"
+step "This handheld's Stump: the installer, its answers$WIZARD"
+run "handheld" python3 -W error::ResourceWarning tests/test_handheld.py
+
+step "Python 3.6 and newer (the oldest on these systems is ArkOS's 3.7)"
+if command -v vermin >/dev/null; then run "python-min" vermin -q --no-tips --violations -t=3.6- provisioner
+else echo "(no vermin: pip install vermin)"; fi
 
 step "Making a Stump (Team Stump's pretend board, the real bundle)"
 run "stump" python3 -W error::ResourceWarning tests/test_stump.py
@@ -59,6 +73,8 @@ fonts = load_fonts("assets/cockpit_font.bin")
 have = set.intersection(*(set(f["glyphs"]) for f in fonts))
 missing = {}
 for path in ("provisioner/ui/app.py", "provisioner/ui/keyboard.py", "provisioner/stump.py", "provisioner/flasher.py",
+             "provisioner/handheld.py", "provisioner/shelf.py", "provisioner/installers.py",
+             "provisioner/s3wifi.py",
              "firmware/catalog.json"):
     src = open(path, encoding="utf-8").read()
     for i, line in enumerate(src.splitlines(), 1):

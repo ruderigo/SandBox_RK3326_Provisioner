@@ -1,0 +1,26 @@
+## IDF Component Manager Manifest File
+description: Espressif's additions to TinyUSB
+documentation: "https://docs.espressif.com/projects/esp-usb/en/latest/esp32p4/usb_device.html"
+version: "3.0.0"
+url: https://github.com/espressif/esp-usb/tree/master/device/esp_tinyusb
+repository: "https://github.com/espressif/esp-usb.git"
+repository_info:
+  path: "device/esp_tinyusb"
+targets:
+  - esp32s2
+  - esp32s3
+  - esp32p4
+  - esp32h4
+  - esp32s31
+dependencies:
+  idf: '>=5.3'
+files:
+  exclude:
+    - "test_apps"
+    - "tinyusb/docs/**/*"
+    - "tinyusb/tools/**/*"
+    - "tinyusb/test/**/*"
+    - "tinyusb/examples/**/*"
+    - "tinyusb/hw/**/*"
+    - "tinyusb/lib/embedded-cli/**/*"
+    - "tinyusb/lib/SEGGER_RTT/**/*"

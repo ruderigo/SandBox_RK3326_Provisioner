@@ -6,7 +6,14 @@ Provisioner's forms: real upper and lower case, symbols, accents.
 
 A USB keyboard types straight into it (Enter OK, Esc cancel, Backspace)."""
 
-from .sdl import F16, F20, F24, F30B, W
+from .sdl import F16, F20, F24, F30B
+
+W = H = 720                     # the canvas (set by the app from the display)
+
+
+def set_canvas(size):
+    global W, H
+    W, H = size
 
 PAGES = [
     ["1234567890", "qwertyuiop", "asdfghjkl'", "zxcvbnm,.?"],
@@ -90,19 +97,22 @@ class Keyboard:
     def draw(self, d, th):
         d.clear(th["BG"])
         d.text(F30B, 14, 8, self.title, th["EMBER"], W - 28)
-        ax, ay, aw, ah = 10, 52, W - 20, 150
+        tall = H >= 600
+        bot = H - 38
+        ax, ay, aw, ah = 10, 52, W - 20, (150 if tall else 66)
         d.stroke_rrect(ax, ay, aw, ah, 8, th["BORDER"], th["PANEL"])
         per = (aw - 20) // d.text_width(F24, "m")
         shown = self.text + "▏"
         lines = [shown[i:i + per] for i in range(0, len(shown), per)] or [""]
-        for i, s in enumerate(lines[-5:]):
+        for i, s in enumerate(lines[-max(1, (ah - 10) // 28):]):
             d.text(F24, ax + 10, ay + 8 + i * 28, s, th["TEXT"], aw - 20)
         d.text(F16, 14, ay + ah + 6, "%s%s" % (PAGE_NAMES[self.page], "  ⇧" if self.shift else ""), th["MUTED"])
         meter = "%d/%d bytes%s" % (len(self.text.encode()), self.max_bytes, " · shown as you type" if self.secret else "")
         d.text(F16, ax + aw - 8 - d.text_width(F16, meter), ay + ah + 6, meter, th["MUTED"])
-        if self.hint:
+        if self.hint and tall:
             d.text(F16, 14, ay + ah + 28, self.hint, th["MUTED"], W - 28)
-        top, kh = 262, 78
+        top = ay + ah + (60 if self.hint and tall else 32)
+        kh = max(26, min(78, (bot - 6 - top) // 5 - 6))
         for r in range(5):
             keys = list(PAGES[self.page][r]) if r < 4 else SPECIALS
             n = len(keys)
@@ -118,13 +128,15 @@ class Keyboard:
                 f = F24 if r < 4 else F20
                 lw = d.text_width(f, label)
                 d.text(f, x + (kw - lw) // 2, y + (kh - d.line(f)) // 2, label, th["BG"] if sel else th["TEXT"])
-        hints = [("A", "type"), ("B", "delete"), ("X", "space"), ("Y", "shift"), ("L/R", "page"), ("START", "OK"),
-                 ("SELECT", "cancel")]
+        hints = [("A", "type"), ("B", "delete"), ("START", "OK"), ("SELECT", "cancel"), ("Y", "shift"),
+                 ("X", "space"), ("L/R", "page")]               # the ones that matter first (a narrow screen)
         x = 10
-        d.fill(0, 682, W, 38, th["PANEL2"])
+        d.fill(0, bot, W, 38, th["PANEL2"])
         for k, lbl in hints:
             kw = d.text_width(F16, k) + 12
-            d.fill_rrect(x, 690, kw, 24, 5, th["BORDER"])
-            d.text(F16, x + 6, 693, k, th["TEXT"])
+            if x + kw + d.text_width(F16, lbl) > W - 6:
+                break
+            d.fill_rrect(x, bot + 8, kw, 24, 5, th["BORDER"])
+            d.text(F16, x + 6, bot + 11, k, th["TEXT"])
             x += kw + 4
-            x += d.text(F16, x, 693, lbl, th["MUTED"]) + 10
+            x += d.text(F16, x, bot + 11, lbl, th["MUTED"]) + 10
