@@ -176,6 +176,7 @@ class App:
         self.marks_fn = installers.marks
         self.app_dir = installers.app_dir()
         self.prod, self.psel, self.prod_back = None, 0, "handheld"
+        self.lib = {"sel": 0, "checked": set()}   # the Library: everything this Provisioner carries
         self.stump_src = None           # the Stump the boards get, if not the shelf's default (Official)
         self.handheld = None
         self.next_handheld = 0.0
@@ -341,6 +342,8 @@ class App:
         row = rows[self.sel] if n else {}
         if act in ("up", "down") and n:
             self.sel = (self.sel + (1 if act == "down" else -1)) % n
+        elif act in ("l", "r") or (act == "y" and not (n and row.get("port"))):
+            self.open_library()                 # Y where it's free; L anywhere (a board's row has X and Y)
         elif row.get("adapter"):
             if act == "a":
                 self.open_wifi()
@@ -480,9 +483,9 @@ class App:
                 self.open_jobs()
             elif getattr(t, "after", "") == "quit" and t.ok:
                 self.handle("quit")                             # a new Provisioner: open it again from Ports
-            elif getattr(t, "after", "") in ("product", "quit"):
+            elif getattr(t, "after", "") in ("product", "quit", "library"):
                 self.next_here = self.next_handheld = 0.0       # look again: it may have changed
-                self.screen = "product"
+                self.screen = "library" if t.after == "library" else "product"
             else:
                 self.screen = "jobs" if self.cur and self.cur["port"] in self.known else "boards"
 
@@ -1023,6 +1026,7 @@ class App:
                            "%s  ›  %s" % (self.board_name(), "A new Stump" if self.form and self.form["mode"] == "new"
                                           else "Its settings")),
                   "handheld": "This handheld",
+                  "library": "Library  ·  what this Provisioner carries",
                   "product": "This handheld  ›  %s" % (shelf.PRODUCTS[self.prod]["title"] if self.prod else ""), "files": "%s  ›  From File" % (shelf.PRODUCTS[self.fb["product"]]["short"] if self.fb and self.fb.get("product")
                                                else self.board_name()), "log": "Serial log  ·  %s  ·  115200"
                   % (self.cur["port"] if self.cur else ""), "wifi": "S3 USB Wi-Fi  ·  its networks"}[self.screen]
@@ -1076,7 +1080,7 @@ class App:
                     d.text(F16, 24, y, s, MUTED, W - 48)
                     y += 22
                 y += 8
-            self.hints(([("A", "this handheld")] if self.handheld else []) + [("SELECT+START", "quit")])
+            self.hints(([("A", "this handheld")] if self.handheld else []) + [("Y", "library"), ("SELECT+START", "quit")])
             return
         self.draw_here(TOP + 4)
         d.text(F16, 16, TOP + 4, "BOARDS ON THE HUB", EMBER)
@@ -1111,11 +1115,11 @@ class App:
                 d.text(F16, 26, y + 56, "in use by %s" % ", ".join(sorted(set(u[1] for u in p["users"]))), ERROR,
                        W - 60)
         if rows and rows[min(self.sel, len(rows) - 1)].get("adapter"):
-            self.hints([("A", "its networks"), ("↑↓", "move"), ("SELECT+START", "quit")])
+            self.hints([("A", "its networks"), ("Y", "library"), ("↑↓", "move"), ("SELECT+START", "quit")])
         elif rows and rows[min(self.sel, len(rows) - 1)].get("handheld"):
-            self.hints([("A", "install, update, check"), ("↑↓", "move"), ("SELECT+START", "quit")])
+            self.hints([("A", "install, update, check"), ("Y", "library"), ("↑↓", "move"), ("SELECT+START", "quit")])
         else:
-            self.hints([("A", "choose"), ("X", "identify again"), ("Y", "serial log"), ("↑↓", "move"),
+            self.hints([("A", "choose"), ("X", "identify again"), ("Y", "serial log"), ("L", "library"), ("↑↓", "move"),
                         ("SELECT+START", "quit")])
 
     def adapter_line(self, st):
@@ -1204,7 +1208,7 @@ class App:
             return "Looking online (EmulationStation's network)…", EMBER_BRIGHT
         if self.net == "online":
             n = sum(1 for p in shelf.ORDER for ch in shelf.CHANNELS if self.newer_online(p, ch))
-            return ("Online: %d newer on GitHub (X on a product's page gets it)" % n if n
+            return ("Online: %d newer on GitHub (X gets it)" % n if n
                     else "Online: the shelf has the newest of everything"), OK if not n else EMBER_BRIGHT
         if self.net == "offline":
             return "Offline (%s): the shelf and + From File" % (self.net_error or "no network"), MUTED
@@ -1287,6 +1291,152 @@ class App:
             line, tone = self.shelf_line(p)
             d.text(F16, 26, y + 56, line, tone, W - 60)
         self.hints([("A", "open"), ("Y", "look online"), ("↑↓", "move"), ("B", "boards")])
+
+    # -- the Library: everything this Provisioner carries, refreshed online by the batch --
+    def open_library(self):
+        self.lib["sel"] = 0
+        self.screen = "library"
+        self.look_online()
+
+    def library_rows(self):
+        """The shelf, (product, channel) by (product, channel); then the catalogue
+        (built in: WLED, MicroPython, the S3 image; no online channel)."""
+        rows = []
+        for p in shelf.ORDER:
+            for ch in shelf.CHANNELS:
+                if shelf.PRODUCTS[p].get(ch):
+                    rows.append({"kind": "shelf", "p": p, "ch": ch, "key": (p, ch)})
+        for e in self.entries:
+            rows.append({"kind": "fw", "entry": e, "key": ("fw", e["id"])})
+        return rows
+
+    def library_newer(self):
+        """The (product, channel) pairs the shelf doesn't have the newest of."""
+        return [r["key"] for r in self.library_rows() if r["kind"] == "shelf" and self.newer_online(r["p"], r["ch"])]
+
+    def on_library(self, act):
+        rows = self.library_rows()
+        lib = self.lib
+        lib["sel"] = min(lib["sel"], len(rows) - 1)
+        r = rows[lib["sel"]]
+        if act in ("up", "down"):
+            lib["sel"] = (lib["sel"] + (1 if act == "down" else -1)) % len(rows)
+        elif act == "b":
+            self.screen = "boards"
+        elif act == "a":
+            if r["kind"] != "shelf":
+                self.toast("Built into the Provisioner: it comes with it", 3)
+            elif r["key"] in lib["checked"]:
+                lib["checked"].discard(r["key"])
+            else:
+                lib["checked"].add(r["key"])
+        elif act == "y":
+            self.look_online(force=True)
+            self.toast("Looking online…")
+        elif act in ("l", "r"):                  # all, or none
+            lib["checked"] = set() if lib["checked"] else set(k["key"] for k in rows if k["kind"] == "shelf")
+        elif act == "x":
+            self.refresh_library(sorted(lib["checked"]) if lib["checked"] else None)
+
+    def refresh_library(self, keys=None):
+        """Fetches the checked (product, channel) pairs onto the shelf, or, with
+        none checked, everything newer online. One task, one line per item."""
+        if self.net != "online":
+            self.toast("Offline: no network from EmulationStation (Y looks again)" if self.net != "checking"
+                       else "Still looking online…", 4)
+            return
+        todo = keys if keys is not None else self.library_newer()
+        if not todo:
+            self.toast("The shelf has the newest of everything", 3)
+            return
+        names = ["%s %s" % (shelf.PRODUCTS[p]["short"], shelf.CHANNEL_NAMES[ch]) for p, ch in todo]
+
+        def work(t):
+            got, skipped, failed = [], [], []
+            for i, (p, ch) in enumerate(todo):
+                o = self.online.get((p, ch))
+                c = shelf.best(p, ch)
+                what = "%s %s" % (shelf.PRODUCTS[p]["short"], shelf.CHANNEL_NAMES[ch])
+                if not o:
+                    skipped.append("%s: no release online" % what)
+                    t.line("%s: no release online" % what)
+                    continue
+                if c and c["tag"] == o["tag"]:
+                    skipped.append("%s: has %s already" % (what, o["version"]))
+                    t.line("%s: the shelf has %s already" % (what, o["version"]))
+                    continue
+                t.step, t.pct = "%d/%d  %s %s" % (i + 1, len(todo), what, o["version"]), 0
+                try:
+                    self.fetch_fn(p, ch, o, self._pct(t), t.line)
+                    got.append("%s %s" % (what, o["version"]))
+                except Exception as e:
+                    failed.append("%s: %s" % (what, e))
+                    t.line("%s: not taken: %s" % (what, e))
+                if p == "stump":
+                    self._bundle, self._packs = False, None
+            self.lib["checked"] = set()
+            msg = []
+            if got:
+                msg.append("On the shelf (offline from now on): %s." % ", ".join(got))
+            if skipped:
+                msg.append("Left as is: %s." % "; ".join(skipped))
+            if failed:
+                msg.append("Not taken: %s." % "; ".join(failed))
+            return not failed, " ".join(msg), None
+        self.task = Task("Refreshing the library: %s" % ", ".join(names), work)
+        self.task.after = "library"
+        self.screen = "run"
+
+    def draw_library(self):
+        d, lib = self.d, self.lib
+        rows = self.library_rows()
+        d.fill_rrect(12, TOP + 2, W - 24, 40, 8, PANEL)
+        line, tone = self.net_line()
+        d.text(F16, 26, TOP + 13, line, tone, W - 52)
+        n_checked = len(lib["checked"])
+        d.text(F16, 16, TOP + 54, "THE SHELF AND THE CATALOGUE" + ("  ·  %d CHECKED" % n_checked if n_checked else ""),
+               EMBER)
+        rh = 62
+        vis = fits(TOP + 78, rh)
+        first = window(lib["sel"], len(rows), vis)
+        for k, r in enumerate(rows[first:first + vis]):
+            i, y = first + k, TOP + 78 + k * rh
+            sel = i == lib["sel"]
+            if sel:
+                d.stroke_rrect(12, y, W - 24, rh - 6, 8, EMBER, PANEL)
+            if r["kind"] == "shelf":
+                p, ch = r["p"], r["ch"]
+                c, o = shelf.best(p, ch), self.newer_online(p, ch)
+                checked = r["key"] in lib["checked"]
+                d.stroke_rrect(26, y + 12, 22, 22, 5, EMBER if (checked or sel) else BORDER, EMBER if checked else PANEL2)
+                if checked:
+                    d.text(F16, 29, y + 14, "✓", BG)
+                title = "%s  ·  %s" % (shelf.PRODUCTS[p]["short"], shelf.CHANNEL_NAMES[ch])
+                if c:
+                    about = "%s · %s" % (c["version"], "on the card" if c["where"] == "card" else "built in")
+                else:
+                    about = "not on the shelf"
+                if o:
+                    tag, tc = "online: %s" % o["version"], EMBER_BRIGHT
+                elif self.net == "online" and c:
+                    tag, tc = "the newest", OK
+                else:
+                    tag, tc = "", MUTED
+                about += " · " + shelf.PRODUCTS[p][ch].split("/")[-1]
+            else:
+                e = r["entry"]
+                title = e["title"]
+                about = "built in · %s · for %s" % ("full image" if e.get("mode") == "full" else "app image",
+                                                     ", ".join(e.get("boards", [])))
+                tag, tc = ("built in", MUTED) if e["status"] == "ready" else ("coming", MUTED)
+            tw = d.text_width(F16, tag)
+            d.text(F20, 60, y + 8, title, (EMBER_BRIGHT if sel else TEXT) if r["kind"] == "shelf" or r["entry"]["status"]
+                   == "ready" else MUTED, W - 114 - tw)
+            if tag:
+                d.text(F16, W - 28 - tw, y + 11, tag, tc)
+            d.text(F16, 60, y + 34, about, MUTED, W - 86)
+        self.hints([("A", "check"), ("X", "refresh checked" if n_checked else "refresh all newer"), ("L", "all / none"),
+                    ("Y", "look online"), ("B", "back")])
 
     # -- one product: Official, Sandbox, + From File (and its own jobs) --
     def open_product(self, p, back="handheld"):

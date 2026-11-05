@@ -39,6 +39,8 @@ a USB drive:
 on GitHub, and **X** takes it onto the shelf (`provisioner-shelf/` on the games
 card), once every file matches the SHA-256 GitHub records for it and the
 release's `SHA256SUMS`, and reads as what it should be. Offline from then on.
+The **Library** (Y on the boards screen) shows all of it at once, with no
+board plugged in, and refreshes the ones you check, or everything newer.
 
 ## Install
 
@@ -65,7 +67,7 @@ same command again with `cd ~/SandBox_RK3326_Provisioner && git pull && bash ins
 
 | Screen | Buttons |
 |---|---|
-| Boards | ↑↓ · A open (identifies it: the board resets) · X identify again · Y serial log. The last row is **This handheld** |
+| Boards | ↑↓ · A open (identifies it: the board resets) · X identify again · Y serial log · L the Library. The last row is **This handheld** (there, Y is the Library) |
 | A board | ↑↓ · A make a Stump / flash / pack / + From File / log / erase (asks first) · B back. On a CAM, the first row is the Stump it gets: ◀ ▶ Official / Sandbox, A its page |
 | This handheld | ↑↓ the Provisioner, its Stump, FireFly, the Stump for CAMs · A open · Y look online · B back |
 | A product's page | ↑↓ Official / Sandbox / + From File / its own jobs · A install (or use) · X get the newest online · Y new answers (its Stump) or look online · B back |
@@ -73,6 +75,7 @@ same command again with `cd ~/SandBox_RK3326_Provisioner && git pull && bash ins
 | The keyboard | A type · B delete · START OK · SELECT cancel · Y shift · X space · L/R page; or a USB keyboard |
 | Asking | ←→ No / Yes · A accept · B cancel. Erasing defaults to **No** |
 | + From File | ↑↓ · A open a folder / choose (read for what it is, then asks) · B up · Y every file · ←→ page |
+| Library | ↑↓ · A check · X refresh the checked online (none checked: all newer) · L all / none · Y look online · B back |
 | Serial log | A pause / resume · paused: ↑↓ line, ←→ page, X block, Y export (the block, or all) · running: Y export, X clear · B back |
 | S3 USB Wi-Fi | ↑↓ · A join (a password on the keyboard) · Y forget · X look again · B back |
 | Anywhere | SELECT+START closes it. A, B... are EmulationStation's buttons |

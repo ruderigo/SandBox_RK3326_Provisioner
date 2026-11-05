@@ -10,6 +10,18 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.12
+
+- **The Library**: everything this Provisioner carries, with no board
+  plugged in: the shelf (each product's Official and Sandbox, its version,
+  built in or on the card, and what's newer online) and the catalogue
+  (WLED, MicroPython, the S3 image: built in). **Y** opens it from the
+  boards screen (**L** from a board's row, whose X and Y are the board's).
+  **A** checks a row, **L** checks all or none, **X** refreshes the checked
+  ones online onto the shelf, or, with none checked, everything newer; one
+  task, a line per item, and what was taken, left as is or refused at the
+  end. **Y** looks online again.
+
 ## v0.3.0-beta.11
 
 - **FireFly 0.9.3 on the shelf it carries** (Sandbox, from
