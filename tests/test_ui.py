@@ -806,6 +806,59 @@ class ThisHandheld(Base):
         a.choose_file(__file__)                         # not a bundle
         self.assertIn("Not used", a.toast_text)
 
+    def test_the_library(self):
+        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.52"),
+                                      ("firefly", "official"): self.rel("0.8.1"),
+                                      ("provisioner", "sandbox"): self.rel("0.3.0-beta.11")})
+        a.handle("y")                                   # Y on the handheld row: the Library
+        self.assertEqual(a.screen, "library")
+        rows = a.library_rows()
+        keys = [r["key"] for r in rows]
+        self.assertEqual(keys[:2], [("provisioner", "sandbox"), ("handheld", "official")])
+        self.assertIn(("fw", "wled-16.0.1-esp32"), keys)      # the catalogue too
+        self.assertEqual(sorted(a.library_newer()), [("provisioner", "sandbox"), ("stump", "sandbox")])
+        # Check two: the Stump's Sandbox (newer online) and FireFly's Official (already the newest).
+        a.lib["sel"] = keys.index(("stump", "sandbox"))
+        a.handle("a")
+        a.lib["sel"] = keys.index(("firefly", "official"))
+        a.handle("a")
+        self.assertEqual(a.lib["checked"], {("stump", "sandbox"), ("firefly", "official")})
+        self.shot(a, "77-library")
+        a.lib["sel"] = keys.index(("fw", "wled-16.0.1-esp32"))
+        a.handle("a")                                   # built in: no check mark
+        self.assertIn("Built into", a.toast_text)
+        self.assertEqual(len(a.lib["checked"]), 2)
+        a.handle("x")                                   # refresh the checked ones
+        self.wait(a)
+        self.assertTrue(a.task.ok, a.task.msg)
+        self.assertEqual(self.fetched, [("stump", "sandbox", "v1.0.0-beta.52")])
+        self.assertIn("FireFly Official: has 0.8.1 already", a.task.msg)
+        self.shot(a, "78-library-refreshed")
+        a.handle("a")
+        self.assertEqual((a.screen, a.lib["checked"]), ("library", set()))
+        a.handle("x")                                   # nothing checked: everything newer
+        self.wait(a)
+        self.assertEqual(self.fetched[1:], [("provisioner", "sandbox", "v0.3.0-beta.11"),
+                                            ("stump", "sandbox", "v1.0.0-beta.52")])   # the pretend fetch keeps nothing
+        a.handle("a")
+        a.handle("l")                                   # all / none
+        self.assertEqual(len(a.lib["checked"]), 7)      # every shelf pair (no official Provisioner)
+        a.handle("l")
+        self.assertEqual(a.lib["checked"], set())
+        a.handle("b")
+        self.assertEqual(a.screen, "boards")
+        # From a board's row, L (X and Y are the board's); offline, X says so.
+        a = self.handheld_app(offline=True)
+        a.ports_fn = lambda: [port("/dev/ttyUSB0", "10c4:ea60", "CP210x USB-serial")]
+        a.next_scan = 0
+        a.scan()
+        a.sel = 0
+        a.handle("l")
+        self.assertEqual(a.screen, "library")
+        a.handle("x")
+        self.assertIn("Offline", a.toast_text)
+        self.assertIsNone(a.task)
+
     def test_the_cams_source_row(self):
         os.environ["FAKE_BOARD"] = "s3"
         a = self.handheld_app()
