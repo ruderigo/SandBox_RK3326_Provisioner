@@ -1,0 +1,11 @@
+{
+ "channel": "sandbox",
+ "fetched": "2026-11-05 11:53",
+ "files": {
+  "FireFly-RK3326-0.9.3.zip": "68768560ea00858bbe598998e0d9bd8c1a758748b34c5e7650db8a466b9f23e7"
+ },
+ "product": "firefly",
+ "repo": "ruderigo/SandBox_FireFly_RK3326",
+ "tag": "v0.9.3",
+ "version": "0.9.3"
+}
