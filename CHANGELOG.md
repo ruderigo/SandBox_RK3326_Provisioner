@@ -10,6 +10,12 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.11
+
+- **FireFly 0.9.3 on the shelf it carries** (Sandbox, from
+  SandBox_FireFly_RK3326; Official stays 0.8.1, FireFly_RK3326_R36MAX_R36S's
+  newest): it installs offline, with no network to fetch it first.
+
 ## v0.3.0-beta.10
 
 - **One password, as Team Stump means it, reaching /admin.** Their Stump
