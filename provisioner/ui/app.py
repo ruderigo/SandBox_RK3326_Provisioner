@@ -1146,7 +1146,8 @@ class App:
                                                        " · PSRAM %d MB" % inf["psram_mb"] if inf["psram_mb"] else "",
                                                        inf["mac"])
             else:
-                sub = "%s · %s · A to identify (resets it)" % (p["port"], p["usb"] or "USB")
+                sub = "%s · %s%s · A to identify (resets it)" % (
+                    p["port"], p["usb"] or "USB", " · no kernel driver: driven from here" if p.get("userspace") else "")
             d.text(F16, 26, y + 36, sub, MUTED, W - 60)
             if p.get("users"):
                 d.text(F16, 26, y + 56, "in use by %s" % ", ".join(sorted(set(u[1] for u in p["users"]))), ERROR,

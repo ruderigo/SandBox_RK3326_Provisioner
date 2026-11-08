@@ -105,6 +105,19 @@ class Screens(Base):
         a.handle("a")
         self.assertEqual(a.screen, "jobs")
 
+    def test_a_ch340_with_no_kernel_driver_is_a_port(self):
+        """A Freenove WROVER's CH340 on ArkOS (no ch341): ch340://, through libusb."""
+        os.environ["FAKE_BOARD"] = "esp32"
+        p = dict(port("ch340://1-4", "1a86:7523", "CH340 USB-serial"), userspace=True)
+        a = self.app([p])
+        self.shot(a, "02b-boards-ch340")
+        a.handle("a")
+        self.wait(a)
+        self.assertTrue(a.task.ok, a.task.msg)
+        a.handle("a")
+        self.assertEqual(a.screen, "jobs")
+        self.assertIn("stump_new", [r["kind"] for r in a.jobs()])          # a WROVER: a Stump board
+
     def test_a_full_erase_defaults_to_no(self):
         os.environ["FAKE_BOARD"] = "esp32"
         a = self.app([port("/dev/ttyUSB0", "10c4:ea60", "CP210x USB-serial")])

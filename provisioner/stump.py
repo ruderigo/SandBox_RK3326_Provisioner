@@ -192,8 +192,10 @@ class SerialLink:
 
     def __init__(self, port, baud=115200):
         import serial
-        s = serial.Serial()
-        s.port, s.baudrate, s.timeout = port, baud, 0.05
+        from . import usbserial
+        usbserial.register()                     # ch340://: a CH340 with no kernel driver
+        s = serial.serial_for_url(port, do_not_open=True)
+        s.baudrate, s.timeout = baud, 0.05
         s.dtr = False
         s.rts = False
         s.open()

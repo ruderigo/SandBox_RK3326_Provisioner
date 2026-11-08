@@ -10,6 +10,21 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.14
+
+- **CH340 boards with no kernel driver** (a Freenove ESP32-WROVER carries
+  one, and none of the RK3326 systems has ch341, its driver): the
+  Provisioner drives the chip itself through libusb-1.0 (there on ArkOS and
+  dArkOS), as Linux's ch341.c does: its speed, its DTR/RTS lines (the
+  ESP32's EN and IO0, so esptool resets it into the bootloader by them) and
+  its data. Such a board is the port `ch340://<bus>-<address>` on the boards
+  screen ("no kernel driver: driven from here"): identify, flash, make a
+  Stump, its settings and the serial log all go through it. Where ch341 is
+  there, the board is its usual `/dev/ttyUSB*`; with no libusb, it's named
+  as before, with the driver it lacks.
+- install.sh's udev rule lets the handheld's user open a CH340 through
+  libusb (the CH340/CH341 USB ids only).
+
 ## v0.3.0-beta.13
 
 Caught up with SandBox_Stump_On 1.0.0-beta.56 to 60 and R36MAX-Stump 2.5.0,

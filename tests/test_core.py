@@ -86,8 +86,14 @@ class NoDriver(unittest.TestCase):
         dev("1-1.2", "1a86", "7523", False)          # CH340, no driver
         dev("1-1.3", "10c4", "ea60", True)           # CP2102, cp210x took it
         dev("1-1.4", "046d", "c52b", False)          # not a serial chip
-        got = boards.unbound(usb)
-        self.assertEqual(got, [{"usb": "1a86:7523", "usb_chip": "CH340 USB-serial", "driver": "ch341"}])
+        ok = boards._userspace_ok
+        try:
+            boards._userspace_ok = lambda: False         # no libusb: said, with the driver it lacks
+            self.assertEqual(boards.unbound(usb), [{"usb": "1a86:7523", "usb_chip": "CH340 USB-serial", "driver": "ch341"}])
+            boards._userspace_ok = lambda: True          # libusb: a ch340:// port instead (usbserial)
+            self.assertEqual(boards.unbound(usb), [])
+        finally:
+            boards._userspace_ok = ok
         self.assertEqual(boards.unbound("/nonexistent"), [])
 
 

@@ -55,6 +55,9 @@ else echo "(no vermin: pip install vermin)"; fi
 step "Making a Stump (Team Stump's pretend board, the real bundle)"
 run "stump" python3 -W error::ResourceWarning tests/test_stump.py
 
+step "A CH340 through libusb (a pretend chip; the real libusb when here)"
+run "usbserial" python3 -W error::ResourceWarning tests/test_usbserial.py
+
 step "Screens and buttons (no screen: SDL's dummy driver)"
 if python3 -c "import ctypes, ctypes.util; ctypes.CDLL(ctypes.util.find_library('SDL2') or 'libSDL2-2.0.so.0')" 2>/dev/null; then
   run "screens" python3 tests/test_ui.py

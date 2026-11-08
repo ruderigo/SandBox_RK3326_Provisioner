@@ -92,6 +92,7 @@ $SUDO mkdir -p "$UDEV" 2>/dev/null
 if $SUDO install -m 0644 "$HERE/udev/99-rk3326-provisioner.rules" "$UDEV/99-rk3326-provisioner.rules"; then
   if [ -z "$R" ]; then
     $SUDO udevadm control --reload-rules 2>/dev/null; $SUDO udevadm trigger --subsystem-match=tty 2>/dev/null
+    $SUDO udevadm trigger --subsystem-match=usb --attr-match=idVendor=1a86 2>/dev/null   # a CH340 plugged in now
   fi
   ok "udev rule ($UDEV)"
 else

@@ -16,7 +16,7 @@ update from here too. It's an EmulationStation **Ports** entry.
 |---|---|---|---|
 | **ESP32-S3** (Freenove CAM) | **Make a Stump** (its Stump image when the release has one), update it (in place on an image), its settings, check it starts, with **what it said as it started**; add a pack (Tavern, rnfs, NomadNet, Simple) | Official / Sandbox / + From File (a `.bundle`, a pack's `.zip`) | tested on the R36MAX up to b51; **the images, the chain over the router and the report: to test** (beta.13) |
 | | **USB Wi-Fi adapter**: the S3 becomes the handheld's Wi-Fi card ([below](#the-s3-as-the-handhelds-wi-fi-card)) | built here (`s3_usb_wifi/`) | 0.2.1 tested (internet through it); **0.3.0 to test** |
-| **ESP32-WROVER** | **a Stump**, as on the CAM (its image at 0x1000; a WROOM, without PSRAM, is refused) | Sandbox 1.0.0-beta.60 (a release with images) | **to test** (beta.13). Behind a CP2102 or CH9102; behind a **CH340** (Freenove's) only on a system with its driver (ch341), which none of the RK3326 systems has ([HANDHELDS](docs/HANDHELDS.md)) |
+| **ESP32-WROVER** | **a Stump**, as on the CAM (its image at 0x1000; a WROOM, without PSRAM, is refused) | Sandbox 1.0.0-beta.60 (a release with images) | **to test** (beta.13). Its **CH340** (Freenove's) has no kernel driver on these systems: the Provisioner drives it through libusb (`ch340://`, beta.14, **to test**) |
 | **Classic ESP32** | WLED 16.0.1 (app slot), MicroPython 1.29.0 (full) | the catalogue / + From File (any `.bin`, read for what it is) | tested on the R36MAX |
 | **Heltec V3** | RNode for a CAM, set for the mesh | | *coming* |
 | **Any board** | the serial log (pause, a block, export); erase the flash | | tested on the R36MAX |

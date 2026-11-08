@@ -23,12 +23,12 @@ def esptool_cmd(*args):
     override = os.environ.get("PROVISIONER_ESPTOOL")
     if override:
         return [sys.executable, override] + list(args)
-    return [sys.executable, "-m", "esptool"] + list(args)
+    return [sys.executable, "-m", "provisioner.esptool_main"] + list(args)    # esptool, ch340:// known
 
 
 def esptool_env():
     env = dict(os.environ)
-    env["PYTHONPATH"] = VENDOR + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    env["PYTHONPATH"] = os.pathsep.join([VENDOR, HERE] + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else []))
     env["PYTHONUNBUFFERED"] = "1"
     return env
 
