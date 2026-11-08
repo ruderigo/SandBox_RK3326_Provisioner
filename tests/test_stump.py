@@ -155,6 +155,13 @@ class MakeAStump(unittest.TestCase):
         self.assertIn("AUTH_ADMIN_PASSWORD = 'hunter22'", cfg)                    # blank password: kept
         self.assertRegex(cfg, r'"name": "Heltec Bridge",\s*"enabled": False,')
         self.assertEqual(read(self.root, "config.py.bak"), cfg_before)
+        # Another board (or its config.py changed since it was read): nothing saved.
+        with open(os.path.join(self.root, "config.py"), "a") as f:
+            f.write("# another board\n")
+        ok, msg = stump.save_job(a, self.open_link, self.steps.append, self.log.append)
+        self.assertFalse(ok)
+        self.assertIn("isn't the one read earlier", msg)
+        self.assertIn("NODE_NAME = 'Renamed'", read(self.root, "config.py"))
 
         # Check: restarted, it says it's serving.
         ok, msg = stump.check_job(self.open_link, self.steps.append, self.log.append, secs=10)
@@ -331,6 +338,32 @@ class StumpImages(unittest.TestCase):
         self.assertIn("admin_web.mpy", self.on_board())
         self.assertIn("made again it gets the Stump image", msg)
 
+    def test_a_board_on_an_image_and_a_release_without_one(self):
+        """The release chosen has no image (an older one): its files would hide the
+        built-in modules, so a newer image on the board is refused, and the
+        .mpy is checked as on plain MicroPython."""
+        b = self.bundle(images=False)
+        with open(os.path.join(self.root, "config.py"), "w") as f:
+            f.write("NODE_NAME = 'x'\n")
+        with open(os.path.join(self.frozen, "stump_image.py"), "w") as f:
+            f.write(self.head.replace(repr(b.release), "'9.9.9'"))
+        ok, msg = self.make(b, update=True)
+        self.assertFalse(ok)
+        self.assertIn("can't go back", msg)
+        with open(os.path.join(self.frozen, "stump_image.py"), "w") as f:
+            f.write(self.head.replace(repr(b.release), "'1.0.0-beta.1'"))
+        os.environ["FAKE_MPY"] = "6.2"
+        ok, msg = self.make(b, update=True)
+        self.assertFalse(ok)
+        self.assertIn("Make a Stump", msg)
+        self.assertEqual(self.on_board(), ["config.py"])
+
+    def test_another_releases_stump_image_py_is_not_used(self):
+        with open(os.path.join(self.rel, "stump_image.py"), "w") as f:
+            f.write(self.head.replace(repr(BUNDLE.release), "'1.0.0-beta.1'"))
+        b = stump.find_bundle(self.rel)
+        self.assertEqual((b.image_head, b.images), (None, {}))
+
     def test_a_wrover(self):
         os.environ["FAKE_MACHINE"] = "Generic ESP32 module with SPIRAM with ESP32"
         b = self.bundle()
@@ -361,6 +394,9 @@ class Rules(unittest.TestCase):
         self.assertTrue(any("chain secret" in w for w in r["warn"]))
         self.assertIn("error", stump.settings_from(answers(chain="first", secret="it's")))
         self.assertNotIn("WIFI_PASS", stump.settings_from(answers(keepWifiPass=True))["values"])
+        for bad in ("007", "²5", " 5x"):                                    # as Arborist: digits, no leading 0
+            self.assertIn("5 to 254", stump.settings_from(answers(chain="member", upSsid="U", subnet=bad))["error"])
+        self.assertIn("1 to 13", stump.settings_from(answers(chain="first", channel="0x"))["error"])
 
     def test_answers_from_what_the_board_says(self):
         a = stump.answers_from({"NODE_NAME": "N", "CHAIN_ENABLED": True, "CHAIN_UPLINK_SSID": "Up", "CHAIN_SUBNET": 9,

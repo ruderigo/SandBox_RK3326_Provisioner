@@ -140,6 +140,8 @@ class Bundle:
         # The release's Stump images next to it (1.0.0-beta.57 on), with their stump_image.py
         d = os.path.dirname(os.path.abspath(path))
         self.image_head = image_head(d)
+        if self.image_head and self.image_head["release"] != self.release:
+            self.image_head = None                  # another release's stump_image.py: its layout isn't this one's
         self.images = images_in(d, self.release) if self.image_head else {}
 
     def release_at_least(self, release):
@@ -384,6 +386,11 @@ def board_info(repl):
         {"release": "", "mpy": "", "machine": ""}
 
 
+def version_newer(a, b):
+    from .shelf import version_key
+    return bool(a) and version_key(a) > version_key(b)
+
+
 def chip_of(machine):
     """"esp32s3" or "esp32" from MicroPython's os.uname().machine."""
     m = (machine or "").upper().replace("-", "")
@@ -418,6 +425,14 @@ def remove_frozen_copies(repl, frozen):
                    " except OSError:\n  pass\nprint('GONE%%d' %% n)\n" % (json.dumps(names), json.dumps(dirs)), 60)
     m = re.search(r"GONE(\d+)", out)
     return int(m.group(1)) if m else 0
+
+
+def config_sha(repl):
+    """The SHA-256 of its config.py, or "" (to tell it's the board read earlier)."""
+    out = repl.run("import hashlib,binascii\ntry:\n h=hashlib.sha256(open('config.py','rb').read())\n"
+                   " print('SHA'+binascii.hexlify(h.digest()).decode())\nexcept OSError:\n print('SHA')\n", 30)
+    m = re.search(r"SHA([0-9a-f]{64})", out)
+    return m.group(1) if m else ""
 
 
 def has_stump(repl):
@@ -612,10 +627,8 @@ def settings_from(a):
             warn.append("No chain secret: anyone on a Stump's Wi-Fi could join the chain.")
         v["CHAIN_ENABLED"], v["CHAIN_SECRET"], v["CHAIN_PARENT_IP"] = True, secret, ""
         if chain == "first":
-            try:
-                ch = int(a.get("channel") or 11)
-            except ValueError:
-                ch = 0
+            chs = str(a.get("channel") or 11).strip()
+            ch = int(chs) if re.fullmatch(r"[0-9]{1,2}", chs) else 0
             if not 1 <= ch <= 13:
                 return no("The chain's Wi-Fi channel: 1 to 13.")
             v.update(CHAIN_UPLINK_SSID="", CHAIN_UPLINK_PASS="", CHAIN_SUBNET=4, CHAIN_CHANNEL=ch)
@@ -624,7 +637,7 @@ def settings_from(a):
             if not up or len(up) > 32 or _ctl(up):
                 return no("The Wi-Fi name of the Stump it joins: 1 to 32 characters.")
             s = str(a.get("subnet") or "").strip()
-            if not s.isdigit() or not 5 <= int(s) <= 254:
+            if not re.fullmatch(r"[1-9][0-9]{0,2}", s) or not 5 <= int(s) <= 254:
                 return no("This Stump's number in the chain: 5 to 254, a different one on each Stump.")
             subnet = int(s)
             v.update(CHAIN_UPLINK_SSID=up, CHAIN_UPLINK_PASS=a.get("upPass") or "", CHAIN_SUBNET=subnet, CHAIN_CHANNEL=0)
@@ -644,7 +657,7 @@ def settings_from(a):
         if not is_ip(pip):
             return no("The first Stump's address on the home Wi-Fi looks like 192.168.0.173.")
         s = str(a.get("subnet") or "").strip()
-        if not s.isdigit() or not 5 <= int(s) <= 254:
+        if not re.fullmatch(r"[1-9][0-9]{0,2}", s) or not 5 <= int(s) <= 254:
             return no("This Stump's number in the chain: 5 to 254, a different one on each Stump.")
         subnet = int(s)
         v.update(CHAIN_ENABLED=True, CHAIN_SECRET=secret, CHAIN_PARENT_IP=pip, CHAIN_UPLINK_SSID=ssid,
@@ -692,7 +705,7 @@ def answers_from(c):
             "subnet": c.get("CHAIN_SUBNET") or 5,
             "secret": c.get("CHAIN_SECRET") or "", "parentIp": c.get("CHAIN_PARENT_IP") or "",
             "upPass": "" if chain == "lan" else c.get("CHAIN_UPLINK_PASS") or "",
-            "botpw": "own" if c.get("HAS_OP_PASSWORD") else "same", "hasPw": bool(c.get("HAS_ADMIN_PASSWORD")),
+            "botpw": "own" if c.get("HAS_OP_PASSWORD") else "same", "configSha": c.get("CONFIG_SHA") or "", "hasPw": bool(c.get("HAS_ADMIN_PASSWORD")),
             "hasOpPw": bool(c.get("HAS_OP_PASSWORD")), "hasWifiPass": bool(c.get("HAS_WIFI_PASS"))}
 
 
@@ -887,6 +900,7 @@ def ready_repl(open_link, log=None, secs=40.0):
         except StumpError as e:
             last = e
             if repl._dead():
+                link.close()
                 raise StumpError("The board went away (cable out?)")
             log and log("waiting for the board: %s" % e)
     link.close()
@@ -978,7 +992,11 @@ def make(bundle, answers, open_link, flash, step, progress, log, update=False, c
                                "Stump (it erases the board: a new identity on the mesh)." % cur.get("partitions"))
             else:
                 # Plain MicroPython (or no image for it in this release): the files copied, as before.
-                if bundle.mpy and info["mpy"] != bundle.mpy and not cur:
+                if cur and version_newer(cur.get("release"), bundle.release):
+                    return False, ("It runs the Stump image %s, newer than %s: an update can't go back (its files "
+                                   "would hide the built-in ones). Choose Make a Stump for an older one (it erases "
+                                   "the board: a new identity)." % (cur.get("release"), bundle.release))
+                if bundle.mpy and info["mpy"] != bundle.mpy:
                     return False, ("This board has MicroPython %s; Stump %s needs %s. Choose Make a Stump (it erases "
                                    "the board: it gets a new identity)." % (info["release"], bundle.release,
                                                                           bundle.micropython))
@@ -1034,6 +1052,7 @@ def read_job(open_link, log):
             return None
         c = read_settings(repl)
         c["RADIO"] = read_radio(repl)
+        c["CONFIG_SHA"] = config_sha(repl)
         restart(repl)
         return c
     finally:
@@ -1050,6 +1069,9 @@ def save_job(answers, open_link, step, log, report=None, default_ssid="Stump"):
     try:
         if not has_stump(repl):
             return False, "There's no Stump on this board (no config.py)."
+        if answers.get("configSha") and config_sha(repl) != answers["configSha"]:
+            return False, ("Its config.py isn't the one read earlier (another board, or changed since): nothing "
+                           "saved. Read its settings again.")
         step("Saving its settings")
         write_settings(repl, s["values"])
         step("Restarting it, listening to it start")

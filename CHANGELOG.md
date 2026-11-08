@@ -41,6 +41,12 @@ as Team Stump's Arborist does it (the same steps over USB serial):
   or why it didn't join (wrong password, not found), the chain linked or no
   answer, who joined below or was refused, its Heltec answered or not; then
   what to note down for the next Stumps. Check it starts reports the same.
+- **Guards**: an update never puts an older release's files over a newer
+  Stump image (they'd hide its built-in modules: Make a Stump goes back),
+  and checks the board's .mpy as on plain MicroPython; a `stump_image.py`
+  of another release next to a bundle is ignored (its partition layout
+  isn't this one's); Save refuses when the board's `config.py` isn't the one
+  read (another board on the port), as Arborist does.
 - **The shelf** takes a release's images and its `stump_image.py`, checked
   (the same release as the bundle, ESP32 images). It carries Sandbox
   1.0.0-beta.60 (both images, its tavern, rnfs, nomadnet and simple packs)
