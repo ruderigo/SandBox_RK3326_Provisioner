@@ -97,6 +97,19 @@ class Handheld(unittest.TestCase):
         self.assertEqual(H.update_answers("/x")["change something"], "")
         self.assertEqual(H.form_defaults({"name": "LaBuche-R36"})["name"], "LaBuche-R36")
 
+    def test_runs_from_its_port(self):
+        etc = os.path.join(self.home, "etc")
+        os.makedirs(etc)
+        self.assertTrue(H.runs_from_port(self.home, "ark", etc))                 # 2.5.0: nothing in the background
+        wants = os.path.join(self.home, ".config", "systemd", "user", "default.target.wants")
+        os.makedirs(wants)
+        os.symlink("../stump.service", os.path.join(wants, "stump.service"))
+        self.assertFalse(H.runs_from_port(self.home, "ark", etc))                # start-at-login
+        os.remove(os.path.join(wants, "stump.service"))
+        open(os.path.join(etc, "stump-ark.service"), "w").close()
+        self.assertFalse(H.runs_from_port(self.home, "ark", etc))                # the boot service (2.4)
+        self.assertTrue(H.runs_from_port(self.home, "pi", etc))
+
     def test_its_passwords(self):
         folder = os.path.join(self.home, "Stump")
         self.assertEqual(H.password_state(folder), "NONE")
@@ -113,9 +126,13 @@ class Handheld(unittest.TestCase):
         ran = []
         fake = lambda cmd, **kw: ran.append(cmd) or subprocess.run(cmd, **kw) if cmd[0].endswith("python") \
             else subprocess.CompletedProcess(cmd, 0, "")                                  # noqa: E731
-        ok, msg = H.set_password(folder, "FSERVBOT_OP_PASSWORD", "op-pass", lambda s: None, run=fake)
+        ok, msg = H.set_password(folder, "FSERVBOT_OP_PASSWORD", "op-pass", lambda s: None, run=fake, port=False)
         self.assertTrue(ok, msg)
-        self.assertIn("restarted", msg)
+        self.assertIn("restarted", msg)                                        # a boot service (2.4 and earlier)
+        ran[:] = []
+        ok, msg = H.set_password(folder, "FSERVBOT_OP_PASSWORD", "op-pass", lambda s: None, run=fake, port=True)
+        self.assertIn("next time its Port opens", msg)                         # 2.5.0: nothing to restart
+        self.assertFalse(any("systemctl" in c for c in ran))
         self.assertEqual(H.password_state(folder, "FSERVBOT_OP_PASSWORD"), "SET")
         self.assertEqual(H.password_state(folder), "EMPTY")                    # the repo's cleared: /admin takes it
         self.assertEqual(H.access_state(folder), "SET")
@@ -130,7 +147,8 @@ class Handheld(unittest.TestCase):
         ok, msg = H.run(inst, {"node name": "R36-Test", "chain secret": "s3cret"}, lines.append, steps.append,
                         home=self.home)
         self.assertTrue(ok, lines)
-        self.assertIn("The Stump is up: R36-Test 1.0.0-beta.50", msg)
+        self.assertIn("It answered its check (R36-Test 1.0.0-beta.50", msg)     # no service here: from its Port
+        self.assertIn("Ports -> LaBuche_Stump", msg)
         self.assertEqual(steps, ["1/6 Packages", "Check"])                 # colours gone
         self.assertIn("mode 600", lines)                                   # the file can hold the chain's secret
         self.assertIn("name R36-Test", lines)
@@ -164,6 +182,22 @@ class TeamStumpsWizard(unittest.TestCase):
         with open(os.path.join(folder, "config.py")) as f:
             return f.read()
 
+    def admin_is(self, cfg, pw):
+        """/admin takes pw: written as its own (beta.58 on), or blank so it takes
+        the fserv bot's (before; stumpid check_admin_password)."""
+        self.assertTrue("AUTH_ADMIN_PASSWORD = %r" % pw in cfg or "AUTH_ADMIN_PASSWORD = ''" in cfg,
+                        [l for l in cfg.splitlines() if "AUTH_ADMIN" in l])
+
+    def test_a_separate_admin_password(self):
+        d = tempfile.mkdtemp(prefix="stump-")
+        self.addCleanup(shutil.rmtree, d, True)
+        folder = os.path.join(d, "Stump")
+        a = dict(H.form_defaults(), name="R36-Sep", heltec="none", pw="bot-pw-1", apw="admin-pw-2")
+        cfg = self.wizard(folder, H.answers(a, folder))
+        self.assertIn("FSERVBOT_OP_PASSWORD = 'bot-pw-1'", cfg)
+        self.assertIn("AUTH_ADMIN_PASSWORD = 'admin-pw-2'", cfg)
+        self.assertEqual(H.current_passwords(folder), {"pw": "bot-pw-1", "apw": "admin-pw-2"})
+
     def test_new_again_update(self):
         d = tempfile.mkdtemp(prefix="stump-")
         self.addCleanup(shutil.rmtree, d, True)
@@ -172,9 +206,9 @@ class TeamStumpsWizard(unittest.TestCase):
                  heltec="none", tavern="yes", pw="one-pw-1")
         cfg = self.wizard(folder, H.answers(a, folder))
         for want in ("NODE_NAME = 'R36-Test'", "PC_CHAIN_PARENT_IP = '192.168.1.20'", "CHAIN_SECRET = 's3cret-test'",
-                     "PC_STORAGE_MB = 2048", "FSERVBOT_OP_PASSWORD = 'one-pw-1'",
-                     "AUTH_ADMIN_PASSWORD = ''"):              # its own prompt answered: not the repo's
+                     "PC_STORAGE_MB = 2048", "FSERVBOT_OP_PASSWORD = 'one-pw-1'"):
             self.assertIn(want, cfg)
+        self.admin_is(cfg, "one-pw-1")
         self.assertEqual(H.access_state(folder), "SET")         # /admin takes the one password
         # A Stump the wizard left with the repo's (answered as before): told apart, and cleared.
         H.write_values(folder, {"AUTH_ADMIN_PASSWORD": "TeK"})
@@ -192,7 +226,7 @@ class TeamStumpsWizard(unittest.TestCase):
         self.assertEqual(again["fserv bot operator password"], "one-pw-1")
         cfg = self.install(folder, again)
         self.assertIn("FSERVBOT_OP_PASSWORD = 'one-pw-1'", cfg)             # sent again: still its own
-        self.assertIn("AUTH_ADMIN_PASSWORD = ''", cfg)
+        self.admin_is(cfg, "one-pw-1")
         self.assertIn("NODE_NAME = 'R36-Again'", cfg)
         self.assertIn("RNodeSerialInterface", cfg)
         cfg = self.wizard(folder, H.update_answers(folder))

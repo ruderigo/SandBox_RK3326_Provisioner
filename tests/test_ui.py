@@ -12,6 +12,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+os.environ.setdefault("PROVISIONER_LISTEN_S", "6")    # a setup listens 90 s at most; here less
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 os.environ["PROVISIONER_ESPTOOL"] = os.path.join(ROOT, "tests", "fake_esptool.py")
 from provisioner.ui import app as A  # noqa: E402
@@ -86,8 +87,11 @@ class Screens(Base):
         a.handle("a")
         self.assertEqual(a.screen, "jobs")
         self.shot(a, "04-jobs-esp32")
-        self.assertEqual([r.get("entry", {}).get("id", r["kind"]) for r in a.jobs()],
+        ids = [r.get("entry", {}).get("id", r["kind"]) for r in a.jobs()]
+        self.assertEqual(ids[:5], ["src_stump", "stump_new", "stump_update", "stump_settings", "stump_check"])  # a WROVER
+        self.assertEqual([i for i in ids if i not in ("src_stump", "pack") and not i.startswith("stump_")],
                          ["wled-16.0.1-esp32", "micropython-1.29.0-esp32", "fromfile", "log", "erase"])
+        a.jsel = ids.index("wled-16.0.1-esp32")
         a.handle("a")                                   # WLED: asks first, Yes highlighted (app only)
         self.assertEqual((a.confirm["title"], a.confirm["choice"]), ("Flash WLED 16.0.1?", 1))
         self.shot(a, "05-confirm-app")
@@ -101,13 +105,26 @@ class Screens(Base):
         a.handle("a")
         self.assertEqual(a.screen, "jobs")
 
+    def test_a_ch340_with_no_kernel_driver_is_a_port(self):
+        """A Freenove WROVER's CH340 on ArkOS (no ch341): ch340://, through libusb."""
+        os.environ["FAKE_BOARD"] = "esp32"
+        p = dict(port("ch340://1-4", "1a86:7523", "CH340 USB-serial"), userspace=True)
+        a = self.app([p])
+        self.shot(a, "02b-boards-ch340")
+        a.handle("a")
+        self.wait(a)
+        self.assertTrue(a.task.ok, a.task.msg)
+        a.handle("a")
+        self.assertEqual(a.screen, "jobs")
+        self.assertIn("stump_new", [r["kind"] for r in a.jobs()])          # a WROVER: a Stump board
+
     def test_a_full_erase_defaults_to_no(self):
         os.environ["FAKE_BOARD"] = "esp32"
         a = self.app([port("/dev/ttyUSB0", "10c4:ea60", "CP210x USB-serial")])
         a.handle("a")
         self.wait(a)
         a.handle("a")
-        a.handle("down")
+        a.jsel = [r.get("entry", {}).get("id") for r in a.jobs()].index("micropython-1.29.0-esp32")
         a.handle("a")                                   # MicroPython: full install
         self.assertEqual(a.confirm["choice"], 0)        # No, unless you move to Yes
         self.shot(a, "08-confirm-full")
@@ -338,14 +355,17 @@ class MakeAStumpOnScreen(Base):
         a.handle(("text", "verside"))
         a.handle("start")
         self.assertEqual(a.form["a"]["name"], "Riverside")
-        a.form["sel"] = 1                               # its password: /admin and the fserv bot
+        a.form["sel"] = 1                               # its password: /admin, and the fserv bot the same
         self.type_in(a, "pass1234")
-        a.form["sel"] = 6                               # Chain: right twice -> joins another Stump
+        a.form["sel"] = 6                               # Chain: right twice -> over the router, three: its Wi-Fi
         a.handle("right")
+        a.handle("right")
+        self.assertEqual(a.form["a"]["chain"], "lan")
+        self.assertEqual([r["key"] for r in a.form_rows()][7:10], ["parentIp", "subnet", "secret"])
         a.handle("right")
         self.assertEqual(a.form["a"]["chain"], "member")
         rows = [r["key"] for r in a.form_rows()]
-        self.assertEqual(rows[:3], ["name", "opw", "pw"])
+        self.assertEqual(rows[:3], ["name", "pw", "botpw"])
         self.assertEqual(rows[6:10], ["chain", "upSsid", "subnet", "secret"])
         a.form["sel"] = 9
         self.type_in(a, "s3cret")
@@ -362,9 +382,10 @@ class MakeAStumpOnScreen(Base):
         self.assertTrue(a.task.ok, a.task.msg)
         with open(os.path.join(self.root, "config.py")) as f:
             cfg = f.read()
-        for want in ("NODE_NAME = 'Riverside'", "FSERVBOT_OP_PASSWORD = 'pass1234'",
+        self.assertTrue(a.task.report, "what it said as it started")
+        for want in ("NODE_NAME = 'Riverside'", "FSERVBOT_OP_PASSWORD = 'pass1234'", "AUTH_ADMIN_PASSWORD = 'pass1234'",
                      "CHAIN_ENABLED = True",
-                     "CHAIN_SUBNET = 5", "CHAIN_SECRET = 's3cret'", "'192.168.5.2'"):
+                     "CHAIN_SUBNET = 5", "CHAIN_SECRET = 's3cret'", "'192.168.5.200'"):
             self.assertIn(want, cfg)
 
         # Its settings, read back into the form, one changed, saved.
@@ -593,8 +614,11 @@ class FromFileAndPacks(Base):
         self.pick(a, "adapter.bin")
         self.assertIsNone(a.confirm)
         self.assertIn("built for the ESP32S3", a.toast_text)
-        self.pick(a, "tavern.zip")
-        self.assertIn("is for a Stump", a.toast_text)
+        self.pick(a, "tavern.zip")                      # a classic ESP32 can be a WROVER: a Stump, so its packs
+        self.assertTrue(a.confirm["title"].startswith("Add tavern"), a.confirm)
+        a.handle("b")
+        if a.screen != "files":
+            self.browse(a)
         self.pick(a, "wled.bin")                        # an app image for this chip: asks, then the app slot
         self.assertEqual(a.confirm["title"], "Flash wled.bin?")
         self.assertIn("An app image", a.confirm["lines"][0])
@@ -712,18 +736,19 @@ class ThisHandheld(Base):
         self.home = tempfile.mkdtemp(prefix="home-")
         self.addCleanup(shutil.rmtree, self.home, True)
 
-    def handheld_app(self, installed=False, why="", online=None, offline=False):
+    def handheld_app(self, installed=False, why="", online=None, offline=False, port=False):
         a = self.app([])
-        a.handheld_fn = lambda: {"installer": None, "why": why, "folder": "/home/ark/Stump", "installed": installed}
+        a.handheld_fn = lambda: {"installer": None, "why": why, "folder": "/home/ark/Stump", "installed": installed,
+                                 "port": port}
         a.clones = False
         self.runs, self.fetched = [], []
 
         def run(inst, ans, line, step):
             self.runs.append((inst, ans))
             step("1/6 Packages")
-            return True, "The Stump is up: R36-Test 1.0.0-beta.51 on :80, no chain."
+            return True, "The Stump is up: R36-Test 1.0.0-beta.60 on :80, no chain."
         a.handheld_run = run
-        a.here = {"none": True} if not installed else {"release": "1.0.0-beta.51", "name": "LaBuche-R36",
+        a.here = {"none": True} if not installed else {"release": "1.0.0-beta.60", "name": "LaBuche-R36",
                                                        "chain": "chain member"}
         a.here_fn = lambda: a.here
         a.firefly_fn = lambda: ""
@@ -758,13 +783,13 @@ class ThisHandheld(Base):
         return {"tag": "v" + version, "version": version, "prerelease": True, "url": "", "repo": "x", "assets": []}
 
     def test_the_page_and_whats_newer_online(self):
-        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.52")})
+        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.61")})
         self.assertEqual(a.rows(), [{"handheld": True}])
         self.shot(a, "70-boards-handheld")
         a.handle("a")
         self.assertEqual((a.screen, a.net), ("handheld", "online"))
         self.assertIn("1 newer", a.net_line()[0])
-        self.assertIn("Sandbox 1.0.0-beta.51 (online: 1.0.0-beta.52)", a.shelf_line("stump")[0])
+        self.assertIn("Sandbox 1.0.0-beta.60 (online: 1.0.0-beta.61)", a.shelf_line("stump")[0])
         self.assertIn("Official 1.0.0-beta.48", a.shelf_line("stump")[0])
         self.assertEqual(a.shelf_line("provisioner")[0], "Shelf: Sandbox none")   # no official Provisioner yet
         self.shot(a, "71-handheld")
@@ -776,13 +801,32 @@ class ThisHandheld(Base):
         a.handle("x")                                   # get beta.52 onto the shelf
         self.wait(a)
         self.assertTrue(a.task.ok, a.task.msg)
-        self.assertEqual(self.fetched, [("stump", "sandbox", "v1.0.0-beta.52")])
+        self.assertEqual(self.fetched, [("stump", "sandbox", "v1.0.0-beta.61")])
         a.handle("a")
         self.assertEqual(a.screen, "product")
         a.handle("a")                                   # use the Sandbox one for the boards
-        self.assertEqual(a.stump_copy()["version"], "1.0.0-beta.51")
-        self.assertEqual(a.bundle().release, "1.0.0-beta.51")
+        self.assertEqual(a.stump_copy()["version"], "1.0.0-beta.60")
+        self.assertEqual(a.bundle().release, "1.0.0-beta.60")
         self.assertIn("now", a.toast_text)
+
+    def test_a_stump_that_runs_from_its_port(self):
+        """R36MAX-Stump 2.5.0: the Stump runs only while its Port is open, so
+        never beside the Provisioner: not running is how it should be."""
+        a = self.handheld_app(installed=True, port=True)
+        a.here = {"none": True}
+        text, colour = a.installed_line("handheld")
+        self.assertIn("runs while its Port is open", text)
+        self.assertNotEqual(colour, A.ERROR)
+        a.open_product("handheld")
+        a.psel = [r["kind"] for r in a.product_rows()].index("hh_check")
+        a.handle("a")
+        self.wait(a)
+        self.assertTrue(a.task.ok, a.task.msg)
+        self.assertIn("Ports -> LaBuche_Stump", a.task.msg)
+        self.shot(a, "77-handheld-port")
+        b = self.handheld_app(installed=True, port=False)      # 2.4 and earlier: a boot service
+        b.here = {"none": True}
+        self.assertEqual(b.installed_line("handheld")[1], A.ERROR)
 
     def test_offline_the_shelf_and_a_file(self):
         a = self.handheld_app(offline=True)
@@ -794,17 +838,70 @@ class ThisHandheld(Base):
         self.assertIn("Offline", a.toast_text)
         self.assertIsNone(a.task)
         # A bundle from a card: + From File
-        src = os.path.join(A.shelf.best("stump", "sandbox")["dir"], "Stump-1.0.0-beta.51.bundle")
+        src = os.path.join(A.shelf.best("stump", "sandbox")["dir"], "Stump-1.0.0-beta.60.bundle")
         shutil.copy(src, os.path.join(self.home, "mine.bundle"))
         a.psel = [r["kind"] for r in a.product_rows()].index("fromfile")
         a.handle("a")
         self.assertEqual((a.screen, a.fb["exts"]), ("files", (".bundle",)))
         a.choose_file(os.path.join(self.home, "mine.bundle"))
         self.assertEqual(a.screen, "product")
-        self.assertEqual((a.stump_copy()["channel"], a.stump_copy()["version"]), ("file", "1.0.0-beta.51"))
+        self.assertEqual((a.stump_copy()["channel"], a.stump_copy()["version"]), ("file", "1.0.0-beta.60"))
         a.open_files(product="stump")
         a.choose_file(__file__)                         # not a bundle
         self.assertIn("Not used", a.toast_text)
+
+    def test_the_library(self):
+        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.61"),
+                                      ("firefly", "official"): self.rel("0.8.1"),
+                                      ("provisioner", "sandbox"): self.rel("0.3.0-beta.11")})
+        a.handle("y")                                   # Y on the handheld row: the Library
+        self.assertEqual(a.screen, "library")
+        rows = a.library_rows()
+        keys = [r["key"] for r in rows]
+        self.assertEqual(keys[:2], [("provisioner", "sandbox"), ("handheld", "official")])
+        self.assertIn(("fw", "wled-16.0.1-esp32"), keys)      # the catalogue too
+        self.assertEqual(sorted(a.library_newer()), [("provisioner", "sandbox"), ("stump", "sandbox")])
+        # Check two: the Stump's Sandbox (newer online) and FireFly's Official (already the newest).
+        a.lib["sel"] = keys.index(("stump", "sandbox"))
+        a.handle("a")
+        a.lib["sel"] = keys.index(("firefly", "official"))
+        a.handle("a")
+        self.assertEqual(a.lib["checked"], {("stump", "sandbox"), ("firefly", "official")})
+        self.shot(a, "77-library")
+        a.lib["sel"] = keys.index(("fw", "wled-16.0.1-esp32"))
+        a.handle("a")                                   # built in: no check mark
+        self.assertIn("Built into", a.toast_text)
+        self.assertEqual(len(a.lib["checked"]), 2)
+        a.handle("x")                                   # refresh the checked ones
+        self.wait(a)
+        self.assertTrue(a.task.ok, a.task.msg)
+        self.assertEqual(self.fetched, [("stump", "sandbox", "v1.0.0-beta.61")])
+        self.assertIn("FireFly Official: has 0.8.1 already", a.task.msg)
+        self.shot(a, "78-library-refreshed")
+        a.handle("a")
+        self.assertEqual((a.screen, a.lib["checked"]), ("library", set()))
+        a.handle("x")                                   # nothing checked: everything newer
+        self.wait(a)
+        self.assertEqual(self.fetched[1:], [("provisioner", "sandbox", "v0.3.0-beta.11"),
+                                            ("stump", "sandbox", "v1.0.0-beta.61")])   # the pretend fetch keeps nothing
+        a.handle("a")
+        a.handle("l")                                   # all / none
+        self.assertEqual(len(a.lib["checked"]), 7)      # every shelf pair (no official Provisioner)
+        a.handle("l")
+        self.assertEqual(a.lib["checked"], set())
+        a.handle("b")
+        self.assertEqual(a.screen, "boards")
+        # From a board's row, L (X and Y are the board's); offline, X says so.
+        a = self.handheld_app(offline=True)
+        a.ports_fn = lambda: [port("/dev/ttyUSB0", "10c4:ea60", "CP210x USB-serial")]
+        a.next_scan = 0
+        a.scan()
+        a.sel = 0
+        a.handle("l")
+        self.assertEqual(a.screen, "library")
+        a.handle("x")
+        self.assertIn("Offline", a.toast_text)
+        self.assertIsNone(a.task)
 
     def test_the_cams_source_row(self):
         os.environ["FAKE_BOARD"] = "s3"

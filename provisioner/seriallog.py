@@ -42,7 +42,9 @@ class SerialLog:
                 s = self._open()
             else:
                 import serial
-                s = serial.Serial(self.port, self.baud, timeout=0.2)
+                from . import usbserial
+                usbserial.register()             # ch340://: a CH340 with no kernel driver
+                s = serial.serial_for_url(self.port, self.baud, timeout=0.2)
         except Exception as e:
             self.error = "Can't open %s: %s" % (self.port, e)
             return

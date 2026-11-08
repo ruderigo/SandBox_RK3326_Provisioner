@@ -35,7 +35,7 @@ NAMES = {"1a86:5523": "CH341 USB-serial", "0403:6010": "FTDI USB-serial"}
 BOARDS = [
     {"id": "heltec_v3", "name": "Heltec V3 (LoRa)", "chip": "esp32s3", "usb": ("10c4:ea60",)},
     {"id": "esp32s3", "name": "ESP32-S3 (Freenove CAM or similar)", "chip": "esp32s3", "usb": None},
-    {"id": "esp32", "name": "Classic ESP32", "chip": "esp32", "usb": None},
+    {"id": "esp32", "name": "ESP32 (a WROVER is a Stump board)", "chip": "esp32", "usb": None},
 ]
 
 
@@ -47,9 +47,10 @@ def _read(path):
         return ""
 
 
-def list_ports(sys_tty="/sys/class/tty", dev_dir="/dev"):
+def list_ports(sys_tty="/sys/class/tty", dev_dir="/dev", sys_usb="/sys/bus/usb/devices"):
     """[{port, usb, usb_chip, product, serial, native}] of the USB serial
-    ports now (ttyUSB*, ttyACM*). Linux reads sysfs; elsewhere pyserial."""
+    ports now (ttyUSB*, ttyACM*), and ch340://bus-address for a CH340 no
+    driver took (sys_usb None: not looked for). Linux reads sysfs; elsewhere pyserial."""
     if not os.path.isdir(sys_tty):
         return _list_ports_pyserial()
     out = []
@@ -68,7 +69,13 @@ def list_ports(sys_tty="/sys/class/tty", dev_dir="/dev"):
                 break
             d = os.path.dirname(d)
         out.append(_port(os.path.join(dev_dir, name), usb, product, serial))
-    return out
+    return out + (ch340_ports(sys_usb) if sys_usb else [])
+
+
+def ch340_ports(sys_usb="/sys/bus/usb/devices"):
+    """CH340s no driver took, driven from here through libusb (usbserial)."""
+    from . import usbserial
+    return [dict(_port(c["port"], c["usb"], "", ""), userspace=True) for c in usbserial.ports(sys_usb)]
 
 
 def _list_ports_pyserial():
@@ -160,6 +167,14 @@ def by_id_links(by_id="/dev/serial/by-id"):
     return out
 
 
+USERSPACE = ("1a86:7523", "1a86:5523")        # CH340/CH341: libusb drives them when the kernel can't
+
+
+def _userspace_ok():
+    from . import usbserial
+    return usbserial.available()
+
+
 def unbound(sys_usb="/sys/bus/usb/devices"):
     """[{usb, usb_chip, driver}] of USB-serial chips plugged in that no
     driver took (no serial port for them): this system lacks their driver."""
@@ -176,6 +191,8 @@ def unbound(sys_usb="/sys/bus/usb/devices"):
         if usb not in DRIVERS:
             continue
         ifaces = [os.path.join(d, i) for i in os.listdir(d) if i.startswith(n + ":")] if os.path.isdir(d) else []
+        if usb in USERSPACE and _userspace_ok():
+            continue                    # driven from here (usbserial): a port, not a missing driver
         if ifaces and not any(os.path.lexists(os.path.join(i, "driver")) for i in ifaces):
             out.append({"usb": usb, "usb_chip": USB_SERIAL.get(usb) or NAMES.get(usb, "USB-serial"),
                         "driver": DRIVERS[usb]})

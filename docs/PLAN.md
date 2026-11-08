@@ -90,12 +90,19 @@ Making a Stump is the Provisioner's main job (2026-11-02): it comes first.
 - [x] **Official / Sandbox / + From File for everything** (0.3.0-beta.8):
       the shelf (offline copies, updated online), the CAM's Stump, the
       handheld's Stump, FireFly, the Provisioner itself (with Go back)
+- [x] **SandBox_Stump_On beta.56-60** (0.3.0-beta.13): the Stump images
+      (in place on update), the ESP32-WROVER, beta.58's passwords, the chain
+      over the router, the Heltec at .200 / .222, the boot report; the
+      handheld's Stump with beta.58+ answers and R36MAX-Stump 2.5.0
+- [ ] Bench beta.13: a CAM made from the b60 image, updated in place; a
+      router member; the report; the handheld's Stump 2.5.0 with b60
+- [x] **CH340 through libusb** (0.3.0-beta.14): `ch340://`, no kernel driver
+- [ ] Bench beta.14: the WROVER's CH340 on the R36MAX (identify, its image,
+      the Stump's serial link, the serial log)
 - [ ] An official repo for the Provisioner (low priority)
 - [ ] FireFly Android from here (another sprint)
 - [ ] Run it on another RK3326 (R36S, an OGA-class 480x320, ROCKNIX) and
       check the rotation direction on a sideways panel
-- [ ] CH340 boards: no RK3326 system has ch341; a userspace driver (libusb)
-      would be the way, if wanted
 - [x] The bundle from its own release file (Team Stump's beta.48)
 
 ## Bench (on the R36MAX)

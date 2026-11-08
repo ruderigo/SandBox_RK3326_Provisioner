@@ -6,3 +6,7 @@ SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", MODE="0666"
 SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", MODE="0666"
 SUBSYSTEM=="tty", ATTRS{idVendor}=="067b", MODE="0666"
 SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", MODE="0666"
+# A CH340 no kernel driver takes (none of the RK3326 systems has ch341): the
+# Provisioner drives it through libusb, which opens /dev/bus/usb/<bus>/<device>.
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="1a86", ATTR{idProduct}=="7523", MODE="0666"
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="1a86", ATTR{idProduct}=="5523", MODE="0666"

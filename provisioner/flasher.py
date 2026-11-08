@@ -23,12 +23,12 @@ def esptool_cmd(*args):
     override = os.environ.get("PROVISIONER_ESPTOOL")
     if override:
         return [sys.executable, override] + list(args)
-    return [sys.executable, "-m", "esptool"] + list(args)
+    return [sys.executable, "-m", "provisioner.esptool_main"] + list(args)    # esptool, ch340:// known
 
 
 def esptool_env():
     env = dict(os.environ)
-    env["PYTHONPATH"] = VENDOR + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    env["PYTHONPATH"] = os.pathsep.join([VENDOR, HERE] + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else []))
     env["PYTHONUNBUFFERED"] = "1"
     return env
 
@@ -188,9 +188,10 @@ def flash(port, entry, board, on_line=None, on_step=None, on_progress=None):
     return True, "%s written and verified" % entry["title"]
 
 
-def write_image(port, chip, path, offset="0x0", on_line=None, on_progress=None):
-    """Erases the whole flash and writes one image (MicroPython for a Stump),
-    then reads it back. (ok, message)."""
+def write_image(port, chip, path, offset="0x0", on_line=None, on_progress=None, erase=True):
+    """Erases the whole flash and writes one image (a Stump image, or
+    MicroPython), then reads it back. erase=False: written in place, the
+    rest of the flash (a Stump's filesystem) kept. (ok, message)."""
     prog = on_progress or (lambda p: None)
 
     def lines(line):
@@ -199,9 +200,10 @@ def write_image(port, chip, path, offset="0x0", on_line=None, on_progress=None):
         pct = progress_of(line)
         if pct is not None:
             prog(pct)
-    ok, out = run(["--chip", chip, "--port", port, "--baud", str(BAUD), "erase_flash"], lines, timeout=180)
-    if not ok:
-        return False, explain(out)
+    if erase:
+        ok, out = run(["--chip", chip, "--port", port, "--baud", str(BAUD), "erase_flash"], lines, timeout=180)
+        if not ok:
+            return False, explain(out)
     args = ["--chip", chip, "--port", port, "--baud", str(BAUD), "--after", "no_reset", "write_flash",
             "--flash_mode", "keep", "--flash_size", "keep", offset, path]   # see flash()
     ok, out = run(args, lines, timeout=600)

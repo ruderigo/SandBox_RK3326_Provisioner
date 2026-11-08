@@ -53,7 +53,7 @@ def _extract_tar(path, dest):
         for m in t.getmembers():
             if m.name.startswith("/") or ".." in m.name.split("/") or m.issym() or m.islnk():
                 raise shelf.ShelfError("a path that climbs out in the tarball: %s" % m.name)
-        t.extractall(dest)
+        t.extractall(dest, **({"filter": "data"} if hasattr(tarfile, "data_filter") else {}))
     tops = os.listdir(dest)
     return os.path.join(dest, tops[0]) if len(tops) == 1 else dest
 

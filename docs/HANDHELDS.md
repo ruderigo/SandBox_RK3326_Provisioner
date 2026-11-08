@@ -8,7 +8,7 @@
 | AmberELEC | as root; `/storage/rk3326_provisioner`, `/storage/roms/ports`, udev rules in `/storage/.config`, KMSDRM |
 | ROCKNIX | as root; same paths as AmberELEC; EmulationStation runs under sway, so the launcher uses Wayland first |
 | Python | 3.6 or newer (ArkOS has 3.7, ROCKNIX 3.14); any SDL2 from 2.0 on |
-| USB-serial | CDC-ACM (ESP32-S3/C3 native USB, CH343/CH9102) works on all of them. ArkOS, dArkOS and AmberELEC also have CP210x, FTDI and PL2303, **none has the CH340's driver** (ch341), and ROCKNIX has no USB-serial driver but CDC-ACM. A board the system can't talk to is named on the boards screen with the driver it lacks |
+| USB-serial | CDC-ACM (ESP32-S3/C3 native USB, CH343/CH9102) works on all of them. ArkOS, dArkOS and AmberELEC also have CP210x, FTDI and PL2303, **none has the CH340's driver** (ch341), and ROCKNIX has no USB-serial driver but CDC-ACM. A board the system can't talk to is named on the boards screen with the driver it lacks. A **CH340** is the exception from 0.3.0-beta.14: the Provisioner drives it itself through libusb-1.0 (`ch340://<bus>-<address>`; ArkOS and dArkOS have libusb) |
 
 Bench-tested on the R36MAX. The other screens, systems and pads are
 laid out, tested in CI (every size above, both install layouts, the button
