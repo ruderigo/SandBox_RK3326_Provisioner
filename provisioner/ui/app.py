@@ -1849,8 +1849,9 @@ class App:
                 return True, "Stump %s · %s%s: it answers." % (h.get("release", "?"), h.get("name", "?"),
                                                               " · " + h["chain"] if h.get("chain") else ""), None
             if st.get("installed") and st.get("port"):
-                return True, ("It's installed, and not running: %s So never beside the Provisioner (one Port "
-                              "at a time). Its check runs at each Install or Update." % handheld.PORT_NOTE), None
+                return True, ("It's installed, and not running, as it should be: it runs only while its Port is "
+                              "open (Ports -> LaBuche_Stump), so never beside the Provisioner. Install and Update "
+                              "check that it starts."), None
             if st.get("installed"):
                 return False, "It's installed but doesn't answer: ~/Stump/stump.log says why (Update starts it again).", None
             return False, "No Stump on this handheld yet: Install a Stump.", None
