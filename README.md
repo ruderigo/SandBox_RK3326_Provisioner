@@ -14,12 +14,13 @@ update from here too. It's an EmulationStation **Ports** entry.
 
 | Onto | What | From | Status |
 |---|---|---|---|
-| **ESP32-S3** (Freenove CAM) | **Make a Stump**, update it, its settings, check it starts; add the **Tavern** or **rnfs** pack | Official / Sandbox / + From File (a `.bundle`, a pack's `.zip`) | tested on the R36MAX |
+| **ESP32-S3** (Freenove CAM) | **Make a Stump** (its Stump image when the release has one), update it (in place on an image), its settings, check it starts, with **what it said as it started**; add a pack (Tavern, rnfs, NomadNet, Simple) | Official / Sandbox / + From File (a `.bundle`, a pack's `.zip`) | tested on the R36MAX up to b51; **the images, the chain over the router and the report: to test** (beta.13) |
 | | **USB Wi-Fi adapter**: the S3 becomes the handheld's Wi-Fi card ([below](#the-s3-as-the-handhelds-wi-fi-card)) | built here (`s3_usb_wifi/`) | 0.2.1 tested (internet through it); **0.3.0 to test** |
+| **ESP32-WROVER** | **a Stump**, as on the CAM (its image at 0x1000; a WROOM, without PSRAM, is refused) | Sandbox 1.0.0-beta.60 (a release with images) | **to test** (beta.13). Behind a CP2102 or CH9102; behind a **CH340** (Freenove's) only on a system with its driver (ch341), which none of the RK3326 systems has ([HANDHELDS](docs/HANDHELDS.md)) |
 | **Classic ESP32** | WLED 16.0.1 (app slot), MicroPython 1.29.0 (full) | the catalogue / + From File (any `.bin`, read for what it is) | tested on the R36MAX |
 | **Heltec V3** | RNode for a CAM, set for the mesh | | *coming* |
 | **Any board** | the serial log (pause, a block, export); erase the flash | | tested on the R36MAX |
-| **This handheld** | **its own Stump**: install (a form), update (everything kept), its password, check | Official / Sandbox / + From File (a `.tar.gz`) | tested on the R36MAX |
+| **This handheld** | **its own Stump**: install (a form), update (everything kept), its password, check | Official / Sandbox / + From File (a `.tar.gz`) | tested on the R36MAX with 2.3.0; **2.5.0 with SandBox_Stump_On b60: to test** (beta.13) |
 | | **FireFly**: install, update (its identity and messages kept) | Official / Sandbox / + From File (a `.zip`) | tested on the R36MAX |
 | | **the Provisioner itself**: update, go back to the one before | Sandbox / + From File (a `.tar.gz`) | tested on the R36MAX |
 
@@ -86,18 +87,31 @@ RESET (or replug), try again.
 
 ## Making a Stump (a CAM board)
 
-Plug the Freenove into the hub, choose it, then **Make a Stump**. The form:
-its name, **its password** (for `/admin` and the fserv bot; a separate
-`/admin` one is optional), the home Wi-Fi if any, its own Wi-Fi's name, the
-chain (first, or joining another with its number and the chain's secret) and
-the Heltec. It asks first, then in about five minutes erases the board, writes
-MicroPython, copies the Stump (each file checked on the board), writes its
-settings and restarts it. Join its Wi-Fi from a phone.
+Plug the Freenove CAM (or an ESP32-WROVER) into the hub, choose it, then
+**Make a Stump**. The form: its name, **its password** (`/admin`; needed), the
+fserv bot's (the same, or its own), the home Wi-Fi if any, its own Wi-Fi's
+name, the chain and the Heltec. The chain: the first Stump; **joining the first
+over the router** (its address on the home Wi-Fi, this one's number, the
+secret: the board stays on the home Wi-Fi, as Team Stump recommend); or joining
+a Stump's own Wi-Fi. The Heltec on the Stump's own Wi-Fi is at .200; on the
+router, its own address (.222 for the first).
 
-**Update its Stump** copies another release and keeps everything else; **Its
-settings** reads, changes and saves them (as `/admin` does); **Check it
-starts** restarts it and listens. The packs (Tavern, rnfs) add to a Stump
-already there, every file checked against the pack's hashes.
+It asks first, then erases the board and writes the release's **Stump image**
+for its chip (MicroPython with the Stump built in: the CAM's at 0x0, the
+WROVER's at 0x1000; SandBox_Stump_On 1.0.0-beta.57 on), copies the files the
+image hasn't built in (each checked on the board), writes its settings, and
+**listens to it start** (up to 90 s): its pages, its address on the home Wi-Fi
+or why it didn't join, the chain linked or not, its Heltec answered or not,
+and what to note down for the next Stumps. A release without images gets plain
+MicroPython and every file (the CAM only). Join its Wi-Fi from a phone.
+
+**Update its Stump** keeps its settings, identity and card: on a Stump image
+with the same partition layout the new image is written in place, then the
+rest (an older layout is refused: an erase would give it a new identity); on
+plain MicroPython the files are copied. **Its settings** reads, changes and
+saves them (as `/admin` does) and listens to it start again; **Check it
+starts** restarts it and reports. The packs add to a Stump already there,
+every file checked against the pack's hashes.
 
 ## This handheld's Stump
 
@@ -109,7 +123,10 @@ packs, then runs R36MAX-Stump's installer with those answers: Team Stump's own
 wizard, the walk-up extras and the cockpit (Ports → LaBuche_Stump). Once it's
 there, **A updates it** (everything kept; **Y**: new answers), **Its
 password** changes it, **Check it** asks it what it runs. The first install
-needs internet (packages, SandBox_Stump_On, the Stump's Python).
+needs internet (packages, SandBox_Stump_On, the Stump's Python). From
+R36MAX-Stump 2.5.0 the Stump runs only while its Port is open (Ports →
+LaBuche_Stump), like a ROM, so never beside the Provisioner: its page says
+so, and a new password applies when its Port opens next.
 
 ArkOS / dArkOS, as `ark` (apt and sudo): the same for **FireFly**, whose
 own installer keeps its identity, contacts and messages on an update.

@@ -109,7 +109,12 @@ class MakeAStump(unittest.TestCase):
     def test_a_new_stump_from_the_real_bundle(self):
         ok, msg = self.make()
         self.assertTrue(ok, msg)
-        self.assertEqual(self.flashed, [BUNDLE.files["micropython.bin"][1]])     # MicroPython, the pinned one
+        img = BUNDLE.image_for("esp32s3")[0]
+        if img:                                                                    # its Stump image (beta.57 on)
+            with open(img, "rb") as f:
+                self.assertEqual(self.flashed, [hashlib.sha256(f.read()).hexdigest()])
+        else:                                                                      # MicroPython, the pinned one
+            self.assertEqual(self.flashed, [BUNDLE.files["micropython.bin"][1]])
         on_board = self.board_files()
         for path, data, sha in BUNDLE.app():
             self.assertEqual(on_board.get(path), sha, path)                       # every file, as released

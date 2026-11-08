@@ -10,6 +10,49 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.13
+
+Caught up with SandBox_Stump_On 1.0.0-beta.56 to 60 and R36MAX-Stump 2.5.0,
+as Team Stump's Arborist does it (the same steps over USB serial):
+
+- **The Stump images.** Make a Stump writes the release's image for the
+  board's chip (MicroPython with the Stump built in): the S3-CAM's at 0x0,
+  the WROVER's at 0x1000, then only the files the image hasn't built in
+  (b60: 17 files, 667 KB, not 93 and 1.3 MB). A release without images
+  gets plain MicroPython and every file, as before.
+- **Updates in place.** A Stump on an image with the same partition layout
+  gets the new image written without an erase (its settings, identity and
+  card stay), then the rest; old copies of built-in modules are removed. An
+  older layout is refused, with why (an erase gives it a new identity). A
+  Stump on plain MicroPython is updated file by file, and told that made
+  again it gets the image.
+- **The ESP32-WROVER is a Stump board.** A classic ESP32 gets the Stump's
+  rows (and its packs); one without PSRAM (a WROOM) is refused once it
+  answers; a WROVER needs a release with images.
+- **The form as beta.58-60 ask it.** Its password (/admin) is needed; the
+  fserv bot takes the same one unless it has its own. The chain gets
+  **Joins the first over the router** (the first Stump's address on the home
+  Wi-Fi, its number, the secret needed; the board stays on the home Wi-Fi).
+  The Heltec on the Stump's own Wi-Fi is at .200 (past what the hotspot
+  hands out; .2 read back as before); on the router .222 is suggested, its
+  own for each.
+- **It listens to the board start** after Make and Save (up to 90 s) and
+  says, a row each: its pages, its own Wi-Fi, its address on the home Wi-Fi
+  or why it didn't join (wrong password, not found), the chain linked or no
+  answer, who joined below or was refused, its Heltec answered or not; then
+  what to note down for the next Stumps. Check it starts reports the same.
+- **The shelf** takes a release's images and its `stump_image.py`, checked
+  (the same release as the bundle, ESP32 images). It carries Sandbox
+  1.0.0-beta.60 (both images, its tavern, rnfs, nomadnet and simple packs)
+  and the handheld's Sandbox 2.5.0-b.55.
+- **This handheld's Stump, with beta.58+ and R36MAX-Stump 2.5.0.** The
+  answers carry beta.58's "Admin password (/admin)" and "Use the same
+  password for the fserv bot?" beside the old ones (Official b48 still gets
+  the one password its way): Team Stump's real wizard takes them at b48, b51
+  and b60, new, again and Update. With 2.5.0 the Stump runs only while its
+  Port is open (never beside the Provisioner): its page says so instead of
+  "not answering", and a new password applies when its Port opens next.
+
 ## v0.3.0-beta.12
 
 - **The Library**: everything this Provisioner carries, with no board
