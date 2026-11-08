@@ -35,7 +35,7 @@ NAMES = {"1a86:5523": "CH341 USB-serial", "0403:6010": "FTDI USB-serial"}
 BOARDS = [
     {"id": "heltec_v3", "name": "Heltec V3 (LoRa)", "chip": "esp32s3", "usb": ("10c4:ea60",)},
     {"id": "esp32s3", "name": "ESP32-S3 (Freenove CAM or similar)", "chip": "esp32s3", "usb": None},
-    {"id": "esp32", "name": "Classic ESP32", "chip": "esp32", "usb": None},
+    {"id": "esp32", "name": "ESP32 (a WROVER is a Stump board)", "chip": "esp32", "usb": None},
 ]
 
 

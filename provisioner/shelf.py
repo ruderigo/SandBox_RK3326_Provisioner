@@ -41,7 +41,8 @@ UA = "RK3326-Provisioner"
 PRODUCTS = {
     "stump": {"title": "The Stump (for the CAM boards)", "short": "Stump",
               "official": "ruderigo/LaBuche-Stump", "sandbox": "ruderigo/SandBox_Stump_On",
-              "main": r"^Stump-(.+)\.bundle$", "assets": [r"^Stump-.+\.bundle$", r"^[a-z][a-z0-9_-]*-pack-.+\.zip$"],
+              "main": r"^Stump-(.+)\.bundle$", "assets": [r"^Stump-.+\.bundle$", r"^[a-z][a-z0-9_-]*-pack-.+\.zip$",
+                         r"^stump-.+-(s3cam|wrover)\.bin$", r"^stump_image\.py$"],    # its images (beta.57 on)
               "file": (".bundle",)},
     "handheld": {"title": "This handheld's Stump", "short": "handheld Stump",
                  "official": "ruderigo/R36MAX-Stump", "sandbox": "ruderigo/SandBox_RK3326_Stump",
@@ -241,7 +242,20 @@ def check(product, files):
         raise ShelfError("no %s file among them" % PRODUCTS[product]["short"])
     data = files[names[0]]
     if product == "stump":
-        bundle_info(data)
+        release = bundle_info(data)[0]
+        images = [n for n in files if re.match(r"^stump-.+-(s3cam|wrover)\.bin$", n)]
+        if images:
+            head = files.get("stump_image.py", b"").decode("utf-8", "replace")
+            m = re.search(r"^RELEASE\s*=\s*['\"]([^'\"]+)['\"]", head, re.M)
+            if not m or not re.search(r"^PARTITIONS\s*=", head, re.M):
+                raise ShelfError("its Stump images came without their stump_image.py")
+            if m.group(1) != release:
+                raise ShelfError("its stump_image.py is for %s, its bundle %s" % (m.group(1), release))
+            for n in images:
+                if not files[n][:1] == b"\xe9":
+                    raise ShelfError("%s isn't an ESP32 image" % n)
+                if "-%s-" % release not in n:
+                    raise ShelfError("%s isn't for %s" % (n, release))
         from . import packs
         for n, d in files.items():
             if n.endswith(".zip"):

@@ -12,6 +12,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+os.environ.setdefault("PROVISIONER_LISTEN_S", "6")    # a setup listens 90 s at most; here less
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 os.environ["PROVISIONER_ESPTOOL"] = os.path.join(ROOT, "tests", "fake_esptool.py")
 from provisioner.ui import app as A  # noqa: E402
@@ -86,8 +87,11 @@ class Screens(Base):
         a.handle("a")
         self.assertEqual(a.screen, "jobs")
         self.shot(a, "04-jobs-esp32")
-        self.assertEqual([r.get("entry", {}).get("id", r["kind"]) for r in a.jobs()],
+        ids = [r.get("entry", {}).get("id", r["kind"]) for r in a.jobs()]
+        self.assertEqual(ids[:5], ["src_stump", "stump_new", "stump_update", "stump_settings", "stump_check"])  # a WROVER
+        self.assertEqual([i for i in ids if i not in ("src_stump", "pack") and not i.startswith("stump_")],
                          ["wled-16.0.1-esp32", "micropython-1.29.0-esp32", "fromfile", "log", "erase"])
+        a.jsel = ids.index("wled-16.0.1-esp32")
         a.handle("a")                                   # WLED: asks first, Yes highlighted (app only)
         self.assertEqual((a.confirm["title"], a.confirm["choice"]), ("Flash WLED 16.0.1?", 1))
         self.shot(a, "05-confirm-app")
@@ -107,7 +111,7 @@ class Screens(Base):
         a.handle("a")
         self.wait(a)
         a.handle("a")
-        a.handle("down")
+        a.jsel = [r.get("entry", {}).get("id") for r in a.jobs()].index("micropython-1.29.0-esp32")
         a.handle("a")                                   # MicroPython: full install
         self.assertEqual(a.confirm["choice"], 0)        # No, unless you move to Yes
         self.shot(a, "08-confirm-full")
@@ -338,14 +342,17 @@ class MakeAStumpOnScreen(Base):
         a.handle(("text", "verside"))
         a.handle("start")
         self.assertEqual(a.form["a"]["name"], "Riverside")
-        a.form["sel"] = 1                               # its password: /admin and the fserv bot
+        a.form["sel"] = 1                               # its password: /admin, and the fserv bot the same
         self.type_in(a, "pass1234")
-        a.form["sel"] = 6                               # Chain: right twice -> joins another Stump
+        a.form["sel"] = 6                               # Chain: right twice -> over the router, three: its Wi-Fi
         a.handle("right")
+        a.handle("right")
+        self.assertEqual(a.form["a"]["chain"], "lan")
+        self.assertEqual([r["key"] for r in a.form_rows()][7:10], ["parentIp", "subnet", "secret"])
         a.handle("right")
         self.assertEqual(a.form["a"]["chain"], "member")
         rows = [r["key"] for r in a.form_rows()]
-        self.assertEqual(rows[:3], ["name", "opw", "pw"])
+        self.assertEqual(rows[:3], ["name", "pw", "botpw"])
         self.assertEqual(rows[6:10], ["chain", "upSsid", "subnet", "secret"])
         a.form["sel"] = 9
         self.type_in(a, "s3cret")
@@ -362,9 +369,10 @@ class MakeAStumpOnScreen(Base):
         self.assertTrue(a.task.ok, a.task.msg)
         with open(os.path.join(self.root, "config.py")) as f:
             cfg = f.read()
-        for want in ("NODE_NAME = 'Riverside'", "FSERVBOT_OP_PASSWORD = 'pass1234'",
+        self.assertTrue(a.task.report, "what it said as it started")
+        for want in ("NODE_NAME = 'Riverside'", "FSERVBOT_OP_PASSWORD = 'pass1234'", "AUTH_ADMIN_PASSWORD = 'pass1234'",
                      "CHAIN_ENABLED = True",
-                     "CHAIN_SUBNET = 5", "CHAIN_SECRET = 's3cret'", "'192.168.5.2'"):
+                     "CHAIN_SUBNET = 5", "CHAIN_SECRET = 's3cret'", "'192.168.5.200'"):
             self.assertIn(want, cfg)
 
         # Its settings, read back into the form, one changed, saved.
@@ -593,8 +601,11 @@ class FromFileAndPacks(Base):
         self.pick(a, "adapter.bin")
         self.assertIsNone(a.confirm)
         self.assertIn("built for the ESP32S3", a.toast_text)
-        self.pick(a, "tavern.zip")
-        self.assertIn("is for a Stump", a.toast_text)
+        self.pick(a, "tavern.zip")                      # a classic ESP32 can be a WROVER: a Stump, so its packs
+        self.assertTrue(a.confirm["title"].startswith("Add tavern"), a.confirm)
+        a.handle("b")
+        if a.screen != "files":
+            self.browse(a)
         self.pick(a, "wled.bin")                        # an app image for this chip: asks, then the app slot
         self.assertEqual(a.confirm["title"], "Flash wled.bin?")
         self.assertIn("An app image", a.confirm["lines"][0])

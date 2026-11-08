@@ -54,6 +54,16 @@ os.rename = lambda a, b: _rename(board(a), board(b))
 os.mkdir = lambda p, *a: _mkdir(board(p), *a)
 os.listdir = lambda p=".": _listdir(board(p))
 sys.path[:0] = [ROOT, os.path.join(HERE, "stump_fixtures")]
+# A Stump image (FAKE_FROZEN: a folder standing in for the modules built in,
+# searched after the board's own files, as MicroPython's .frozen), the chip's
+# name (FAKE_MACHINE) and its memory (FAKE_MEM bytes; PSRAM gives megabytes).
+if os.environ.get("FAKE_FROZEN"):
+    sys.path.append(os.environ["FAKE_FROZEN"])
+os.uname = lambda: types.SimpleNamespace(machine=os.environ.get("FAKE_MACHINE", "Generic ESP32S3 module with Octal-SPIRAM with ESP32S3"),
+                                         sysname="esp32", release="1.28.0")
+import gc  # noqa: E402
+gc.mem_free = lambda: int(os.environ.get("FAKE_MEM", str(8 * 1024 * 1024)))
+gc.mem_alloc = lambda: 0
 try:
     exec(compile(code, "<stdin>", "exec"), {"__name__": "__main__"})
 except BaseException:

@@ -24,6 +24,7 @@ from .sdl import F16, F20, F24, F30B, rgb
 BG, PANEL, PANEL2, BORDER = rgb("1b1512"), rgb("2a2119"), rgb("221b15"), rgb("493c2e")
 EMBER, EMBER_BRIGHT, TEXT, MUTED = rgb("d97a3a"), rgb("f0a050"), rgb("ecdfc8"), rgb("9c8d76")
 ERROR, OK = rgb("e07a5a"), rgb("9cb876")
+STUMP_BOARDS = ("esp32s3", "esp32")      # boards.py ids: the Freenove ESP32-S3-CAM, a classic ESP32 (a WROVER)
 TOP = 96                                   # under the header
 W = H = 720                                # the canvas: set from the display (set_canvas)
 BOT = H - 38                               # the hints bar's top
@@ -46,7 +47,9 @@ def window(sel, n, vis, ahead=1):
     """The first row shown, so sel is in view with `ahead` rows after it when there are."""
     return max(0, min(sel - (vis - 1 - ahead), n - vis))
 THEME = {"BG": BG, "PANEL": PANEL, "PANEL2": PANEL2, "BORDER": BORDER, "EMBER": EMBER, "TEXT": TEXT, "MUTED": MUTED}
-CHAINS = [("none", "No chain"), ("first", "First Stump of a chain"), ("member", "Joins another Stump")]
+CHAINS = [("none", "No chain"), ("first", "First Stump of a chain"), ("lan", "Joins the first over the router"),
+          ("member", "Joins a Stump's own Wi-Fi")]
+BOTPW = [("same", "The same password"), ("own", "Its own password")]
 RADIOS = [("ap", "Heltec on its own Wi-Fi"), ("lan", "Heltec on the home Wi-Fi"), ("none", "No LoRa radio")]
 HELTECS = [("usb", "Heltec on USB"), ("ble", "Heltec over Bluetooth"), ("none", "No Heltec")]
 YESNO = [("no", "No"), ("yes", "Yes")]
@@ -58,6 +61,7 @@ class Task:
     def __init__(self, title, fn):
         self.title, self.step, self.pct = title, "Starting", None
         self.lines, self.done, self.ok, self.msg, self.result = [], False, False, "", None
+        self.report = []                             # [(what, says, "ok"|"warn"|"err"|"")]: a Stump's start, heard
         self._lock = threading.Lock()
         threading.Thread(target=self._run, args=(fn,), daemon=True).start()
 
@@ -259,7 +263,7 @@ class App:
         """The rows of the JOBS screen for the current board."""
         b = self.known.get(self.cur["port"], {}).get("board", {})
         rows = []
-        if b.get("id") == "esp32s3":           # the Freenove CAM: a Stump
+        if b.get("id") in STUMP_BOARDS:        # the Freenove CAM, or a WROVER: a Stump
             rows.append({"kind": "src_stump"})
             rows += [{"kind": k} for k in ("stump_new", "stump_update", "stump_settings", "stump_check")]
             rows += [{"kind": "pack", "path": p, "plan": plan, "error": err} for p, plan, err in self.bundled_packs()]
@@ -698,8 +702,8 @@ class App:
             return
         board = self.known[self.cur["port"]]["board"]
         if path.lower().endswith(".zip"):
-            if board.get("id") != "esp32s3":
-                self.toast("A pack's .zip is for a Stump (ESP32-S3)", 4)
+            if board.get("id") not in STUMP_BOARDS:
+                self.toast("A pack's .zip is for a Stump (an ESP32-S3-CAM or a WROVER)", 4)
                 return
             try:
                 plan = packs.plan_file(path, packs.known_names(self.bundle()))
@@ -754,6 +758,25 @@ class App:
     def link_for(self, port):
         return lambda: self.open_link(port)
 
+    def chip_of(self, port):
+        return (self.known.get(port, {}).get("board") or {}).get("chip") or "esp32s3"
+
+    def flash_for(self, port, t):
+        """flash(path, offset, erase) for stump.make on this board's chip."""
+        chip = self.chip_of(port)
+        return lambda path, offset, erase: flasher.write_image(port, chip, path, offset, t.line, self._pct(t), erase)
+
+    def stump_image_line(self, port):
+        """What Make writes on this board: the Stump image, or MicroPython."""
+        b, chip = self.bundle(), self.chip_of(port)
+        img, offset = b.image_for(chip) if b else (None, "0x0")
+        if img:
+            return "Its Stump image %s (MicroPython %s with the Stump built in) at %s." % (b.release, b.micropython, offset)
+        if chip != "esp32s3":
+            return "Stump %s has no image for a WROVER: it can't be made a Stump from it." % (b.release if b else "?")
+        return "Stump %s, MicroPython %s (no Stump image in this release: copied file by file)." % (
+            b.release if b else "?", b.micropython if b else "?")
+
     def stump_job(self, kind):
         b = self.bundle()
         if not b:
@@ -761,7 +784,8 @@ class App:
             return
         port = self.cur["port"]
         if kind == "stump_new":
-            self.open_form("new", {"name": "", "pw": "", "opw": "", "ssid": "", "wpass": "", "hotspot": "", "chain": "none",
+            self.open_form("new", {"name": "", "pw": "", "opw": "", "botpw": "same", "parentIp": "", "ssid": "", "wpass": "",
+                                   "hotspot": "", "chain": "none",
                                    "radio": "ap", "secret": "", "upSsid": b.default_ssid, "subnet": "5", "hhost": "",
                                    "features": list(stump.FEATURES[:3])})
         elif kind == "stump_update":
@@ -769,7 +793,8 @@ class App:
                      ["Copies the new release onto the Stump on this board.",
                       "Its settings, its identity on the mesh and its card stay.", "About 4 minutes."],
                      "Update it", lambda: self.run_stump("Updating the Stump", lambda t: stump.make(
-                         b, {}, self.link_for(port), None, self._step(t), self._pct(t), t.line, update=True)))
+                         b, {}, self.link_for(port), self.flash_for(port, t), self._step(t), self._pct(t), t.line,
+                         update=True, chip=self.chip_of(port))))
         elif kind == "stump_settings":
             def work(t):
                 t.step = "Reading its settings (it restarts after)"
@@ -781,7 +806,8 @@ class App:
             self.task.after = "form"
             self.screen = "run"
         elif kind == "stump_check":
-            self.run_stump("Checking it starts", lambda t: stump.check_job(self.link_for(port), self._step(t), t.line))
+            self.run_stump("Checking it starts", lambda t: stump.check_job(self.link_for(port), self._step(t), t.line,
+                                                                            report=t.report))
 
     def _step(self, t):
         def step(s):
@@ -812,24 +838,33 @@ class App:
         keep = f["mode"] == "settings"
         b = self.bundle()
         rows = [{"key": "name", "label": "Its name", "kind": "text", "max": 20, "blank": "needed"},
-                {"key": "opw", "label": "Its password", "kind": "secret", "max": 64,
-                 "blank": "keeps the one it has" if keep else "needed: /admin and the fserv bot"},
-                {"key": "pw", "label": "Separate /admin password", "kind": "secret", "max": 64,
-                 "blank": "keeps the one it has" if keep else "none: /admin takes the one above"},
+                {"key": "pw", "label": "Its password (/admin)", "kind": "secret", "max": 64,
+                 "blank": "keeps the one it has" if keep else "needed"},
+                {"key": "botpw", "label": "The fserv bot", "kind": "choice", "choices": BOTPW}]
+        if a.get("botpw") == "own":
+            rows += [{"key": "opw", "label": "The fserv bot's password", "kind": "secret", "max": 64,
+                      "blank": "keeps the one it has" if keep else "none: editing off"}]
+        rows += [
                 {"key": "ssid", "label": "Home Wi-Fi (optional)", "kind": "text", "max": 32, "blank": "none"},
                 {"key": "wpass", "label": "Home Wi-Fi password", "kind": "secret", "max": 63,
                  "blank": "keeps the one it has" if keep else "none"},
                 {"key": "hotspot", "label": "Its own Wi-Fi's name", "kind": "text", "max": 32,
                  "blank": b.default_ssid if b else "the default"},
                 {"key": "chain", "label": "Chain", "kind": "choice", "choices": CHAINS}]
+        if a.get("chain") == "lan":
+            rows += [{"key": "parentIp", "label": "The first Stump's address", "kind": "text", "max": 15,
+                      "blank": "on the home Wi-Fi, like 192.168.0.173"},
+                     {"key": "subnet", "label": "Its number (5-254)", "kind": "text", "max": 3}]
         if a.get("chain") == "member":
             rows += [{"key": "upSsid", "label": "Joins (its Wi-Fi)", "kind": "text", "max": 32},
                      {"key": "subnet", "label": "Its number (5-254)", "kind": "text", "max": 3}]
-        if a.get("chain") in ("first", "member"):
-            rows += [{"key": "secret", "label": "The chain's secret", "kind": "text", "max": 64, "blank": "none (open)"}]
+        if a.get("chain") in ("first", "member", "lan"):
+            rows += [{"key": "secret", "label": "The chain's secret", "kind": "text", "max": 64,
+                      "blank": "needed over the router" if a.get("chain") == "lan" else "none (open)"}]
         rows += [{"key": "radio", "label": "LoRa", "kind": "choice", "choices": RADIOS}]
         if a.get("radio") == "lan":
-            rows += [{"key": "hhost", "label": "The Heltec's address", "kind": "text", "max": 15}]
+            rows += [{"key": "hhost", "label": "The Heltec's address", "kind": "text", "max": 15,
+                      "blank": "on the home Wi-Fi: .222 is a good one, its own for each"}]
         rows += [{"key": "go", "label": "Make the Stump" if f["mode"] == "new" else "Save its settings", "kind": "button"}]
         return rows
 
@@ -860,7 +895,7 @@ class App:
         if self.form["mode"] == "handheld":
             return self.submit_handheld()
         f, b, port = self.form, self.bundle(), self.cur["port"]
-        a = dict(f["a"], pw2=f["a"].get("pw", ""))
+        a = dict(f["a"], pw2=f["a"].get("pw", ""), lanOk=bool(b and b.release_at_least("1.0.0-beta.57")))
         if f["mode"] == "settings":
             a["keepWifiPass"] = True
         s = stump.settings_from(dict(a, requireAdmin=f["mode"] == "new"))
@@ -870,19 +905,21 @@ class App:
         if f["mode"] == "new":
             info = self.known[port]["info"]
             lines = ["Erases everything on the board: a Stump on it now loses its identity.",
-                     "Stump %s, MicroPython %s. About 5 minutes." % (b.release, b.micropython)]
-            if not info.get("psram_mb"):
+                     self.stump_image_line(port) + " About 5 minutes."]
+            if not info.get("psram_mb") and self.chip_of(port) == "esp32s3":
                 lines.append("esptool didn't report PSRAM: the Stump needs the octal-PSRAM board (Freenove N16R8).")
+            elif self.chip_of(port) == "esp32":
+                lines.append("A Stump needs PSRAM: an ESP32-WROVER (a WROOM is refused once it answers).")
             self.ask("Make a Stump on this board?", lines + s["warn"], "Make it", lambda: self.run_stump(
                 "Making the Stump", lambda t: stump.make(
-                    b, a, self.link_for(port),
-                    lambda img: flasher.write_image(port, "esp32s3", img, "0x0", t.line, self._pct(t)),
-                    self._step(t), self._pct(t), t.line)), danger=True)
+                    b, a, self.link_for(port), self.flash_for(port, t),
+                    self._step(t), self._pct(t), t.line, chip=self.chip_of(port), report=t.report)), danger=True)
         else:
             self.ask("Save its settings?", ["Written by the Stump's own settings.py, as /admin does.",
                                             "Its config.py is kept as config.py.bak. It restarts."] + s["warn"],
                      "Save", lambda: self.run_stump("Saving its settings", lambda t: stump.save_job(
-                         a, self.link_for(port), self._step(t), t.line)))
+                         a, self.link_for(port), self._step(t), t.line, report=t.report,
+                         default_ssid=b.default_ssid if b else "Stump")))
 
     def draw_form(self):
         d, f = self.d, self.form
@@ -1070,7 +1107,7 @@ class App:
                 y0 = TOP + 28 + 84 + (40 if H >= 600 else 12)
             d.text(F24, 24, y0, "Plug a board into the hub", TEXT)
             text = [wrap(d, F16, t, W - 48) for t in (
-                "With a data cable: a Heltec V3, an ESP32-S3 (Freenove CAM) or a classic ESP32. "
+                "With a data cable: a Heltec V3, an ESP32-S3 (Freenove CAM) or an ESP32-WROVER. "
                 "It shows up here by itself.",
                 "A board with two USB-C ports: either one flashes it; once it's a USB Wi-Fi adapter, "
                 "use the serial chip's port.")]
@@ -1920,10 +1957,11 @@ class App:
             elif r["kind"].startswith("stump_"):
                 rel = b.release if b else "?"
                 title, about, tag, tc = {
-                    "stump_new": ("Make a Stump", "Erases it, writes MicroPython and the Stump %s, asks its name, "
-                                  "password, Wi-Fi, chain, radio." % rel, "erases", ERROR),
-                    "stump_update": ("Update its Stump", "To %s; its settings, identity and card stay." % rel,
-                                     "keeps settings", OK),
+                    "stump_new": ("Make a Stump", "Erases it, writes the Stump %s%s, asks its name, "
+                                  "password, Wi-Fi, chain, radio." % (rel, " image" if b and b.images else ""),
+                                  "erases", ERROR),
+                    "stump_update": ("Update its Stump", "To %s%s; its settings, identity and card stay." % (
+                        rel, " (its image in place when it runs one)" if b and b.images else ""), "keeps settings", OK),
                     "stump_settings": ("Its Stump's settings", "Read them, change them, save (as /admin does).", "", MUTED),
                     "stump_check": ("Check it starts", "Restarts it and listens: release, serving, problems.", "", MUTED),
                 }[r["kind"]]
@@ -1983,6 +2021,17 @@ class App:
             for i, s in enumerate(msg):
                 d.text(F20, 36, y + 10 + i * 28, s, OK if t.ok else ERROR, W - 72)
             y += 20 + 28 * len(msg) + 18
+            # What it said as it started (its Wi-Fi, the chain, its Heltec): a row each
+            rows = t.report[:max(0, (BOT - 6 - y - 60) // 24)]
+            lw = max([d.text_width(F16, k) for k, _, _ in rows if k] or [0]) + 14
+            for k, v, lvl in rows:
+                if k:
+                    d.text(F16, 24, y, k, MUTED)
+                d.text(F16, 24 + (lw if k else 0), y, v, {"ok": OK, "err": ERROR, "warn": EMBER_BRIGHT}.get(lvl, TEXT),
+                       W - 48 - (lw if k else 0))
+                y += 24
+            if rows:
+                y += 10
         else:
             y += 18
         d.text(F16, 20, y, "LOG", EMBER)
