@@ -712,9 +712,10 @@ class ThisHandheld(Base):
         self.home = tempfile.mkdtemp(prefix="home-")
         self.addCleanup(shutil.rmtree, self.home, True)
 
-    def handheld_app(self, installed=False, why="", online=None, offline=False):
+    def handheld_app(self, installed=False, why="", online=None, offline=False, port=False):
         a = self.app([])
-        a.handheld_fn = lambda: {"installer": None, "why": why, "folder": "/home/ark/Stump", "installed": installed}
+        a.handheld_fn = lambda: {"installer": None, "why": why, "folder": "/home/ark/Stump", "installed": installed,
+                                 "port": port}
         a.clones = False
         self.runs, self.fetched = [], []
 
@@ -783,6 +784,25 @@ class ThisHandheld(Base):
         self.assertEqual(a.stump_copy()["version"], "1.0.0-beta.51")
         self.assertEqual(a.bundle().release, "1.0.0-beta.51")
         self.assertIn("now", a.toast_text)
+
+    def test_a_stump_that_runs_from_its_port(self):
+        """R36MAX-Stump 2.5.0: the Stump runs only while its Port is open, so
+        never beside the Provisioner: not running is how it should be."""
+        a = self.handheld_app(installed=True, port=True)
+        a.here = {"none": True}
+        text, colour = a.installed_line("handheld")
+        self.assertIn("runs while its Port is open", text)
+        self.assertNotEqual(colour, A.ERROR)
+        a.open_product("handheld")
+        a.psel = [r["kind"] for r in a.product_rows()].index("hh_check")
+        a.handle("a")
+        self.wait(a)
+        self.assertTrue(a.task.ok, a.task.msg)
+        self.assertIn("Ports -> LaBuche_Stump", a.task.msg)
+        self.shot(a, "77-handheld-port")
+        b = self.handheld_app(installed=True, port=False)      # 2.4 and earlier: a boot service
+        b.here = {"none": True}
+        self.assertEqual(b.installed_line("handheld")[1], A.ERROR)
 
     def test_offline_the_shelf_and_a_file(self):
         a = self.handheld_app(offline=True)

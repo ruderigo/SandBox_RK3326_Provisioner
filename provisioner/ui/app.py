@@ -1174,6 +1174,8 @@ class App:
                 return "Stump %s · %s%s%s" % (h.get("release", "?"), h.get("name", "?"),
                                              " · " + h["chain"] if h.get("chain") else "",
                                              " · installer %s" % v if v else ""), OK
+            if st.get("installed") and st.get("port"):
+                return "Installed%s · runs while its Port is open" % (" · installer %s" % v if v else ""), OK
             if st.get("installed"):
                 return "Installed, not answering: ~/Stump/stump.log says why", ERROR
             return "None yet", MUTED
@@ -1611,7 +1613,8 @@ class App:
                       % (inst["repo"], inst["version"]),
                       "Its settings, identity on the mesh, files and chain stay. (Y on the row: new answers.)"
                       + (" /admin's password isn't its own: set Its password after." if self.admin_state() != "SET" else ""),
-                      "The Stump restarts. A few minutes."],
+                      ("Checked once, then stopped: it runs while its Port is open. A few minutes."
+                       if st.get("port") else "The Stump restarts. A few minutes.")],
                      "Update it", lambda: self.run_handheld("Updating this handheld's Stump",
                                                             handheld.update_answers(st.get("folder"))))
         else:
@@ -1635,7 +1638,9 @@ class App:
                              [("/admin and the fserv bot take it (unless a separate /admin one is set)." if one else
                                "/admin takes this one instead of its password."),
                               "Written into ~/Stump/config.py by the Stump's own settings (as /admin does); "
-                              "config.py.bak kept. The Stump restarts with it."],
+                              "config.py.bak kept. " + ("It takes it when its Port opens next."
+                                                        if (self.handheld or {}).get("port") else
+                                                        "The Stump restarts with it.")],
                              "Set it", lambda: self.run_task("Setting %s" % name, lambda t: self.set_password_fn(
                                  folder, key, first, t.line)))
             self.kb = Keyboard("Again: %s" % name, "", 64, secret=True, hint="The same again")
@@ -1806,6 +1811,9 @@ class App:
             if h and not h.get("none"):
                 return True, "Stump %s · %s%s: it answers." % (h.get("release", "?"), h.get("name", "?"),
                                                               " · " + h["chain"] if h.get("chain") else ""), None
+            if st.get("installed") and st.get("port"):
+                return True, ("It's installed, and not running: %s So never beside the Provisioner (one Port "
+                              "at a time). Its check runs at each Install or Update." % handheld.PORT_NOTE), None
             if st.get("installed"):
                 return False, "It's installed but doesn't answer: ~/Stump/stump.log says why (Update starts it again).", None
             return False, "No Stump on this handheld yet: Install a Stump.", None

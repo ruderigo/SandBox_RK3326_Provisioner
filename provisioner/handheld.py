@@ -57,6 +57,26 @@ def system_why(home=None, euid=None, which=shutil.which):
     return ""
 
 
+def runs_from_port(home=None, user=None, etc="/etc/systemd/system"):
+    """True when nothing starts the Stump in the background (R36MAX-Stump 2.5.0
+    on): it runs only while its Port (LaBuche_Stump) is open, like a ROM, so
+    never beside the Provisioner (a Port too, one at a time). False when a boot
+    service (stump-$USER) or an enabled start-at-login (systemd --user) is there."""
+    home = home or os.path.expanduser("~")
+    user = user if user is not None else (os.environ.get("USER") or "")
+    if user and os.path.exists(os.path.join(etc, "stump-%s.service" % user)):
+        return False
+    wants = os.path.join(home, ".config", "systemd", "user")
+    try:
+        targets = [d for d in os.listdir(wants) if d.endswith(".wants")]
+    except OSError:
+        targets = []
+    return not any(os.path.lexists(os.path.join(wants, d, "stump.service")) for d in targets)
+
+
+PORT_NOTE = "It runs only while its Port is open: Ports -> LaBuche_Stump."
+
+
 def state(home=None, euid=None, which=shutil.which):
     """What the BOARDS screen's row shows: {installer, why, installed, folder},
     or None where it has no place (not a handheld: no installer, no apt)."""
@@ -67,7 +87,7 @@ def state(home=None, euid=None, which=shutil.which):
         return None                                     # not a handheld
     folder = os.path.join(home, STUMP)
     return {"installer": inst, "why": why, "folder": folder,
-            "installed": os.path.isfile(os.path.join(folder, "stump_pc.py"))}
+            "installed": os.path.isfile(os.path.join(folder, "stump_pc.py")), "port": runs_from_port(home)}
 
 
 def form_defaults(here=None):
@@ -87,8 +107,10 @@ def current_passwords(folder, home=None):
     cfg = os.path.join(folder, "config.py")
     own = password_state(folder, "AUTH_ADMIN_PASSWORD", home) == "SET"
     op = _value_in(cfg, "FSERVBOT_OP_PASSWORD") or ""
-    return {"pw": op if password_state(folder, "FSERVBOT_OP_PASSWORD", home) == "SET" else "",
-            "apw": (_value_in(cfg, "AUTH_ADMIN_PASSWORD") or "") if own else ""}
+    pw = op if password_state(folder, "FSERVBOT_OP_PASSWORD", home) == "SET" else ""
+    apw = (_value_in(cfg, "AUTH_ADMIN_PASSWORD") or "") if own else ""
+    # beta.58 on writes /admin's even when it's the same one: separate only if it differs
+    return {"pw": pw, "apw": "" if apw == pw else apw}
 
 
 def answers(a, folder, again=False, admin_state="SET", current=None):
@@ -124,9 +146,14 @@ def answers(a, folder, again=False, admin_state="SET", current=None):
                           "none": "None"}[a.get("heltec") or "usb"],
            "install rnfs": a.get("rnfs") == "yes", "install tavern": a.get("tavern") == "yes",
            "start this stump automatically when you log in": True,
-           # The one password: the fserv bot's operator's, and /admin's with the
-           # separate one left blank. "Change any of those now?" yes, so the wizard
-           # writes AUTH_ADMIN_PASSWORD (blank) instead of leaving SandBox_Stump_On's.
+           # beta.58 on: "Admin password (/admin)" is required, then "Use the same
+           # password for the fserv bot?" (no: the bot's own is asked).
+           "admin password": apw or pw, "use the same password for the fserv bot": not apw,
+           # Before beta.58 (Official b48, older Sandbox): the one password is the
+           # fserv bot operator's, and /admin's with the separate one left blank.
+           # "Change any of those now?" yes, so the wizard writes AUTH_ADMIN_PASSWORD
+           # (blank) instead of leaving SandBox_Stump_On's. Read by beta.58+ only when
+           # the bot's own password is asked: the same one, pw.
            "fserv bot operator password": pw, "change any of those now": True,
            "admin password for /admin": apw,
            # Questions with no default of their own (the --answers-template values)
@@ -195,9 +222,11 @@ def run(installer, ans, line, step, home=None, popen=subprocess.Popen):
         except OSError:
             pass
     if rc == 0:
+        if up and runs_from_port(home):
+            return True, "It answered its check (%s), then stopped. %s" % (up, PORT_NOTE)
         if up:
             return True, "The Stump is up: %s. Its cockpit: Ports -> LaBuche_Stump." % up
-        return True, "Installed, but the Stump isn't answering yet: see ~/Stump/stump.log."
+        return True, "Installed, but the Stump didn't answer its check: ~/Stump/stump.log says why."
     return False, last_x or ("The installer stopped (%d): %s" % (rc, " / ".join(tail[-2:])))
 
 
@@ -282,7 +311,7 @@ def write_values(folder, values, run=subprocess.run):
     return ""
 
 
-def set_password(folder, key, pw, line, run=subprocess.run, home=None):
+def set_password(folder, key, pw, line, run=subprocess.run, home=None, port=None):
     """Sets one of its passwords, then restarts it. (ok, message). Its one
     password (the fserv operator's) also clears SandBox_Stump_On's
     AUTH_ADMIN_PASSWORD when the wizard left it, so /admin takes it."""
@@ -297,7 +326,7 @@ def set_password(folder, key, pw, line, run=subprocess.run, home=None):
     if why:
         return False, why
     line("its %s password is set (config.py.bak kept)" % PASSWORDS[key])
-    return True, "Its %s password is set. %s" % (PASSWORDS[key], restart(line, run))
+    return True, "Its %s password is set. %s" % (PASSWORDS[key], restart(line, run, port=port))
 
 
 def clear_repo_admin(folder, line, run=subprocess.run, home=None):
@@ -312,8 +341,11 @@ def clear_repo_admin(folder, line, run=subprocess.run, home=None):
     return not why, why
 
 
-def restart(line, run=subprocess.run):
-    """Restarts the handheld's Stump (its user service, or install.sh's system one)."""
+def restart(line, run=subprocess.run, port=None):
+    """Restarts the handheld's Stump (its user service, or install.sh's system
+    one); none to restart when it runs only while its Port is open."""
+    if (runs_from_port() if port is None else port):
+        return "It takes it the next time its Port opens (Ports -> LaBuche_Stump)."
     user = os.environ.get("USER") or ""
     for cmd in (["systemctl", "--user", "restart", "stump"], ["sudo", "-n", "systemctl", "restart", "stump-%s" % user]):
         try:
