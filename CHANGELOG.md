@@ -12,9 +12,10 @@ its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
 ## v0.3.0-beta.15
 
-SandBox_Stump_On 1.0.0-beta.61: the **Bavard** pack, Tavern 1.2, plugin API 4.
+SandBox_Stump_On 1.0.0-beta.61 and 62: the **Bavard** pack, Tavern 1.2,
+plugin API 4; rooms with a scope and tagged plugin bots (nothing to change here).
 
-- **The shelf at Sandbox 1.0.0-beta.61**: its bundle, both Stump images, and
+- **The shelf at Sandbox 1.0.0-beta.62**: its bundle, both Stump images, and
   its five packs: **Bavard 1.1** (a test bot that never stops talking: alone,
   lines of numbers; with another Bavard on another Stump, the two play
   Molière turn by turn; it starts paused), Tavern 1.2, rnfs 1.2, NomadNet
@@ -27,8 +28,8 @@ SandBox_Stump_On 1.0.0-beta.61: the **Bavard** pack, Tavern 1.2, plugin API 4.
   files and restarts the Stump, saying what was left out (as Team Stump's
   provisioner does: Bavard plays its built-in scene without one). It used to
   stop with an error, the Stump not restarted.
-- Checked against b61: Team Stump's wizard with the handheld's answers (new,
-  again, Update).
+- Checked against b62: Team Stump's wizard with the handheld's answers (new,
+  again, Update); the Stump tests with the b62 copy.
 
 ## v0.3.0-beta.14
 

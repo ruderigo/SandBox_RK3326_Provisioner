@@ -817,13 +817,13 @@ class ThisHandheld(Base):
         return {"tag": "v" + version, "version": version, "prerelease": True, "url": "", "repo": "x", "assets": []}
 
     def test_the_page_and_whats_newer_online(self):
-        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.62")})
+        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.63")})
         self.assertEqual(a.rows(), [{"handheld": True}])
         self.shot(a, "70-boards-handheld")
         a.handle("a")
         self.assertEqual((a.screen, a.net), ("handheld", "online"))
         self.assertIn("1 newer", a.net_line()[0])
-        self.assertIn("Sandbox 1.0.0-beta.61 (online: 1.0.0-beta.62)", a.shelf_line("stump")[0])
+        self.assertIn("Sandbox 1.0.0-beta.62 (online: 1.0.0-beta.63)", a.shelf_line("stump")[0])
         self.assertIn("Official 1.0.0-beta.48", a.shelf_line("stump")[0])
         self.assertEqual(a.shelf_line("provisioner")[0], "Shelf: Sandbox none")   # no official Provisioner yet
         self.shot(a, "71-handheld")
@@ -835,12 +835,12 @@ class ThisHandheld(Base):
         a.handle("x")                                   # get beta.52 onto the shelf
         self.wait(a)
         self.assertTrue(a.task.ok, a.task.msg)
-        self.assertEqual(self.fetched, [("stump", "sandbox", "v1.0.0-beta.62")])
+        self.assertEqual(self.fetched, [("stump", "sandbox", "v1.0.0-beta.63")])
         a.handle("a")
         self.assertEqual(a.screen, "product")
         a.handle("a")                                   # use the Sandbox one for the boards
-        self.assertEqual(a.stump_copy()["version"], "1.0.0-beta.61")
-        self.assertEqual(a.bundle().release, "1.0.0-beta.61")
+        self.assertEqual(a.stump_copy()["version"], "1.0.0-beta.62")
+        self.assertEqual(a.bundle().release, "1.0.0-beta.62")
         self.assertIn("now", a.toast_text)
 
     def test_a_stump_that_runs_from_its_port(self):
@@ -872,20 +872,20 @@ class ThisHandheld(Base):
         self.assertIn("Offline", a.toast_text)
         self.assertIsNone(a.task)
         # A bundle from a card: + From File
-        src = os.path.join(A.shelf.best("stump", "sandbox")["dir"], "Stump-1.0.0-beta.61.bundle")
+        src = os.path.join(A.shelf.best("stump", "sandbox")["dir"], "Stump-1.0.0-beta.62.bundle")
         shutil.copy(src, os.path.join(self.home, "mine.bundle"))
         a.psel = [r["kind"] for r in a.product_rows()].index("fromfile")
         a.handle("a")
         self.assertEqual((a.screen, a.fb["exts"]), ("files", (".bundle",)))
         a.choose_file(os.path.join(self.home, "mine.bundle"))
         self.assertEqual(a.screen, "product")
-        self.assertEqual((a.stump_copy()["channel"], a.stump_copy()["version"]), ("file", "1.0.0-beta.61"))
+        self.assertEqual((a.stump_copy()["channel"], a.stump_copy()["version"]), ("file", "1.0.0-beta.62"))
         a.open_files(product="stump")
         a.choose_file(__file__)                         # not a bundle
         self.assertIn("Not used", a.toast_text)
 
     def test_the_library(self):
-        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.62"),
+        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.63"),
                                       ("firefly", "official"): self.rel("0.8.1"),
                                       ("provisioner", "sandbox"): self.rel("0.3.0-beta.11")})
         a.handle("y")                                   # Y on the handheld row: the Library
@@ -909,7 +909,7 @@ class ThisHandheld(Base):
         a.handle("x")                                   # refresh the checked ones
         self.wait(a)
         self.assertTrue(a.task.ok, a.task.msg)
-        self.assertEqual(self.fetched, [("stump", "sandbox", "v1.0.0-beta.62")])
+        self.assertEqual(self.fetched, [("stump", "sandbox", "v1.0.0-beta.63")])
         self.assertIn("FireFly Official: has 0.8.1 already", a.task.msg)
         self.shot(a, "78-library-refreshed")
         a.handle("a")
@@ -917,7 +917,7 @@ class ThisHandheld(Base):
         a.handle("x")                                   # nothing checked: everything newer
         self.wait(a)
         self.assertEqual(self.fetched[1:], [("provisioner", "sandbox", "v0.3.0-beta.11"),
-                                            ("stump", "sandbox", "v1.0.0-beta.62")])   # the pretend fetch keeps nothing
+                                            ("stump", "sandbox", "v1.0.0-beta.63")])   # the pretend fetch keeps nothing
         a.handle("a")
         a.handle("l")                                   # all / none
         self.assertEqual(len(a.lib["checked"]), 7)      # every shelf pair (no official Provisioner)
