@@ -22,6 +22,14 @@ plugin API 4; rooms with a scope and tagged plugin bots (nothing to change here)
   1.1, Simple 1.0. Nothing else changed for the packs: they're read from the
   release as before (Bavard: 45 KB for the board, 853 KB of plays for its
   SD card).
+- **Every pack, for this handheld's Stump too**: its form has a switch for
+  each pack Team Stump's wizard will find, however many there are (those in
+  packs/ of its SandBox_Stump_On clone; before the first install, the shelf
+  Sandbox copy's), on for those its Stump has. It was Tavern and rnfs only.
+  An update brings the installed ones up to date (the wizard does). The
+  chosen packs' own settings are answered with their declared defaults: the
+  b62 wizard asks a pack's choices without them, and stopped at Bavard's
+  "Talk from the start?" (a pack nobody had picked from an answers file).
 - **Bavard needs plugin API 4** (`stump.post()`, Stump beta.61): on an older
   Stump it's refused with "update its Stump first", as any pack is.
 - **A pack on a Stump with no SD card** installs its plugins, skips its card

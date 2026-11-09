@@ -17,6 +17,15 @@ check_version() {
 }
 run "version" check_version
 
+step "No file left empty (an empty test passes without testing anything)"
+check_empty() {
+  local bad
+  bad=$(git ls-files 2>/dev/null | while read -r f; do
+          [ -f "$f" ] && [ ! -s "$f" ] && [ "$(basename "$f")" != "__init__.py" ] && echo "$f"; done)
+  [ -z "$bad" ] || { echo "empty: $bad"; return 1; }
+}
+run "files" check_empty
+
 step "Shell scripts"
 lint() {
   local bad=0 f

@@ -1006,6 +1006,15 @@ class ThisHandheld(Base):
         self.assertEqual((a.screen, a.form["mode"]), ("form", "handheld"))
         self.assertEqual(a.hh_inst["version"], "2.3.0-r36max")
         self.assertEqual([r["key"] for r in a.form_rows()][:3], ["name", "pw", "apw"])
+        # A switch for each pack the wizard will find (no clone here yet: the shelf's Sandbox copy), off.
+        packs = [r["key"] for r in a.form_rows() if r["key"].startswith("pack:")]
+        self.assertEqual(packs, ["pack:" + p["name"] for p in A.handheld.packs_offered(
+            "/nonexistent", A.shelf.best("stump", "sandbox")["dir"])])
+        self.assertGreaterEqual(len(packs), 5)
+        self.assertTrue(all(a.form["a"][k] == "no" for k in packs))
+        a.form["sel"] = [r["key"] for r in a.form_rows()].index("pack:bavard")
+        a.handle("right")
+        self.shot(a, "75b-handheld-packs")
         a.form["a"].update(name="R36-Test", chain="member", parent="192.168.1.20", secret="s3cret-test")
         a.form["sel"] = len(a.form_rows()) - 1
         a.handle("a")
@@ -1021,6 +1030,8 @@ class ThisHandheld(Base):
         self.assertTrue(inst["path"].endswith("handheld/install.sh"))
         self.assertEqual((ans["node name"], ans["that stump's address"]), ("R36-Test", "192.168.1.20"))
         self.assertEqual((ans["fserv bot operator password"], ans["admin password for /admin"]), ("one-pw-1", ""))
+        self.assertEqual((ans["install bavard"], ans["install tavern"], ans["talk from the start"]), (True, False, "off"))
+        self.assertNotIn("name the tavern speaks as", ans)                 # a pack not chosen: none of its settings
         self.assertEqual(self.cleared, 1)               # the repo's /admin password looked for after it
         a.handle("a")
         self.assertEqual(a.screen, "product")

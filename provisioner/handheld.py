@@ -90,11 +90,114 @@ def state(home=None, euid=None, which=shutil.which):
             "installed": os.path.isfile(os.path.join(folder, "stump_pc.py")), "port": runs_from_port(home)}
 
 
-def form_defaults(here=None):
+def _pack_spec(path):
+    """A pack folder's or zip's pack.json, with its plugins' plugin.json
+    under "_plugins", or None."""
+    import zipfile
+    try:
+        if os.path.isdir(path):
+            def read(rel):
+                with open(os.path.join(path, rel), encoding="utf-8") as f:
+                    return json.load(f)
+        else:
+            z = zipfile.ZipFile(path)
+            n = next((n for n in z.namelist() if n.count("/") <= 1 and n.endswith("pack.json")), None)
+            if not n:
+                return None
+            base = n[:-len("pack.json")]
+
+            def read(rel):
+                return json.loads(z.read(base + rel))
+        spec = read("pack.json")
+        spec["_plugins"] = []
+        for name in spec.get("plugins") or []:
+            try:
+                spec["_plugins"].append(read("%s/plugin.json" % name))
+            except (OSError, KeyError, ValueError):
+                pass
+        return spec
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile):
+        return None
+
+
+def qkey(text):
+    """A question as Team Stump's wizard keys it in an answers file (its _qkey):
+    before any "?", without (...), lowercase."""
+    t = str(text).split("?", 1)[0]
+    out, depth = [], 0
+    for ch in t:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif not depth:
+            out.append(ch)
+    return " ".join("".join(out).split()).strip(" :").lower()
+
+
+def pack_defaults(spec):
+    """{question key: the pack's own default} for every setting its plugins
+    ask in the wizard. The wizard asks a choice without its default (b62),
+    so an answers file must carry it, or the setup stops there."""
+    out = {}
+    for pl in spec.get("_plugins") or []:
+        for pr in (pl.get("wizard") or {}).get("prompts") or []:
+            if not pr.get("prompt"):
+                continue
+            d = pr.get("default")
+            if pr.get("type") == "choice":
+                opts = pr.get("options") or []
+                d = d if d in opts else (opts[0] if opts else d)
+            if d is not None:
+                out[qkey(pr["prompt"])] = d if isinstance(d, (bool, int)) and pr.get("type") == "int" else str(d)
+    return out
+
+
+def packs_offered(home=None, shelf_dir=None):
+    """Every pack Team Stump's wizard will offer this handheld's Stump: those
+    in packs/ of its SandBox_Stump_On clone (folders and zips), or, before
+    the first install clones it, the packs of the shelf's Stump copy. As
+    many as there are: [{name, version, about, plugins}], by name."""
+    home = home or os.path.expanduser("~")
+    roots = [os.path.join(home, "SandBox_Stump_On", "packs")]
+    if not os.path.isdir(roots[0]) and shelf_dir:
+        roots = [shelf_dir]
+    found = {}
+    for root in roots:
+        try:
+            names = sorted(os.listdir(root))
+        except OSError:
+            continue
+        for n in names:
+            path = os.path.join(root, n)
+            if not (os.path.isdir(path) or (n.endswith(".zip") and "-pack" in n)):
+                continue
+            spec = _pack_spec(path)
+            if not spec or not re.match(r"^[a-z][a-z0-9_-]*$", str(spec.get("name", ""))):
+                continue
+            about = re.split(r"(?<=[.!?])\s", str(spec.get("description") or ""), maxsplit=1)[0]
+            found.setdefault(spec["name"], {"name": spec["name"], "version": str(spec.get("version", "")),
+                                            "about": about, "plugins": list(spec.get("plugins") or []),
+                                            "defaults": pack_defaults(spec)})
+    return [found[k] for k in sorted(found)]
+
+
+def packs_installed(folder, offered):
+    """The names of the offered packs this Stump has (every plugin of it in
+    its folder, as the wizard checks on an update)."""
+    return [p["name"] for p in offered if p["plugins"] and all(
+        os.path.isfile(os.path.join(folder, n, "install.py")) for n in p["plugins"])]
+
+
+def form_defaults(here=None, packs=(), installed=()):
+    """The form's answers to start from; a switch per pack offered, on for those
+    it has (and, apart, every pack's settings at their own defaults)."""
     here = here or {}
-    return {"name": "" if here.get("none") else (here.get("name") or ""), "pw": "", "apw": "", "hotspot": "",
-            "storage": "2048",
-            "chain": "none", "parent": "", "secret": "", "heltec": "usb", "tavern": "no", "rnfs": "no"}
+    out = {"name": "" if here.get("none") else (here.get("name") or ""), "pw": "", "apw": "", "hotspot": "",
+           "storage": "2048", "chain": "none", "parent": "", "secret": "", "heltec": "usb"}
+    out.update(("pack:" + p["name"], "yes" if p["name"] in installed else "no") for p in packs)
+    out["_pack_defaults"] = dict((p["name"], p.get("defaults") or {}) for p in packs)
+    return out
 
 
 IPV4 = re.compile(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$")
@@ -138,13 +241,17 @@ def answers(a, folder, again=False, admin_state="SET", current=None):
         return {"error": "Storage is a number of MB"}
     if not 64 <= mb <= 1024 * 1024:
         return {"error": "Storage: 64 MB or more"}
+    picks = dict(("install " + k[5:], v == "yes") for k, v in a.items() if k.startswith("pack:"))
+    picks.update(("install " + k, a[k] == "yes") for k in ("tavern", "rnfs") if k in a)   # as before beta.15
     out = {"folder for this stump": folder, "node name": name,
            "the wi-fi name visitors join": (a.get("hotspot") or "").strip() or name,
            "storage for this stump, in mb": str(mb),
            "is this stump part of a chain": a.get("chain") in ("first", "member"),
            "the heltec": {"usb": "Plugged into this computer by USB", "ble": "Over Bluetooth",
                           "none": "None"}[a.get("heltec") or "usb"],
-           "install rnfs": a.get("rnfs") == "yes", "install tavern": a.get("tavern") == "yes",
+           # "Install <pack>?": one per pack the form offered (Team Stump's wizard asks
+           # each pack it finds that way with an answers file; an update brings the
+           # installed ones up to date by itself and asks the others).
            "start this stump automatically when you log in": True,
            # beta.58 on: "Admin password (/admin)" is required, then "Use the same
            # password for the fserv bot?" (no: the bot's own is asked).
@@ -176,6 +283,12 @@ def answers(a, folder, again=False, admin_state="SET", current=None):
         out["how does this computer reach that stump"] = "On the Wi-Fi"
         out["that stump's address"] = ip
         out["chain secret"] = a.get("secret") or ""
+    out.update(picks)
+    # The settings of the packs chosen, at their own defaults (unless the answers say otherwise).
+    for name, d in (a.get("_pack_defaults") or {}).items():
+        if a.get("pack:" + name) == "yes":
+            for k, v in d.items():
+                out.setdefault(k, v)
     return out
 
 
