@@ -651,16 +651,17 @@ class FromFileAndPacks(Base):
         a.handle("b")
         self.assertEqual(a.screen, "jobs")
 
-    def stump_board(self):
+    def stump_board(self, card=True, api=1):
         import shutil
         from provisioner import stump
         from test_stump import PipeLink
         os.environ.update(FAKE_BOARD="s3", FAKE_MPY="6.3")
         self.root = tempfile.mkdtemp(prefix="board-")
         self.addCleanup(shutil.rmtree, self.root, True)
-        for name, body in (("config.py", "NODE_NAME = 'Oak'\n"), ("plugins.py", "API_VERSION = 1\n"),
-                           ("fserv.py", "import os\nsd_ok = False\ndef mount_sd():\n global sd_ok\n"
-                                        " try:\n  os.mkdir('/sd')\n except OSError:\n  pass\n sd_ok = True\n")):
+        mount = (" try:\n  os.mkdir('/sd')\n except OSError:\n  pass\n sd_ok = True\n" if card else
+                 " pass\n")                                              # no card: nothing mounts
+        for name, body in (("config.py", "NODE_NAME = 'Oak'\n"), ("plugins.py", "API_VERSION = %d\n" % api),
+                           ("fserv.py", "import os\nsd_ok = False\ndef mount_sd():\n global sd_ok\n" + mount)):
             with open(os.path.join(self.root, name), "w") as f:
                 f.write(body)
         links = []
@@ -705,6 +706,39 @@ class FromFileAndPacks(Base):
         self.assertTrue(os.path.isfile(os.path.join(self.root, "rnfs", "install.py")))
         tools = os.listdir(os.path.join(self.root, "sd", "tools", "rnfs"))
         self.assertIn("rnfs-install.sh", tools)
+
+    def test_a_pack_on_a_stump_with_no_card(self):
+        """Its card files skipped, as Team Stump's provisioner does: the plugin runs without them."""
+        import shutil
+        a = self.stump_board(card=False)
+        shutil.copy(os.path.join(stump_dir(), "rnfs-pack-1.1.zip"), os.path.join(self.dir, "rnfs.zip"))
+        self.browse(a)
+        self.pick(a, "rnfs.zip")
+        a.handle("a")
+        self.wait(a)
+        self.assertTrue(a.task.ok, a.task.msg)
+        self.assertIn("No SD card", a.task.msg)
+        self.assertTrue(os.path.isfile(os.path.join(self.root, "rnfs", "install.py")))
+        self.assertFalse(os.path.exists(os.path.join(self.root, "sd")))
+
+    def test_bavard_needs_plugin_api_4(self):
+        """Stump 1.0.0-beta.61's Bavard (a test bot) posts with stump.post(): plugin API 4."""
+        import shutil
+        bav = os.path.join(A.shelf.best("stump", "sandbox")["dir"], "bavard-pack-1.1.zip")
+        for api, ok in ((3, False), (4, True)):
+            a = self.stump_board(api=api)
+            shutil.copy(bav, os.path.join(self.dir, "bavard.zip"))
+            self.browse(a)
+            self.pick(a, "bavard.zip")
+            self.assertEqual(a.confirm["title"], "Add bavard 1.1 to its Stump?")
+            a.handle("a")
+            self.wait(a)
+            self.assertEqual(a.task.ok, ok, a.task.msg)
+            if ok:
+                self.assertTrue(os.path.isfile(os.path.join(self.root, "bavard", "scene.py")))
+                self.assertIn("misanthrope.txt", os.listdir(os.path.join(self.root, "sd", "tools", "bavard")))
+            else:
+                self.assertIn("plugin API 4", a.task.msg)
 
     def test_a_changed_pack_is_refused(self):
         import zipfile
@@ -783,13 +817,13 @@ class ThisHandheld(Base):
         return {"tag": "v" + version, "version": version, "prerelease": True, "url": "", "repo": "x", "assets": []}
 
     def test_the_page_and_whats_newer_online(self):
-        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.61")})
+        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.63")})
         self.assertEqual(a.rows(), [{"handheld": True}])
         self.shot(a, "70-boards-handheld")
         a.handle("a")
         self.assertEqual((a.screen, a.net), ("handheld", "online"))
         self.assertIn("1 newer", a.net_line()[0])
-        self.assertIn("Sandbox 1.0.0-beta.60 (online: 1.0.0-beta.61)", a.shelf_line("stump")[0])
+        self.assertIn("Sandbox 1.0.0-beta.62 (online: 1.0.0-beta.63)", a.shelf_line("stump")[0])
         self.assertIn("Official 1.0.0-beta.48", a.shelf_line("stump")[0])
         self.assertEqual(a.shelf_line("provisioner")[0], "Shelf: Sandbox none")   # no official Provisioner yet
         self.shot(a, "71-handheld")
@@ -801,12 +835,12 @@ class ThisHandheld(Base):
         a.handle("x")                                   # get beta.52 onto the shelf
         self.wait(a)
         self.assertTrue(a.task.ok, a.task.msg)
-        self.assertEqual(self.fetched, [("stump", "sandbox", "v1.0.0-beta.61")])
+        self.assertEqual(self.fetched, [("stump", "sandbox", "v1.0.0-beta.63")])
         a.handle("a")
         self.assertEqual(a.screen, "product")
         a.handle("a")                                   # use the Sandbox one for the boards
-        self.assertEqual(a.stump_copy()["version"], "1.0.0-beta.60")
-        self.assertEqual(a.bundle().release, "1.0.0-beta.60")
+        self.assertEqual(a.stump_copy()["version"], "1.0.0-beta.62")
+        self.assertEqual(a.bundle().release, "1.0.0-beta.62")
         self.assertIn("now", a.toast_text)
 
     def test_a_stump_that_runs_from_its_port(self):
@@ -838,20 +872,20 @@ class ThisHandheld(Base):
         self.assertIn("Offline", a.toast_text)
         self.assertIsNone(a.task)
         # A bundle from a card: + From File
-        src = os.path.join(A.shelf.best("stump", "sandbox")["dir"], "Stump-1.0.0-beta.60.bundle")
+        src = os.path.join(A.shelf.best("stump", "sandbox")["dir"], "Stump-1.0.0-beta.62.bundle")
         shutil.copy(src, os.path.join(self.home, "mine.bundle"))
         a.psel = [r["kind"] for r in a.product_rows()].index("fromfile")
         a.handle("a")
         self.assertEqual((a.screen, a.fb["exts"]), ("files", (".bundle",)))
         a.choose_file(os.path.join(self.home, "mine.bundle"))
         self.assertEqual(a.screen, "product")
-        self.assertEqual((a.stump_copy()["channel"], a.stump_copy()["version"]), ("file", "1.0.0-beta.60"))
+        self.assertEqual((a.stump_copy()["channel"], a.stump_copy()["version"]), ("file", "1.0.0-beta.62"))
         a.open_files(product="stump")
         a.choose_file(__file__)                         # not a bundle
         self.assertIn("Not used", a.toast_text)
 
     def test_the_library(self):
-        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.61"),
+        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.63"),
                                       ("firefly", "official"): self.rel("0.8.1"),
                                       ("provisioner", "sandbox"): self.rel("0.3.0-beta.11")})
         a.handle("y")                                   # Y on the handheld row: the Library
@@ -875,7 +909,7 @@ class ThisHandheld(Base):
         a.handle("x")                                   # refresh the checked ones
         self.wait(a)
         self.assertTrue(a.task.ok, a.task.msg)
-        self.assertEqual(self.fetched, [("stump", "sandbox", "v1.0.0-beta.61")])
+        self.assertEqual(self.fetched, [("stump", "sandbox", "v1.0.0-beta.63")])
         self.assertIn("FireFly Official: has 0.8.1 already", a.task.msg)
         self.shot(a, "78-library-refreshed")
         a.handle("a")
@@ -883,7 +917,7 @@ class ThisHandheld(Base):
         a.handle("x")                                   # nothing checked: everything newer
         self.wait(a)
         self.assertEqual(self.fetched[1:], [("provisioner", "sandbox", "v0.3.0-beta.11"),
-                                            ("stump", "sandbox", "v1.0.0-beta.61")])   # the pretend fetch keeps nothing
+                                            ("stump", "sandbox", "v1.0.0-beta.63")])   # the pretend fetch keeps nothing
         a.handle("a")
         a.handle("l")                                   # all / none
         self.assertEqual(len(a.lib["checked"]), 7)      # every shelf pair (no official Provisioner)
@@ -972,6 +1006,15 @@ class ThisHandheld(Base):
         self.assertEqual((a.screen, a.form["mode"]), ("form", "handheld"))
         self.assertEqual(a.hh_inst["version"], "2.3.0-r36max")
         self.assertEqual([r["key"] for r in a.form_rows()][:3], ["name", "pw", "apw"])
+        # A switch for each pack the wizard will find (no clone here yet: the shelf's Sandbox copy), off.
+        packs = [r["key"] for r in a.form_rows() if r["key"].startswith("pack:")]
+        self.assertEqual(packs, ["pack:" + p["name"] for p in A.handheld.packs_offered(
+            "/nonexistent", A.shelf.best("stump", "sandbox")["dir"])])
+        self.assertGreaterEqual(len(packs), 5)
+        self.assertTrue(all(a.form["a"][k] == "no" for k in packs))
+        a.form["sel"] = [r["key"] for r in a.form_rows()].index("pack:bavard")
+        a.handle("right")
+        self.shot(a, "75b-handheld-packs")
         a.form["a"].update(name="R36-Test", chain="member", parent="192.168.1.20", secret="s3cret-test")
         a.form["sel"] = len(a.form_rows()) - 1
         a.handle("a")
@@ -987,6 +1030,8 @@ class ThisHandheld(Base):
         self.assertTrue(inst["path"].endswith("handheld/install.sh"))
         self.assertEqual((ans["node name"], ans["that stump's address"]), ("R36-Test", "192.168.1.20"))
         self.assertEqual((ans["fserv bot operator password"], ans["admin password for /admin"]), ("one-pw-1", ""))
+        self.assertEqual((ans["install bavard"], ans["install tavern"], ans["talk from the start"]), (True, False, "off"))
+        self.assertNotIn("name the tavern speaks as", ans)                 # a pack not chosen: none of its settings
         self.assertEqual(self.cleared, 1)               # the repo's /admin password looked for after it
         a.handle("a")
         self.assertEqual(a.screen, "product")

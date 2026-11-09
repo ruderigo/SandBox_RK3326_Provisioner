@@ -218,14 +218,18 @@ def install(plan, open_link, step, progress, log):
         if plan["plugins"]:
             step("Copying %s %s to the board" % (plan["name"], plan["version"]))
             stump.upload(repl, plan["plugins"], prog)
+        no_card = False
         if plan["card"]:
             step("Copying its files to the SD card")
             out = repl.run(CARD_MOUNT + "import os\ntry:\n os.stat(%s)\n print('HASCARD')\nexcept OSError:\n pass\n"
                            % stump.py(CARD_ROOT), 30)
-            if "HASCARD" not in out:
-                return False, ("No SD card in it (or the card can't be read): its plugins are on the board, "
-                               "its files for the card aren't.")
-            stump.upload(repl, [(CARD_ROOT + "/" + p, d, s) for p, d, s in plan["card"]], prog)
+            if "HASCARD" in out:
+                stump.upload(repl, [(CARD_ROOT + "/" + p, d, s) for p, d, s in plan["card"]], prog)
+            else:
+                # Best effort, as Team Stump's provisioner: the plugins run without them
+                # (Bavard plays its built-in scene), and the Stump is restarted all the same.
+                no_card = True
+                log("no SD card: its files for the card skipped")
         if plan["theme"] and plan["theme"].get("name"):
             step("Adding its theme")
             out = repl.run("import json\ntry:\n d=json.load(open('themes.json'))\nexcept Exception:\n d={}\n"
@@ -244,6 +248,9 @@ def install(plan, open_link, step, progress, log):
     finally:
         repl.link.close()
     msg = "%s %s is on the Stump; it starts now, with the Stump." % (plan["name"], plan["version"])
+    if no_card:
+        msg += (" No SD card in it (or it can't be read), so its files for the card (%d KB) aren't there: "
+                "add a card and install it again for them." % (sum(len(d) for _, d, _ in plan["card"]) // 1024))
     if plan["by_reader"]:
         msg += " Too big for USB, copy by card reader: %s." % ", ".join(plan["by_reader"])
     return True, msg

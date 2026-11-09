@@ -198,6 +198,25 @@ class TeamStumpsWizard(unittest.TestCase):
         self.assertIn("AUTH_ADMIN_PASSWORD = 'admin-pw-2'", cfg)
         self.assertEqual(H.current_passwords(folder), {"pw": "bot-pw-1", "apw": "admin-pw-2"})
 
+    def test_every_pack_it_offers(self):
+        """However many packs SandBox_Stump_On carries, a switch each: those chosen
+        installed by the real wizard, seen as installed, kept on an update."""
+        home = tempfile.mkdtemp(prefix="home-")
+        self.addCleanup(shutil.rmtree, home, True)
+        os.symlink(os.environ["STUMP_ON"], os.path.join(home, "SandBox_Stump_On"))
+        offered = H.packs_offered(home)
+        names = [p["name"] for p in offered]
+        self.assertGreaterEqual(len(names), 5, names)                        # b62: bavard nomadnet rnfs simple tavern
+        folder = os.path.join(home, "Stump")
+        a = dict(H.form_defaults({}, offered), name="R36-Packs", heltec="none", pw="one-pw-1")
+        self.assertEqual(sorted(k for k in a if k.startswith("pack:")), ["pack:" + n for n in names])
+        a["pack:bavard"] = a["pack:simple"] = "yes"
+        self.wizard(folder, H.answers(a, folder))
+        self.assertEqual(H.packs_installed(folder, offered), ["bavard", "simple"])
+        self.assertEqual(H.form_defaults({}, offered, H.packs_installed(folder, offered))["pack:bavard"], "yes")
+        self.wizard(folder, H.update_answers(folder))                       # brought up to date, the others asked: no
+        self.assertEqual(H.packs_installed(folder, offered), ["bavard", "simple"])
+
     def test_new_again_update(self):
         d = tempfile.mkdtemp(prefix="stump-")
         self.addCleanup(shutil.rmtree, d, True)

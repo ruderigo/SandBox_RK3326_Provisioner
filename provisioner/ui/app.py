@@ -164,6 +164,7 @@ class App:
         self.next_adapter = 0.0
         self.wifi = None                # the WIFI screen's state
         self.handheld_fn = handheld.state   # () -> this handheld's Stump row's state, or None (no row)
+        self.handheld_packs_fn = handheld.packs_offered   # (shelf_dir=) -> the packs its wizard will offer
         self.handheld_run = handheld.run
         self.hh_inst = None             # the handheld's Stump's installer chosen (a shelf copy's, a clone)
         self.password_state_fn = handheld.password_state     # (folder, key=admin) -> SET / DEFAULT / EMPTY / NONE
@@ -1656,7 +1657,10 @@ class App:
                      "Update it", lambda: self.run_handheld("Updating this handheld's Stump",
                                                             handheld.update_answers(st.get("folder"))))
         else:
-            self.open_form("handheld", handheld.form_defaults(self.here), back="product")
+            packs = self.handheld_packs()
+            self.open_form("handheld", handheld.form_defaults(
+                self.here, packs, handheld.packs_installed(st.get("folder") or os.path.expanduser("~/Stump"), packs)),
+                back="product")
 
     def ask_password(self, key):
         """One of the handheld Stump's passwords, typed twice on the keyboard, then set:
@@ -1793,11 +1797,18 @@ class App:
                       "blank": "needed: e.g. 192.168.1.20"}]
         if a.get("chain") in ("first", "member"):
             rows += [{"key": "secret", "label": "The chain's secret", "kind": "text", "max": 64, "blank": "none (open)"}]
-        rows += [{"key": "heltec", "label": "LoRa", "kind": "choice", "choices": HELTECS},
-                 {"key": "tavern", "label": "Tavern pack", "kind": "choice", "choices": YESNO},
-                 {"key": "rnfs", "label": "rnfs pack", "kind": "choice", "choices": YESNO},
-                 {"key": "go", "label": "Install the Stump", "kind": "button"}]
+        rows += [{"key": "heltec", "label": "LoRa", "kind": "choice", "choices": HELTECS}]
+        # A switch for each pack the wizard will find, however many there are.
+        rows += [{"key": k, "label": "%s pack" % k[5:].capitalize(), "kind": "choice", "choices": YESNO}
+                 for k in sorted(k for k in a if k.startswith("pack:"))]
+        rows += [{"key": "go", "label": "Install the Stump", "kind": "button"}]
         return rows
+
+    def handheld_packs(self):
+        """The packs the handheld's wizard will offer: its SandBox_Stump_On clone's,
+        else (no install yet) those of the shelf's Stump copy."""
+        c = shelf.best("stump", "sandbox")       # it clones SandBox_Stump_On's latest
+        return self.handheld_packs_fn(shelf_dir=(c or {}).get("dir"))
 
     def submit_handheld(self):
         st = self.handheld or {}
