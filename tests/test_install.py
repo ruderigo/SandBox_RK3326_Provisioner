@@ -51,6 +51,11 @@ class Install(unittest.TestCase):
             self.assertIn('"%s"' % app, self.launcher_app(l))
         self.assertTrue(os.path.isfile(os.path.join(self.r, "etc", "udev", "rules.d", "99-rk3326-provisioner.rules")))
         self.assertIn("On dArkOS", out)
+        # Again: the rule and the Ports entries are the same, so nothing for sudo to do.
+        code, out = run_install(self.r, home)
+        self.assertEqual(code, 0, out)
+        self.assertIn("udev rule (%s, unchanged)" % os.path.join(self.r, "etc", "udev", "rules.d"), out)
+        self.assertIn("RK3326_Provisioner.sh (unchanged)", out)
 
     def test_rocknix_and_amberelec(self):
         home = self.mk("storage")

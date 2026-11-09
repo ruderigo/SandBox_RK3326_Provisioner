@@ -49,6 +49,8 @@ class Base(unittest.TestCase):
         a.here_fn = None
         a.adapter_fn = None             # no S3 adapter unless a test plugs in the pretend one
         a.handheld_fn = None            # no "This handheld's Stump" row unless a test gives one
+        a.sudo_ok_fn = lambda: True     # sudo asks no password unless a test says it does
+        a.self_update_pw_fn = lambda c, app: False
         a.here = {"release": "1.0.0-beta.47", "name": "R36MAX", "chain": "chain member"}
         a.scan()
         return a
@@ -775,10 +777,11 @@ class ThisHandheld(Base):
         a.handheld_fn = lambda: {"installer": None, "why": why, "folder": "/home/ark/Stump", "installed": installed,
                                  "port": port}
         a.clones = False
-        self.runs, self.fetched = [], []
+        self.runs, self.fetched, self.passwords = [], [], []
 
-        def run(inst, ans, line, step):
+        def run(inst, ans, line, step, password=None):
             self.runs.append((inst, ans))
+            self.passwords.append(password)
             step("1/6 Packages")
             return True, "The Stump is up: R36-Test 1.0.0-beta.60 on :80, no chain."
         a.handheld_run = run
@@ -964,7 +967,7 @@ class ThisHandheld(Base):
         a = self.handheld_app()
         calls = []
         real = A.installers.firefly_install
-        A.installers.firefly_install = lambda c, line, step: calls.append(c["version"]) or (True, "installed")
+        A.installers.firefly_install = lambda c, line, step, password=None: calls.append(c["version"]) or (True, "installed")
         self.addCleanup(setattr, A.installers, "firefly_install", real)
         a.open_product("firefly")
         a.handle("a")                                   # Official 0.8.1
@@ -1101,7 +1104,8 @@ class ThisHandheld(Base):
                                   "provisioner/__main__.py": ""})
         calls = []
         real = A.installers.self_update
-        A.installers.self_update = lambda c, line, step, app: calls.append((c["version"], app)) or (True, "ok")
+        A.installers.self_update = lambda c, line, step, app, password=None: calls.append(
+            (c["version"], app, password)) or (True, "ok")
         self.addCleanup(setattr, A.installers, "self_update", real)
         a.open_files(product="provisioner")
         a.choose_file(path)
@@ -1109,7 +1113,22 @@ class ThisHandheld(Base):
         self.shot(a, "75-provisioner-confirm")
         a.handle("a")
         self.wait(a)
-        self.assertEqual(calls, [("0.3.0-beta.8", app)])
+        self.assertEqual(calls, [("0.3.0-beta.8", app, None)])           # nothing changes that needs sudo
+        a.handle("a")
+        # Its installer would change the serial rule, and sudo asks a password: typed here.
+        a.running = True
+        a.self_update_pw_fn = lambda c, app: True
+        a.open_files(product="provisioner")
+        a.choose_file(path)
+        a.handle("a")
+        self.assertIsNotNone(a.kb)
+        self.assertIn("sudo", a.kb.title)
+        self.shot(a, "75c-sudo-password")
+        a.kb.text = "ark-pw"
+        a.handle("start")                               # the keyboard's OK
+        self.assertIsNone(a.kb)
+        self.wait(a)
+        self.assertEqual(calls[-1], ("0.3.0-beta.8", app, "ark-pw"))
         a.handle("a")                                   # done: it closes, to be opened again from Ports
         self.assertFalse(a.running)
 

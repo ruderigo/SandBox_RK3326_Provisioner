@@ -298,10 +298,15 @@ def update_answers(folder):
             "use a heltec over bluetooth instead": False, "fix it, then check again": False}
 
 
-def run(installer, ans, line, step, home=None, popen=subprocess.Popen):
+def run(installer, ans, line, step, home=None, popen=subprocess.Popen, password=None):
     """Runs `install.sh --answers FILE` (the file only lives while it runs:
-    it may hold the chain's secret). (ok, message)."""
+    it may hold the chain's secret). password: sudo's, through its askpass
+    helper (installers.askpass). (ok, message)."""
+    import contextlib
+    from . import installers
     home = home or os.path.expanduser("~")
+    stack = contextlib.ExitStack()
+    pw_env = stack.enter_context(installers.askpass(password, home))
     d = os.path.join(home, ".cache", "rk3326-provisioner")
     os.makedirs(d, exist_ok=True)
     fd, path = tempfile.mkstemp(prefix="stump-answers-", suffix=".json", dir=d)
@@ -312,7 +317,7 @@ def run(installer, ans, line, step, home=None, popen=subprocess.Popen):
         try:
             p = popen(["bash", installer["path"], "--answers", path], stdout=subprocess.PIPE,
                       stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, cwd=os.path.dirname(installer["path"]),
-                      universal_newlines=True, bufsize=1, errors="replace")
+                      universal_newlines=True, bufsize=1, errors="replace", env=dict(os.environ, **pw_env))
         except OSError as e:
             return False, "Couldn't run %s: %s" % (installer["path"], e)
         for raw in p.stdout:                         # closed below
@@ -330,6 +335,7 @@ def run(installer, ans, line, step, home=None, popen=subprocess.Popen):
         p.stdout.close()
         rc = p.wait()
     finally:
+        stack.close()
         try:
             os.remove(path)
         except OSError:

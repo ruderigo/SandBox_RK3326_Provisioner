@@ -6,11 +6,13 @@ Each runs the product's own installer, as its README says to over SSH
 nothing read from the keyboard, its lines shown as it goes.
 """
 
+import contextlib
 import os
 import re
 import shutil
 import subprocess
 import tarfile
+import tempfile
 import zipfile
 
 from . import shelf
@@ -69,6 +71,49 @@ def _extract_zip(path, dest):
     return dest
 
 
+# -- sudo ----------------------------------------------------------------------
+# The installers use sudo (packages, the serial rule, the Ports entry). Over
+# SSH it asks in the terminal; from here nobody could answer, so the password
+# is typed on the Provisioner's screen and given to sudo through its askpass
+# helper (`sudo -A`): a script printing a file only this user can read, both in
+# a folder of their own, removed when the installer ends. Never piped into
+# sudo -S, never logged, never on a command line.
+ASKPASS_SCRIPT = '#!/bin/sh\ncat "$PROVISIONER_ASKPASS_FILE"\n'
+
+
+def sudo_ok(run=subprocess.run):
+    """True when sudo needs no password now (root, NOPASSWD, a ticket)."""
+    if os.geteuid() == 0:
+        return True
+    try:
+        return run(["sudo", "-n", "true"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                   stderr=subprocess.DEVNULL, timeout=10).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+@contextlib.contextmanager
+def askpass(password, home=None):
+    """The environment for an installer: sudo's askpass helper with this
+    password ({} without one). Its files are gone once the block ends."""
+    if not password:
+        yield {}
+        return
+    d = tempfile.mkdtemp(prefix="askpass-", dir=cache(home))
+    try:
+        os.chmod(d, 0o700)
+        helper, secret = os.path.join(d, "askpass"), os.path.join(d, "pw")
+        fd = os.open(helper, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o700)
+        with os.fdopen(fd, "w") as f:
+            f.write(ASKPASS_SCRIPT)
+        fd = os.open(secret, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(password + "\n")
+        yield {"SUDO_ASKPASS": helper, "PROVISIONER_ASKPASS_FILE": secret}
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 # -- FireFly -------------------------------------------------------------------
 def firefly_installed(home=None):
     """FireFly's version on this handheld (~/firefly), or ''."""
@@ -81,7 +126,7 @@ def firefly_installed(home=None):
         return ""
 
 
-def firefly_install(copy, line, step, home=None):
+def firefly_install(copy, line, step, home=None, password=None):
     """FireFly's own installer from its zip (an update keeps its identity,
     contacts, messages and settings: ~/.firefly). (ok, message)."""
     z = shelf.main_file(copy)
@@ -94,7 +139,8 @@ def firefly_install(copy, line, step, home=None):
     if not os.path.isfile(inst):
         return False, "No firefly/deploy/install.sh in it"
     step("FireFly's installer")
-    rc, tail = stream(["bash", inst], line, step, cwd=os.path.dirname(inst))
+    with askpass(password, home) as env:
+        rc, tail = stream(["bash", inst], line, step, cwd=os.path.dirname(inst), env=dict(os.environ, **env))
     shutil.rmtree(dest, ignore_errors=True)
     if rc == 0:
         return True, ("FireFly %s is installed (Ports -> FireFly). Its identity, contacts and messages stay. "
@@ -143,7 +189,24 @@ def self_update_why(app=None):
     return ""
 
 
-def self_update(copy, line, step, app=None, home=None):
+def self_update_needs_password(copy, app=None, home=None):
+    """True when the new Provisioner's install.sh would ask sudo for a
+    password (its udev rule or Ports entry changed, and sudo has no ticket)."""
+    dest = os.path.join(cache(home), "provisioner-check")
+    try:
+        root = _extract_tar(shelf.main_file(copy), dest)
+        p = subprocess.run(["bash", os.path.join(root, "install.sh"), "--needs-sudo"], cwd=root,
+                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                           universal_newlines=True, timeout=60,
+                           env=dict(os.environ, PROVISIONER_PULLED="1", PROVISIONER_APP=app or app_dir()))
+        return p.stdout.strip().endswith("yes")
+    except (shelf.ShelfError, tarfile.TarError, OSError, subprocess.TimeoutExpired):
+        return False
+    finally:
+        shutil.rmtree(dest, ignore_errors=True)
+
+
+def self_update(copy, line, step, app=None, home=None, password=None):
     """Installs another Provisioner over this one by its own install.sh; the
     one running now is kept as <app>.previous (Go back puts it back)."""
     app = app or app_dir()
@@ -160,8 +223,9 @@ def self_update(copy, line, step, app=None, home=None):
     shutil.rmtree(prev, ignore_errors=True)
     shutil.copytree(app, prev, symlinks=True, ignore=shutil.ignore_patterns("__pycache__", "provisioner.log"))
     step("Installing v%s" % copy["version"])
-    env = dict(os.environ, PROVISIONER_PULLED="1", PROVISIONER_APP=app)
-    rc, tail = stream(["bash", os.path.join(root, "install.sh")], line, step, env=env, cwd=root)
+    with askpass(password, home) as pw_env:
+        env = dict(os.environ, PROVISIONER_PULLED="1", PROVISIONER_APP=app, **pw_env)
+        rc, tail = stream(["bash", os.path.join(root, "install.sh")], line, step, env=env, cwd=root)
     shutil.rmtree(dest, ignore_errors=True)
     if rc == 0 and version_in(app) == copy["version"]:
         return True, ("The Provisioner v%s is installed. Close this one (A) and open it again from Ports. "
