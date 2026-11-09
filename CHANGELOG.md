@@ -10,6 +10,26 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.15
+
+SandBox_Stump_On 1.0.0-beta.61: the **Bavard** pack, Tavern 1.2, plugin API 4.
+
+- **The shelf at Sandbox 1.0.0-beta.61**: its bundle, both Stump images, and
+  its five packs: **Bavard 1.1** (a test bot that never stops talking: alone,
+  lines of numbers; with another Bavard on another Stump, the two play
+  Molière turn by turn; it starts paused), Tavern 1.2, rnfs 1.2, NomadNet
+  1.1, Simple 1.0. Nothing else changed for the packs: they're read from the
+  release as before (Bavard: 45 KB for the board, 853 KB of plays for its
+  SD card).
+- **Bavard needs plugin API 4** (`stump.post()`, Stump beta.61): on an older
+  Stump it's refused with "update its Stump first", as any pack is.
+- **A pack on a Stump with no SD card** installs its plugins, skips its card
+  files and restarts the Stump, saying what was left out (as Team Stump's
+  provisioner does: Bavard plays its built-in scene without one). It used to
+  stop with an error, the Stump not restarted.
+- Checked against b61: Team Stump's wizard with the handheld's answers (new,
+  again, Update).
+
 ## v0.3.0-beta.14
 
 - **CH340 boards with no kernel driver** (a Freenove ESP32-WROVER carries

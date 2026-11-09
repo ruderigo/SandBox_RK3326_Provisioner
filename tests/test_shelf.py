@@ -147,7 +147,7 @@ class Shelf(unittest.TestCase):
 
     def test_the_built_in_shelf(self):
         os.environ.pop("PROVISIONER_BUILTIN_SHELF")
-        for p, ch, v in (("stump", "official", "1.0.0-beta.48"), ("stump", "sandbox", "1.0.0-beta.60"),
+        for p, ch, v in (("stump", "official", "1.0.0-beta.48"), ("stump", "sandbox", "1.0.0-beta.61"),
                          ("firefly", "official", "0.8.1"), ("firefly", "sandbox", "0.9.3"),
                          ("handheld", "official", "2.0.0-r36max"), ("handheld", "sandbox", "2.5.0-b.55")):
             c = shelf.best(p, ch, env=self.env)
@@ -156,9 +156,9 @@ class Shelf(unittest.TestCase):
                 data = f.read()
             shelf.check(p, {os.path.basename(shelf.main_file(c)): data})       # reads as what it is
         b = shelf.from_file("stump", shelf.main_file(shelf.best("stump", "sandbox", env=self.env)))
-        self.assertEqual(b["version"], "1.0.0-beta.60")
+        self.assertEqual(b["version"], "1.0.0-beta.61")
         imgs = sorted(f for f in os.listdir(shelf.best("stump", "sandbox", env=self.env)["dir"]) if f.endswith(".bin"))
-        self.assertEqual(imgs, ["stump-1.0.0-beta.60-s3cam.bin", "stump-1.0.0-beta.60-wrover.bin"])   # its images
+        self.assertEqual(imgs, ["stump-1.0.0-beta.61-s3cam.bin", "stump-1.0.0-beta.61-wrover.bin"])   # its images
 
 
 class Installers(unittest.TestCase):
