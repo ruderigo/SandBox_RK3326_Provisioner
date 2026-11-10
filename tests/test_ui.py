@@ -1039,6 +1039,65 @@ class ThisHandheld(Base):
         a.handle("a")
         self.assertEqual(a.screen, "product")
 
+    def test_its_packs(self):
+        """Its packs page: every pack its wizard offers, those it has marked; the
+        checked ones added by an Update (their own settings at their defaults)."""
+        import shutil
+        a = self.handheld_app(installed=True)
+        folder = tempfile.mkdtemp(prefix="Stump-")
+        self.addCleanup(shutil.rmtree, folder, True)
+        os.makedirs(os.path.join(folder, "tavern"))
+        open(os.path.join(folder, "tavern", "install.py"), "w").close()
+        a.handheld_fn = lambda: {"installer": None, "why": "", "folder": folder, "installed": True, "port": True}
+        a.handheld = a.handheld_fn()
+        offered = A.handheld.packs_offered("/nonexistent", A.shelf.best("stump", "sandbox")["dir"])
+        a.handheld_packs_fn = lambda shelf_dir=None: offered
+        a.open_product("handheld")
+        kinds = [r["kind"] for r in a.product_rows()]
+        self.assertIn("hh_packs", kinds)
+        a.psel = kinds.index("hh_packs")
+        self.shot(a, "77b-handheld-packs-row")
+        a.handle("a")
+        self.assertEqual(a.screen, "packs")
+        names = [p["name"] for p in a.pk["offered"]]
+        self.assertEqual(a.pk["have"], {"tavern"})
+        a.pk["sel"] = names.index("tavern")
+        a.handle("a")                                   # installed: stays checked
+        self.assertIn("tavern", a.pk["checked"])
+        a.handle("x")
+        self.assertIn("Check a pack first", a.toast_text)
+        a.pk["sel"] = names.index("bavard")
+        a.handle("a")
+        self.shot(a, "77c-handheld-packs")
+        a.handle("x")
+        self.assertEqual(a.confirm["title"], "Add this pack to this handheld's Stump?")
+        a.handle("a")
+        self.wait(a)
+        self.assertTrue(a.task.ok, a.task.msg)
+        ans = self.runs[-1][1]
+        self.assertEqual((ans["install bavard"], ans["talk from the start"], ans["change something"]), (True, "off", ""))
+        self.assertNotIn("install simple", ans)
+
+    def test_a_provisioner_newer_than_the_shelf(self):
+        """Run from main (untagged): the shelf's copy is older; A goes back to it, said so."""
+        path = self.fake_tarball("RK3326-Provisioner-0.3.0-beta.15.tar.gz", "RK3326-Provisioner-0.3.0-beta.15",
+                                 {"VERSION": "0.3.0-beta.15\n", "install.sh": "#!/bin/bash\n",
+                                  "provisioner/__main__.py": ""})
+        c = {"product": "provisioner", "channel": "sandbox", "version": "0.3.0-beta.15", "where": "card",
+             "dir": os.path.dirname(path), "files": [os.path.basename(path)]}
+        real = A.shelf.best
+        A.shelf.best = lambda p, ch, **kw: c if p == "provisioner" else real(p, ch, **kw)
+        self.addCleanup(setattr, A.shelf, "best", real)
+        a = self.handheld_app()
+        a.version = "0.3.0-beta.16"
+        a.app_dir = tempfile.mkdtemp(prefix="app-")                     # not a git clone: it may replace itself
+        self.addCleanup(lambda: __import__("shutil").rmtree(a.app_dir, True))
+        a.open_product("provisioner")
+        self.shot(a, "77d-provisioner-newer")
+        a.psel = 0
+        a.handle("a")
+        self.assertTrue(a.confirm["title"].startswith("Go back to the Provisioner %s" % c["version"]), a.confirm)
+
     def test_its_passwords(self):
         a = self.handheld_app(installed=True)
         self.pw_state = "DEFAULT"

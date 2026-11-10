@@ -10,6 +10,19 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.17
+
+- **Its packs, a page of their own** (This handheld → its Stump → Its
+  packs): every pack its wizard offers, however many, a check box each;
+  those its Stump has are marked installed (each Update brings them up to
+  date); the ones checked are added by an Update that keeps its settings,
+  identity, files and chain, each pack with its own settings at their
+  defaults. Before, packs were only switches inside the new-answers form.
+- **The Provisioner's page, when it's newer than the shelf** (run from a
+  clone of main, say): the top line says this one is newer than any copy on
+  the shelf, the shelf's copy is marked "older: A goes back to it" (not "the
+  newest"), and A asks "Go back to the Provisioner …?".
+
 ## v0.3.0-beta.16
 
 - **The sudo password, typed on the Provisioner's screen.** Its installers
