@@ -1067,6 +1067,7 @@ class App:
                                           else "Its settings")),
                   "handheld": "This handheld",
                   "library": "Library  ·  what this Provisioner carries",
+                  "packs": "This handheld  ›  Its Stump  ›  Its packs",
                   "product": "This handheld  ›  %s" % (shelf.PRODUCTS[self.prod]["title"] if self.prod else ""), "files": "%s  ›  From File" % (shelf.PRODUCTS[self.fb["product"]]["short"] if self.fb and self.fb.get("product")
                                                else self.board_name()), "log": "Serial log  ·  %s  ·  115200"
                   % (self.cur["port"] if self.cur else ""), "wifi": "S3 USB Wi-Fi  ·  its networks"}[self.screen]
@@ -1206,7 +1207,10 @@ class App:
         """(text, colour) on what this product is here now."""
         v = self.installed(p)
         if p == "provisioner":
-            return "v%s, this one" % v, OK
+            copies = [shelf.best(p, ch) for ch in shelf.CHANNELS if shelf.PRODUCTS[p].get(ch)]
+            newest = max([c["version"] for c in copies if c] or [""], key=shelf.version_key)
+            ahead = bool(v and newest and shelf.version_key(newest) < shelf.version_key(v))
+            return "v%s, this one%s" % (v, ", newer than any copy on the shelf" if ahead else ""), OK
         if p == "handheld":
             h, st = self.here, self.handheld or {}
             if st.get("installed") and self.admin_state() in ("DEFAULT", "EMPTY"):
@@ -1499,7 +1503,8 @@ class App:
         rows.append({"kind": "fromfile"})
         if p == "handheld":
             if (self.handheld or {}).get("installed"):
-                rows += [{"kind": "hh_pw", "key": "FSERVBOT_OP_PASSWORD"}, {"kind": "hh_pw", "key": "AUTH_ADMIN_PASSWORD"}]
+                rows += [{"kind": "hh_packs"},
+                         {"kind": "hh_pw", "key": "FSERVBOT_OP_PASSWORD"}, {"kind": "hh_pw", "key": "AUTH_ADMIN_PASSWORD"}]
             rows.append({"kind": "hh_check"})
         if p == "provisioner" and installers.version_in(installers.previous_dir(self.app_dir)):
             rows.append({"kind": "rollback"})
@@ -1545,6 +1550,8 @@ class App:
                 self.open_files(product=p)
             elif r["kind"] == "hh_check":
                 self.check_handheld()
+            elif r["kind"] == "hh_packs":
+                self.open_packs()
             elif r["kind"] == "hh_pw":
                 self.ask_password(r["key"])
             elif r["kind"] == "rollback":
@@ -1605,7 +1612,9 @@ class App:
                              p, c, installers.firefly_install(c, t.line, self._step(t), password=pw)), after="product"),
                          "FireFly's installer uses sudo (packages, the serial port, the Ports entry)"))
         elif p == "provisioner":
-            self.ask("Install the Provisioner %s?" % what,
+            now = self.installed(p)
+            back = bool(now and shelf.version_key(c["version"]) < shelf.version_key(now))
+            self.ask(("Go back to the Provisioner %s?" if back else "Install the Provisioner %s?") % what,
                      ["Its own install.sh, over this one (v%s, kept to go back to)." % self.version,
                       "Then close it and open it again from Ports."],
                      "Install", lambda: self.with_sudo(lambda pw: self.run_task(
@@ -1628,28 +1637,35 @@ class App:
             installers.mark(p, c)
         return ok, msg
 
-    def handheld_source(self, r, new_answers=False):
-        """The handheld's Stump by this installer: Update (keeps settings) when
-        there's one, else (or with Y) the form."""
+    def handheld_inst_for(self, r):
+        """The handheld Stump's installer from a source row, or None (said why)."""
         if r["kind"] == "src":
             c = shelf.best("handheld", r["ch"])
             if not c:
                 self.toast("Not on the shelf: X gets it, or + From File", 4)
-                return
+                return None
             try:
                 inst = installers.handheld_installer(c)
             except Exception as e:
                 self.toast("Couldn't unpack it: %s" % e, 5)
-                return
+                return None
         else:
             inst = r["inst"]
         why = self.system_why("handheld")
         if why:
             self.toast(why, 6)
-            return
+            return None
         if not inst["answers"]:
             self.toast("%s %s can't take answers from here: v2.3.0-r36max or newer can" % (
                 inst["repo"], inst["version"]), 6)
+            return None
+        return inst
+
+    def handheld_source(self, r, new_answers=False):
+        """The handheld's Stump by this installer: Update (keeps settings) when
+        there's one, else (or with Y) the form."""
+        inst = self.handheld_inst_for(r)
+        if not inst:
             return
         self.hh_inst = inst
         st = self.handheld or {}
@@ -1668,6 +1684,94 @@ class App:
             self.open_form("handheld", handheld.form_defaults(
                 self.here, packs, handheld.packs_installed(st.get("folder") or os.path.expanduser("~/Stump"), packs)),
                 back="product")
+
+    # -- this handheld's Stump: its packs ------------------------------------------
+    def open_packs(self):
+        """Every pack its wizard offers, a check box each: those it has are on
+        (an Update brings them up to date); X adds the ones checked."""
+        st = self.handheld or {}
+        offered = self.handheld_packs()
+        have = set(handheld.packs_installed(st.get("folder") or os.path.expanduser("~/Stump"), offered))
+        if not offered:
+            self.toast("No packs found: its SandBox_Stump_On copy has none, and nor does the shelf", 5)
+            return
+        self._packs_cache = None
+        self.pk = {"sel": 0, "offered": offered, "have": have, "checked": set(have)}
+        self.screen = "packs"
+
+    def on_packs(self, act):
+        pk = self.pk
+        n = len(pk["offered"])
+        if act in ("up", "down"):
+            pk["sel"] = (pk["sel"] + (1 if act == "down" else -1)) % n
+        elif act == "b":
+            self.screen = "product"
+        elif act == "a":
+            name = pk["offered"][pk["sel"]]["name"]
+            if name in pk["have"]:
+                self.toast("%s is installed: each Update brings it up to date" % name, 4)
+            else:
+                pk["checked"] ^= {name}
+        elif act == "x":
+            self.add_packs()
+
+    def add_packs(self):
+        pk = self.pk
+        new = [p for p in pk["offered"] if p["name"] in pk["checked"] - pk["have"]]
+        if not new:
+            self.toast("Check a pack first (A)", 3)
+            return
+        ch = (self.marks_fn().get("handheld") or {}).get("channel") or "sandbox"
+        rows = [r for r in self.product_rows() if r["kind"] in ("src", "clone")]
+        r = next((r for r in rows if r["kind"] == "src" and r.get("ch") == ch and shelf.best("handheld", ch)), None) \
+            or next((r for r in rows if r["kind"] == "clone"), None) \
+            or next((r for r in rows if r["kind"] == "src" and shelf.best("handheld", r["ch"])), None)
+        inst = self.handheld_inst_for(r) if r else None
+        if not inst:
+            if not r:
+                self.toast("No installer for its Stump on the shelf: X on its page gets one", 5)
+            return
+        self.hh_inst = inst
+        ans = handheld.update_answers((self.handheld or {}).get("folder"))
+        for p in new:
+            ans["install " + p["name"]] = True
+            for k, v in (p.get("defaults") or {}).items():
+                ans.setdefault(k, v)
+        names = ", ".join("%s %s" % (p["name"], p["version"]) for p in new)
+        self.ask("Add %s to this handheld's Stump?" % ("these packs" if len(new) > 1 else "this pack"),
+                 [names + ".", "An Update by %s %s: its settings, identity, files and chain stay; the packs it has "
+                  "are brought up to date." % (inst["repo"], inst["version"]),
+                  "Each pack starts with its own settings (change them in /admin). A few minutes."],
+                 "Add", lambda: self.run_handheld("Adding packs to this handheld's Stump", ans))
+
+    def draw_packs(self):
+        d, pk = self.d, self.pk
+        new = len(pk["checked"] - pk["have"])
+        d.fill_rrect(12, TOP + 2, W - 24, 44, 8, PANEL)
+        d.text(F20, 26, TOP + 12, "%d of %d installed%s" % (len(pk["have"]), len(pk["offered"]),
+                                                           " · %d to add" % new if new else ""), OK, W - 52)
+        d.text(F16, 16, TOP + 56, "ITS PACKS (FROM SANDBOX_STUMP_ON)", EMBER)
+        rh = 62
+        vis = fits(TOP + 80, rh)
+        first = window(pk["sel"], len(pk["offered"]), vis)
+        for k, p in enumerate(pk["offered"][first:first + vis]):
+            i, y = first + k, TOP + 80 + k * rh
+            sel = i == pk["sel"]
+            if sel:
+                d.stroke_rrect(12, y, W - 24, rh - 6, 8, EMBER, PANEL)
+            have, checked = p["name"] in pk["have"], p["name"] in pk["checked"]
+            d.stroke_rrect(26, y + 12, 22, 22, 5, EMBER if (checked or sel) else BORDER,
+                           (OK if have else EMBER) if checked else PANEL2)
+            if checked:
+                d.text(F16, 29, y + 14, "✓", BG)
+            tag, tc = ("installed", OK) if have else (("to add", EMBER_BRIGHT) if checked else ("", MUTED))
+            tw = d.text_width(F16, tag)
+            d.text(F20, 60, y + 8, "%s %s" % (p["name"].capitalize(), p["version"]), EMBER_BRIGHT if sel else TEXT,
+                   W - 114 - tw)
+            if tag:
+                d.text(F16, W - 28 - tw, y + 11, tag, tc)
+            d.text(F16, 60, y + 34, p.get("about") or "", MUTED, W - 86)
+        self.hints([("A", "check"), ("X", "add the checked" if new else "add"), ("B", "back")])
 
     def ask_password(self, key):
         """One of the handheld Stump's passwords, typed twice on the keyboard, then set:
@@ -1742,12 +1846,17 @@ class App:
                 title = "%s %s" % (name, c["version"]) if c else "%s: not on the shelf" % name
                 repo = shelf.PRODUCTS[p][r["ch"]].split("/")[-1]
                 about = "%s · %s" % (repo, ("on the shelf" if c else "nothing here yet"))
+                older = bool(c and now and p != "stump" and shelf.version_key(c["version"]) < shelf.version_key(now))
                 if o:
                     about += " · online: %s (X gets it)" % o["version"]
+                elif older:
+                    about += " · older: A goes back to it"
                 elif self.net == "online" and c:
                     about += " · the newest"
                 if c and now and c["version"] == now:
                     tag, tc = ("the boards get it" if p == "stump" else "installed"), OK
+                elif older:
+                    tag, tc = "older", MUTED
                 ready = ready and bool(c)
             elif r["kind"] == "clone":
                 title = "Your clone: %s %s" % (r["inst"]["repo"], r["inst"]["version"])
@@ -1758,6 +1867,12 @@ class App:
                     shelf.PRODUCTS[p]["file"])
             elif r["kind"] == "hh_check":
                 title, about, ready = "Check it", "Asks the Stump on this handheld: release, name, chain.", True
+            elif r["kind"] == "hh_packs":
+                offered = self.handheld_packs()
+                have = handheld.packs_installed(st_folder, offered)
+                title, ready = "Its packs", True
+                about = ("%d of %d installed%s · A: add more" % (len(have), len(offered), (": " + ", ".join(have))
+                                                                  if have else "") if offered else "None found yet")
             elif r["kind"] == "hh_pw":
                 state = self.password_state_fn(st_folder, r["key"]) if self.password_state_fn else "SET"
                 ready = True
@@ -1823,8 +1938,13 @@ class App:
     def handheld_packs(self):
         """The packs the handheld's wizard will offer: its SandBox_Stump_On clone's,
         else (no install yet) those of the shelf's Stump copy."""
+        cached = getattr(self, "_packs_cache", None)
+        if cached and time.time() - cached[0] < 5:           # read again at most every 5 s (drawn each frame)
+            return cached[1]
         c = shelf.best("stump", "sandbox")       # it clones SandBox_Stump_On's latest
-        return self.handheld_packs_fn(shelf_dir=(c or {}).get("dir"))
+        packs = self.handheld_packs_fn(shelf_dir=(c or {}).get("dir"))
+        self._packs_cache = (time.time(), packs)
+        return packs
 
     def submit_handheld(self):
         st = self.handheld or {}
