@@ -61,7 +61,33 @@ if [ -z "${PROVISIONER_PULLED:-}" ] && [ -d "$HERE/.git" ] && [ -z "$R" ]; then
   git -C "$HERE" pull --ff-only -q 2>/dev/null || true
   PROVISIONER_PULLED=1 exec bash "$HERE/install.sh" "$@"
 fi
-if [ -n "$SUDO" ]; then sudo -v || die "sudo is needed once (serial access rule, the Ports entry)"; fi
+# sudo only for what changes: the udev rule, the dialout group, the Ports entry
+# (an update usually changes none of them: no password asked).
+if [ -d "$R/storage/.config" ]; then UDEV="$R/storage/.config/udev.rules.d"; else UDEV="$R/etc/udev/rules.d"; fi
+launcher() { sed "s|^APP_DEFAULT=.*|APP_DEFAULT=\"$APP\"     # written by install.sh|" "$HERE/ports/RK3326_Provisioner.sh"; }
+needs_sudo() {
+  cmp -s "$HERE/udev/99-rk3326-provisioner.rules" "$UDEV/99-rk3326-provisioner.rules" || return 0
+  if [ "$ME" != root ] && [ -z "$R" ]; then id -nG "$ME" | grep -qw dialout || return 0; fi
+  for ports in "$R/roms/ports" "$R/roms2/ports" "$R/storage/roms/ports"; do
+    [ -d "$ports" ] || continue
+    launcher | cmp -s - "$ports/RK3326_Provisioner.sh" || return 0
+  done
+  return 1
+}
+if [ "${1:-}" = "--needs-sudo" ]; then          # the Provisioner asks before updating itself
+  if [ -n "$SUDO" ] && needs_sudo && ! sudo -n true 2>/dev/null; then echo yes; else echo no; fi
+  exit 0
+fi
+if [ -n "$SUDO" ] && needs_sudo; then
+  if sudo -n true 2>/dev/null; then :
+  elif [ -n "${SUDO_ASKPASS:-}" ] && [ ! -t 0 ]; then
+    # From the Provisioner: the password typed on its screen, through sudo's askpass
+    # helper (never piped into sudo -S); once, then sudo's ticket does the rest.
+    sudo -A -v || die "sudo didn't take that password: nothing was changed"
+  else
+    sudo -v || die "sudo is needed once (serial access rule, the Ports entry)"
+  fi
+fi
 echo ">>> On $OS, for $ME"
 
 echo ">>> The app"
@@ -87,9 +113,9 @@ PY
 ) && ok "firmware checked (SHA-256)" || warn "some firmware didn't match its SHA-256 (it won't be offered)"
 
 echo ">>> Serial access"
-if [ -d "$R/storage/.config" ]; then UDEV="$R/storage/.config/udev.rules.d"; else UDEV="$R/etc/udev/rules.d"; fi
-$SUDO mkdir -p "$UDEV" 2>/dev/null
-if $SUDO install -m 0644 "$HERE/udev/99-rk3326-provisioner.rules" "$UDEV/99-rk3326-provisioner.rules"; then
+if cmp -s "$HERE/udev/99-rk3326-provisioner.rules" "$UDEV/99-rk3326-provisioner.rules"; then
+  ok "udev rule ($UDEV, unchanged)"
+elif $SUDO mkdir -p "$UDEV" 2>/dev/null; $SUDO install -m 0644 "$HERE/udev/99-rk3326-provisioner.rules" "$UDEV/99-rk3326-provisioner.rules"; then
   if [ -z "$R" ]; then
     $SUDO udevadm control --reload-rules 2>/dev/null; $SUDO udevadm trigger --subsystem-match=tty 2>/dev/null
     $SUDO udevadm trigger --subsystem-match=usb --attr-match=idVendor=1a86 2>/dev/null   # a CH340 plugged in now
@@ -110,8 +136,11 @@ for ports in "$R/roms/ports" "$R/roms2/ports" "$R/storage/roms/ports"; do
   real="$(cd "$ports" && pwd -P)"
   case "$seen" in *" $real "*) continue ;; esac
   seen="$seen$real "
+  if launcher | cmp -s - "$ports/RK3326_Provisioner.sh"; then
+    ok "$ports/RK3326_Provisioner.sh (unchanged)"; n=$((n+1)); continue
+  fi
   tmp="$(mktemp)"
-  sed "s|^APP_DEFAULT=.*|APP_DEFAULT=\"$APP\"     # written by install.sh|" "$HERE/ports/RK3326_Provisioner.sh" > "$tmp"
+  launcher > "$tmp"
   $SUDO install -m 0755 "$tmp" "$ports/RK3326_Provisioner.sh" && ok "$ports/RK3326_Provisioner.sh" && n=$((n+1))
   rm -f "$tmp"
 done

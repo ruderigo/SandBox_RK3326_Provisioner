@@ -10,6 +10,24 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.16
+
+- **The sudo password, typed on the Provisioner's screen.** Its installers
+  use sudo (its own: the serial rule, the Ports entry; FireFly's and the
+  handheld Stump's: packages and more). Over SSH sudo asks in the terminal;
+  from the Provisioner nobody could answer, so updating it from itself
+  stopped with "sudo requires a password". Now, when sudo would ask, the
+  Provisioner asks first (its keyboard), and the installer gets it through
+  sudo's askpass helper (`sudo -A`): a file only this user can read,
+  removed when the installer ends; never piped into `sudo -S`, never
+  logged. A wrong one stops the installer before it changes anything.
+- **install.sh asks for sudo only for what changes**: the udev rule, the
+  dialout group, the Ports entry, each compared first. An update that
+  changes none of them (most) needs no password at all.
+  `install.sh --needs-sudo` says whether it would ask.
+- FireFly's and the handheld Stump's installers take the password the same
+  way from their next releases (`sudo -A` when given the helper).
+
 ## v0.3.0-beta.15
 
 SandBox_Stump_On 1.0.0-beta.61 and 62: the **Bavard** pack, Tavern 1.2,

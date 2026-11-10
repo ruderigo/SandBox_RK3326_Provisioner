@@ -166,6 +166,8 @@ class App:
         self.handheld_fn = handheld.state   # () -> this handheld's Stump row's state, or None (no row)
         self.handheld_packs_fn = handheld.packs_offered   # (shelf_dir=) -> the packs its wizard will offer
         self.handheld_run = handheld.run
+        self.sudo_ok_fn = installers.sudo_ok            # () -> sudo needs no password now
+        self.self_update_pw_fn = installers.self_update_needs_password   # (copy, app) -> its install.sh would ask
         self.hh_inst = None             # the handheld's Stump's installer chosen (a shelf copy's, a clone)
         self.password_state_fn = handheld.password_state     # (folder, key=admin) -> SET / DEFAULT / EMPTY / NONE
         self.access_state_fn = handheld.access_state         # (folder) -> what /admin takes: SET / DEFAULT / EMPTY
@@ -1598,15 +1600,20 @@ class App:
                       "Its identity, contacts, messages and settings stay (~/.firefly)." if have else
                       "A first install needs internet once (packages, Reticulum); reboot after it.",
                       "Now: %s." % (have or "not installed")],
-                     "Install", lambda: self.run_task("Installing FireFly %s" % c["version"], lambda t: self._marked(
-                         p, c, installers.firefly_install(c, t.line, self._step(t))), after="product"))
+                     "Install", lambda: self.with_sudo(lambda pw: self.run_task(
+                         "Installing FireFly %s" % c["version"], lambda t: self._marked(
+                             p, c, installers.firefly_install(c, t.line, self._step(t), password=pw)), after="product"),
+                         "FireFly's installer uses sudo (packages, the serial port, the Ports entry)"))
         elif p == "provisioner":
             self.ask("Install the Provisioner %s?" % what,
                      ["Its own install.sh, over this one (v%s, kept to go back to)." % self.version,
                       "Then close it and open it again from Ports."],
-                     "Install", lambda: self.run_task("Installing the Provisioner %s" % c["version"],
-                                                      lambda t: installers.self_update(c, t.line, self._step(t),
-                                                                                       self.app_dir), after="quit"))
+                     "Install", lambda: self.with_sudo(lambda pw: self.run_task(
+                         "Installing the Provisioner %s" % c["version"],
+                         lambda t: installers.self_update(c, t.line, self._step(t), self.app_dir, password=pw),
+                         after="quit"),
+                         "Its installer changes the serial rule or the Ports entry: sudo",
+                         needed=lambda: self.self_update_pw_fn(c, self.app_dir)))
         elif p == "handheld":
             try:
                 inst = installers.handheld_installer(c)
@@ -1690,6 +1697,15 @@ class App:
         self.kb = Keyboard(name[0].upper() + name[1:], "", 64, secret=True,
                            hint="4 to 64 characters" + (": /admin and the fserv bot" if one else ""))
         self.kb_done = second
+
+    def with_sudo(self, go, why, needed=None):
+        """go(password): at once with None when sudo needs no password (needed()
+        False, or sudo has a ticket), else after the password is typed here. It
+        goes to the installer through sudo's askpass helper, never kept."""
+        if not (needed() if needed else not self.sudo_ok_fn()):
+            return go(None)
+        self.kb = Keyboard("sudo password (this handheld's user)", "", 128, secret=True, hint=why)
+        self.kb_done = lambda pw: go(pw) if pw else self.toast("No password: nothing was installed", 4)
 
     def run_task(self, title, fn, after="product"):
         def work(t):
@@ -1830,12 +1846,15 @@ class App:
         self.ask("Install this handheld's Stump?", lines, "Install", lambda: self.run_handheld(
             "Installing this handheld's Stump", ans))
 
-    def run_handheld(self, title, ans):
+    def run_handheld(self, title, ans, password=None, asked=False):
+        if not asked:
+            return self.with_sudo(lambda pw: self.run_handheld(title, ans, pw, True),
+                                  "Its installer uses sudo (packages, the hotspot settings)")
         inst = self.hh_inst
         folder = (self.handheld or {}).get("folder") or os.path.expanduser("~/Stump")
 
         def work(t):
-            ok, msg = self.handheld_run(inst, ans, t.line, self._step(t))
+            ok, msg = self.handheld_run(inst, ans, t.line, self._step(t), password=password)
             # If SandBox_Stump_On's AUTH_ADMIN_PASSWORD is still there (an installer
             # before v2.4.0-r36max), cleared: /admin takes its one password.
             if ok and self.clear_repo_admin_fn:
