@@ -61,6 +61,22 @@ if os.environ.get("FAKE_FROZEN"):
     sys.path.append(os.environ["FAKE_FROZEN"])
 os.uname = lambda: types.SimpleNamespace(machine=os.environ.get("FAKE_MACHINE", "Generic ESP32S3 module with Octal-SPIRAM with ESP32S3"),
                                          sysname="esp32", release="1.28.0")
+# A board's storage (1.0.0-beta.65's checks): FAKE_FREE bytes free (statvfs), and
+# FAKE_FULL a file whose .part fills the storage while it's written (OSError 28).
+if os.environ.get("FAKE_FREE"):
+    _free = int(os.environ["FAKE_FREE"])
+    os.statvfs = lambda p: (4096, 4096, 1 << 20, _free // 4096, _free // 4096, 0, 0, 0, 0, 255)
+if os.environ.get("FAKE_FULL"):
+    _board_open, _full = builtins.open, os.environ["FAKE_FULL"] + ".part"
+
+    def _open_full(name, mode="r", *args, **kw):
+        if str(name).endswith(_full) and ("w" in mode or "a" in mode):
+            raise OSError(28, "ENOSPC")
+        return _board_open(name, mode, *args, **kw)
+    builtins.open = _open_full
+if not hasattr(os, "ilistdir"):                 # MicroPython's: (name, type, inode, size)
+    os.ilistdir = lambda d=".": iter([(n, 0x4000 if os.path.isdir(os.path.join(d, n)) else 0x8000, 0, 0)
+                                      for n in os.listdir(d)])
 import gc  # noqa: E402
 gc.mem_free = lambda: int(os.environ.get("FAKE_MEM", str(8 * 1024 * 1024)))
 gc.mem_alloc = lambda: 0

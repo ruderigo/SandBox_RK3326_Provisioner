@@ -50,6 +50,7 @@ THEME = {"BG": BG, "PANEL": PANEL, "PANEL2": PANEL2, "BORDER": BORDER, "EMBER": 
 CHAINS = [("none", "No chain"), ("first", "First Stump of a chain"), ("lan", "Joins the first over the router"),
           ("member", "Joins a Stump's own Wi-Fi")]
 BOTPW = [("same", "The same password"), ("own", "Its own password")]
+LANGS = [("fr", "Français"), ("en", "English"), ("es", "Español")]   # its language (Stump 1.0.0-beta.67)
 RADIOS = [("ap", "Heltec on its own Wi-Fi"), ("lan", "Heltec on the home Wi-Fi"), ("none", "No LoRa radio")]
 HELTECS = [("usb", "Heltec on USB"), ("ble", "Heltec over Bluetooth"), ("none", "No Heltec")]
 YESNO = [("no", "No"), ("yes", "Yes")]
@@ -485,7 +486,9 @@ class App:
             return
         if act in ("a", "b"):
             if t.ok and getattr(t, "after", "") == "form" and t.result is not None:
-                self.open_form("settings", stump.answers_from(t.result))
+                a = stump.answers_from(t.result)
+                a.update(hotspotIp="yes" if a.get("hotspotIp") else "no", subnet=str(a.get("subnet") or 4))
+                self.open_form("settings", a)
             elif t.ok and getattr(t, "after", "") == "jobs":
                 self.open_jobs()
             elif getattr(t, "after", "") == "quit" and t.ok:
@@ -788,8 +791,8 @@ class App:
         port = self.cur["port"]
         if kind == "stump_new":
             self.open_form("new", {"name": "", "pw": "", "opw": "", "botpw": "same", "parentIp": "", "ssid": "", "wpass": "",
-                                   "hotspot": "", "chain": "none",
-                                   "radio": "ap", "secret": "", "upSsid": b.default_ssid, "subnet": "5", "hhost": "",
+                                   "hotspot": "", "hotspotIp": "no", "lang": "fr", "chain": "none",
+                                   "radio": "ap", "secret": "", "upSsid": b.default_ssid, "subnet": "4", "hhost": "",
                                    "features": list(stump.FEATURES[:3])})
         elif kind == "stump_update":
             self.ask("Update its Stump to %s?" % b.release,
@@ -853,14 +856,17 @@ class App:
                  "blank": "keeps the one it has" if keep else "none"},
                 {"key": "hotspot", "label": "Its own Wi-Fi's name", "kind": "text", "max": 32,
                  "blank": b.default_ssid if b else "the default"},
+                {"key": "hotspotIp", "label": "Its address in that name", "kind": "choice", "choices": YESNO},
+                # Its number, in a chain or not (1.0.0-beta.64): its Wi-Fi at 192.168.<number>.1
+                {"key": "subnet", "label": "Its number (2-254)", "kind": "text", "max": 3,
+                 "blank": "4: its Wi-Fi at 192.168.4.1"},
+                {"key": "lang", "label": "Its language", "kind": "choice", "choices": LANGS},
                 {"key": "chain", "label": "Chain", "kind": "choice", "choices": CHAINS}]
         if a.get("chain") == "lan":
             rows += [{"key": "parentIp", "label": "The first Stump's address", "kind": "text", "max": 15,
-                      "blank": "on the home Wi-Fi, like 192.168.0.173"},
-                     {"key": "subnet", "label": "Its number (5-254)", "kind": "text", "max": 3}]
+                      "blank": "on the home Wi-Fi, like 192.168.0.173"}]
         if a.get("chain") == "member":
-            rows += [{"key": "upSsid", "label": "Joins (its Wi-Fi)", "kind": "text", "max": 32},
-                     {"key": "subnet", "label": "Its number (5-254)", "kind": "text", "max": 3}]
+            rows += [{"key": "upSsid", "label": "Joins (its Wi-Fi)", "kind": "text", "max": 32}]
         if a.get("chain") in ("first", "member", "lan"):
             rows += [{"key": "secret", "label": "The chain's secret", "kind": "text", "max": 64,
                       "blank": "needed over the router" if a.get("chain") == "lan" else "none (open)"}]
@@ -898,7 +904,9 @@ class App:
         if self.form["mode"] == "handheld":
             return self.submit_handheld()
         f, b, port = self.form, self.bundle(), self.cur["port"]
-        a = dict(f["a"], pw2=f["a"].get("pw", ""), lanOk=bool(b and b.release_at_least("1.0.0-beta.57")))
+        a = dict(f["a"], pw2=f["a"].get("pw", ""), lanOk=bool(b and b.release_at_least("1.0.0-beta.57")),
+                 numberOk=bool(b and b.release_at_least("1.0.0-beta.64")), defaultSsid=b.default_ssid if b else "",
+                 hotspotIp=f["a"].get("hotspotIp") in ("yes", True))
         if f["mode"] == "settings":
             a["keepWifiPass"] = True
         s = stump.settings_from(dict(a, requireAdmin=f["mode"] == "new"))

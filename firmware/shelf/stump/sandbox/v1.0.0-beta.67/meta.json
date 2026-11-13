@@ -1,0 +1,19 @@
+{
+ "channel": "sandbox",
+ "fetched": "2026-11-12 19:51",
+ "files": {
+  "Stump-1.0.0-beta.67.bundle": "b08a9656dd44963ac0112d41d6ab27e4d3f2dce3629ffffe0b6f08512c4db47c",
+  "bavard-pack-1.2.zip": "4f868d4d1729692907acb41a4d4abc21d31fc51cbe8ddab1a3f518bc7718eb6f",
+  "nomadnet-pack-1.2.zip": "b7989c2e9266e566bebdda12d23166e8ad882b3216a7b0ca665a7cb6225856ee",
+  "rnfs-pack-1.2.zip": "3519c4a10b4a331f95f9e3133c9216af3719e2d6d66af8027ba1ad4490f75ef1",
+  "simple-pack-1.0.zip": "2bf87f2797b062df3c560bab053bf5cfa602a6c317031d9700d056f43dd2cfe8",
+  "stump-1.0.0-beta.67-s3cam.bin": "73069ec7b6b3c755657d13dc1d3b4fe952240544bebfcd0145646ae9b14f1117",
+  "stump-1.0.0-beta.67-wrover.bin": "debeff996a9ef7441180a07f1d89d77dd115268fcf1b632eddec8bc994defe02",
+  "stump_image.py": "2ef835735f16f341a3e6fbdf722c530d46b1db84c9b12676a21290f134d1181f",
+  "tavern-pack-1.2.zip": "11639cb3d975b6006aa75b2f9cd69b1086a9b3442754ec7574f19ea007f67328"
+ },
+ "product": "stump",
+ "repo": "ruderigo/SandBox_Stump_On",
+ "tag": "v1.0.0-beta.67",
+ "version": "1.0.0-beta.67"
+}
