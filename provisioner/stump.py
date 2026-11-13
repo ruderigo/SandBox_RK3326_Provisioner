@@ -441,12 +441,105 @@ def has_stump(repl):
     return "YES" in repl.run("import os\ntry:\n os.stat('config.py')\n print('YES')\nexcept OSError:\n print('NO')\n")
 
 
+SPACE_MARGIN = 16384
+CARD_ROOT = "/sd"
+
+
+def have_on_board(repl, paths):
+    """What's on the board for these paths: ({path: (sha256, size)}, bytes
+    free where they go, or None)."""
+    root = CARD_ROOT if paths and paths[0].startswith(CARD_ROOT + "/") else "/"
+    out = repl.run(
+        "import os,hashlib,binascii,json\nr={}\nfor p in %s:\n try:\n  n=os.stat(p)[6]\n"
+        "  h=hashlib.sha256()\n  f=open(p,'rb')\n  while 1:\n   b=f.read(2048)\n   if not b:\n    break\n   h.update(b)\n"
+        "  f.close()\n  r[p]=[binascii.hexlify(h.digest()).decode(),n]\n except OSError:\n  pass\n"
+        "try:\n s=os.statvfs(%s)\n fr=(s[1] or s[0])*s[3]\nexcept (OSError,AttributeError):\n fr=None\n"
+        "print('HAVE'+json.dumps({'files':r,'free':fr}))\n" % (json.dumps(list(paths)), py(root)), 180)
+    m = re.search(r"HAVE(\{.*\})", out)
+    d = json.loads(m.group(1)) if m else {"files": {}, "free": None}
+    return dict((k, tuple(v)) for k, v in d["files"].items()), d["free"]
+
+
+def upload_plan(files, have, free):
+    """Which files to write, and the room it takes (Arborist's uploadPlan,
+    1.0.0-beta.65): one already there and the same is skipped; each one
+    written goes beside the old one before the swap, so the biggest needs its
+    room on top of what the update adds. {write, skip, need, free, short}."""
+    write, skip, grow, biggest = [], [], 0, 0
+    for f in files:
+        h = have.get(f[0])
+        if h and h[0] == f[2] and h[1] == len(f[1]):
+            skip.append(f)
+            continue
+        write.append(f)
+        grow += len(f[1]) - (h[1] if h else 0)
+        biggest = max(biggest, len(f[1]))
+    need = max(0, grow) + biggest + SPACE_MARGIN if write else 0
+    return {"write": write, "skip": skip, "need": need, "free": free, "short": free is not None and need > free}
+
+
+def clear_leftovers(repl):
+    """Leftovers safe to remove when the room is short: a write cut short
+    (*.part), an old .py beside its .mpy. Never config, the identity,
+    settings or data. How many went."""
+    out = repl.run(
+        "import os\nn=0\ndef walk(d,k):\n global n\n try:\n  es=list(os.ilistdir(d))\n except OSError:\n  return\n"
+        " names=[e[0] for e in es]\n for e in es:\n  q=(d+'/' if d!='.' else '')+e[0]\n"
+        "  if e[1]==0x4000:\n   if k<3 and e[0] not in ('sd','rns'):\n    walk(q,k+1)\n   continue\n"
+        "  if e[0].endswith('.part') or (e[0].endswith('.py') and e[0][:-3]+'.mpy' in names and e[0] not in "
+        "('boot.py','main.py','config.py')):\n   try:\n    os.remove(q)\n    n+=1\n   except OSError:\n    pass\n"
+        "walk('.',0)\nprint('GONE%d' % n)\n", 60)
+    m = re.search(r"GONE(\d+)", out)
+    return int(m.group(1)) if m else 0
+
+
+def flash_use(repl):
+    """What takes the room on the board: [(folder, bytes)], the biggest first."""
+    out = repl.run(
+        "import os,json\ndef size(p):\n t=0\n try:\n  es=list(os.ilistdir(p))\n except OSError:\n  return 0\n"
+        " for e in es:\n  q=p+'/'+e[0]\n  if e[1]==0x4000:\n   t+=size(q)\n  else:\n   try:\n    t+=os.stat(q)[6]\n"
+        "   except OSError:\n    pass\n return t\nd={}\nfor e in os.ilistdir('.'):\n if e[0]=='sd':\n  continue\n"
+        " d[e[0]+('/' if e[1]==0x4000 else '')]=size(e[0]) if e[1]==0x4000 else os.stat(e[0])[6]\n"
+        "print('USE'+json.dumps(d))\n", 60)
+    m = re.search(r"USE(\{.*\})", out)
+    d = json.loads(m.group(1)) if m else {}
+    use = [(k, v) for k, v in d.items() if k.endswith("/")]
+    top = sum(v for k, v in d.items() if not k.endswith("/"))
+    if top:
+        use.append(("(files at the top)", top))
+    return sorted(use, key=lambda u: -u[1])
+
+
+def _kb(n):
+    return "%d KB" % round((n or 0) / 1024.0)
+
+
 def upload(repl, files, progress=None, chunk=3072):
     """files: [(path, bytes, sha256)]. Folders first; each file in chunks to
     <file>.part, its SHA-256 checked on the board, then renamed over the old
     one (a cut cable never leaves half a module). A module arriving as .mpy
-    has its .py removed, and the other way round."""
+    has its .py removed, and the other way round. As Arborist from
+    1.0.0-beta.65: a file already on the board and the same isn't written
+    again; the room needed is worked out first (leftovers cleared if short;
+    still short, nothing is written and what takes the room is said); a
+    board filling up while writing is said in plain words, the old file kept.
+    {written, skipped}."""
     progress = progress or (lambda done, total, path: None)
+    everything = files
+    have, free = have_on_board(repl, [p for p, _, _ in files])
+    plan = upload_plan(files, have, free)
+    if plan["short"]:
+        gone = clear_leftovers(repl)
+        have, free = have_on_board(repl, [p for p, _, _ in files])
+        plan = upload_plan(files, have, free)
+        if plan["short"]:
+            use = [] if files and files[0][0].startswith(CARD_ROOT + "/") else flash_use(repl)
+            raise StumpError(
+                "The board's storage is full: this needs about %s free, it has %s%s. Nothing was written.%s An "
+                "installed pack can be removed to make room, or the Stump made again as new (it erases the board)."
+                % (_kb(plan["need"]), _kb(plan["free"]), " (after removing %d leftovers)" % gone if gone else "",
+                   " What takes the room: %s." % ", ".join("%s %s" % (k, _kb(v)) for k, v in use[:6]) if use else ""))
+    files = plan["write"]
     total = sum(len(d) for _, d, _ in files)
     dirs = set()
     for p, _, _ in files:
@@ -464,8 +557,19 @@ def upload(repl, files, progress=None, chunk=3072):
             repl.run("open(%s,'wb').close()\n" % py(tmp))
         for off in range(0, len(data), chunk):
             b64 = base64.b64encode(data[off:off + chunk]).decode()
-            repl.run("import binascii\nf=open(%s,'%s')\nf.write(binascii.a2b_base64('%s'))\nf.close()\n"
-                     % (py(tmp), "ab" if off else "wb", b64))
+            try:
+                repl.run("import binascii\nf=open(%s,'%s')\nf.write(binascii.a2b_base64('%s'))\nf.close()\n"
+                         % (py(tmp), "ab" if off else "wb", b64))
+            except StumpError as e:
+                if not re.search(r"OSError: \[?Errno 28\b|OSError: 28\b|ENOSPC", str(e)):
+                    raise
+                try:
+                    repl.run("import os\ntry:\n os.remove(%s)\nexcept OSError:\n pass\n" % py(tmp))
+                except StumpError:
+                    pass
+                raise StumpError("The board's storage filled up while writing %s (%s). The old one is still there. "
+                                 "An installed pack can be removed to make room, or the Stump made again as new."
+                                 % (path, _kb(len(data))))
             done += min(chunk, len(data) - off)
             progress(done, total, path)
         repl.run("import os,hashlib,binascii\nh=hashlib.sha256()\nf=open(%s,'rb')\nwhile 1:\n b=f.read(2048)\n"
@@ -473,6 +577,7 @@ def upload(repl, files, progress=None, chunk=3072):
                  "if d!=%s:\n os.remove(%s)\n raise OSError(%s)\n"
                  "try:\n os.remove(%s)\nexcept OSError:\n pass\nos.rename(%s,%s)\n"
                  % (py(tmp), py(sha), py(tmp), py(path + " arrived damaged"), py(path), py(tmp), py(path)), 60)
+    files = everything                          # (skipped ones too: an old .py beside a .mpy already there)
     gone = []
     for path, _, _ in files:
         if path.endswith(".mpy"):
@@ -482,12 +587,14 @@ def upload(repl, files, progress=None, chunk=3072):
     if gone:
         repl.run("import os\nfor p in %s:\n try:\n  os.remove(p)\n except OSError:\n  pass\n" % json.dumps(gone))
     progress(total, total, "")
+    return {"written": len(plan["write"]), "skipped": len(plan["skip"])}
 
 
 # -- settings (config.py), by the Stump's own settings.py ---------------------
 KEYS = ["NODE_NAME", "BOT_NAME", "MESH_GREETING", "WIFI_SSID", "AUTH_MODE", "FEATURES", "THEME", "SSID_NAME",
         "CHAIN_ENABLED", "CHAIN_UPLINK_SSID", "CHAIN_UPLINK_PASS", "CHAIN_SUBNET", "CHAIN_CHANNEL", "CHAIN_SECRET",
-        "CHAIN_PARENT_IP"]
+        "CHAIN_PARENT_IP", "DEFAULT_LANG", "SSID_INCLUDE_IP"]
+LANGS = ("fr", "en", "es")                    # a Stump's language for visitors who haven't picked one
 # The Heltec on the Stump's own hotspot: .200, past what the hotspot hands out
 # (.2 before 1.0.0-beta.58, which a phone could take first); on the router,
 # .222 for the first, its own for each next (Arborist's HELTEC_ON_HOTSPOT, HELTEC_FIRST).
@@ -615,12 +722,24 @@ def settings_from(a):
     if mode not in MODES:
         return no("Unknown access mode.")
     v["THEME"], v["AUTH_MODE"] = theme, mode
+    lang = a.get("lang") or "fr"
+    if lang not in LANGS:
+        return no("Unknown language.")
+    v["DEFAULT_LANG"] = lang                  # its language (1.0.0-beta.67; ignored before)
     hs = (a.get("hotspot") or "").strip()
     if len(hs) > 32 or _ctl(hs):
         return no("The Wi-Fi name it shows: at most 32 characters.")
-    v["SSID_NAME"], v["SSID_INCLUDE_IP"] = hs or None, False
-    subnet = 4
+    v["SSID_NAME"], v["SSID_INCLUDE_IP"] = hs or None, bool(a.get("hotspotIp"))
+    # Its number, in a chain or not (1.0.0-beta.64): its own Wi-Fi is 192.168.<number>.1.
     chain = a.get("chain") or "none"
+    s = str(a.get("subnet") if a.get("subnet") is not None else "").strip()
+    if s and not re.fullmatch(r"[1-9][0-9]{0,2}", s) or s and not 2 <= int(s) <= 254:
+        return no("Its number: 2 to 254 (its Wi-Fi is 192.168.<number>.1).")
+    subnet = int(s) if s else 4
+    if subnet != 4 and chain in ("none", "first") and a.get("numberOk") is False:
+        return no("This Stump release is older than 1.0.0-beta.64: on its own (or first in a chain) its Wi-Fi stays "
+                  "192.168.4.1, number 4 (a newer one on the shelf takes any number).")
+    v["CHAIN_SUBNET"] = subnet
     if chain in ("first", "member"):
         secret = (a.get("secret") or "").strip()
         if len(secret) > 64 or re.search(r"['\"\\]", secret) or _ctl(secret):
@@ -633,16 +752,12 @@ def settings_from(a):
             ch = int(chs) if re.fullmatch(r"[0-9]{1,2}", chs) else 0
             if not 1 <= ch <= 13:
                 return no("The chain's Wi-Fi channel: 1 to 13.")
-            v.update(CHAIN_UPLINK_SSID="", CHAIN_UPLINK_PASS="", CHAIN_SUBNET=4, CHAIN_CHANNEL=ch)
+            v.update(CHAIN_UPLINK_SSID="", CHAIN_UPLINK_PASS="", CHAIN_CHANNEL=ch)
         else:
             up = (a.get("upSsid") or "").strip()
             if not up or len(up) > 32 or _ctl(up):
                 return no("The Wi-Fi name of the Stump it joins: 1 to 32 characters.")
-            s = str(a.get("subnet") or "").strip()
-            if not re.fullmatch(r"[1-9][0-9]{0,2}", s) or not 5 <= int(s) <= 254:
-                return no("This Stump's number in the chain: 5 to 254, a different one on each Stump.")
-            subnet = int(s)
-            v.update(CHAIN_UPLINK_SSID=up, CHAIN_UPLINK_PASS=a.get("upPass") or "", CHAIN_SUBNET=subnet, CHAIN_CHANNEL=0)
+            v.update(CHAIN_UPLINK_SSID=up, CHAIN_UPLINK_PASS=a.get("upPass") or "", CHAIN_CHANNEL=0)
     elif chain == "lan":
         # A member over the router (chain.py's CHAIN_PARENT_IP, 1.0.0-beta.57): it
         # stays on the home Wi-Fi and links to the first Stump there.
@@ -658,14 +773,17 @@ def settings_from(a):
         pip = (a.get("parentIp") or "").strip()
         if not is_ip(pip):
             return no("The first Stump's address on the home Wi-Fi looks like 192.168.0.173.")
-        s = str(a.get("subnet") or "").strip()
-        if not re.fullmatch(r"[1-9][0-9]{0,2}", s) or not 5 <= int(s) <= 254:
-            return no("This Stump's number in the chain: 5 to 254, a different one on each Stump.")
-        subnet = int(s)
         v.update(CHAIN_ENABLED=True, CHAIN_SECRET=secret, CHAIN_PARENT_IP=pip, CHAIN_UPLINK_SSID=ssid,
-                 CHAIN_UPLINK_PASS=a.get("wpass") or FROM_WIFI_PASS, CHAIN_SUBNET=subnet, CHAIN_CHANNEL=0)
+                 CHAIN_UPLINK_PASS=a.get("wpass") or FROM_WIFI_PASS, CHAIN_CHANNEL=0)
     else:
         v["CHAIN_ENABLED"] = False
+    if chain in ("member", "lan") and subnet == 4:
+        warn.append("Number 4 is the first Stump's usual one: each Stump of a chain needs a number of its own.")
+    # The name with its address: 32 characters at most, or the Stump cuts it.
+    shown = (hs or a.get("defaultSsid") or "") + (" 192.168.%d.1" % subnet if v["SSID_INCLUDE_IP"] else "")
+    if len(shown) > 32:
+        return no("The Wi-Fi's name with its address is %d character%s too long (32 at most): shorten the name, or "
+                  "don't show the address." % (len(shown) - 32, "" if len(shown) == 33 else "s"))
     radio = a.get("radio") or "none"
     on_ap = "192.168.%d.%d" % (subnet, HELTEC_ON_HOTSPOT)
     if radio == "lan":
@@ -693,7 +811,7 @@ def answers_from(c):
     """What read_settings found -> the form's answers."""
     chain = "none" if not c.get("CHAIN_ENABLED") else "lan" if c.get("CHAIN_PARENT_IP") else \
         "member" if c.get("CHAIN_UPLINK_SSID") else "first"
-    subnet = c.get("CHAIN_SUBNET") if chain in ("member", "lan") else 4
+    subnet = c.get("CHAIN_SUBNET") or 4       # every Stump has one (1.0.0-beta.64)
     h = c.get("HELTEC") or {}
     # On its hotspot: .200, or .2 as before 1.0.0-beta.58 (saved again as .200).
     radio = "none" if not h.get("enabled") else ("ap" if h.get("host") in (
@@ -704,7 +822,8 @@ def answers_from(c):
             "features": c.get("FEATURES") if isinstance(c.get("FEATURES"), list) else FEATURES[:3],
             "theme": c.get("THEME") or "paper", "mode": c.get("AUTH_MODE") or "open", "hotspot": c.get("SSID_NAME") or "",
             "chain": chain, "channel": c.get("CHAIN_CHANNEL") or 11, "upSsid": c.get("CHAIN_UPLINK_SSID") or "",
-            "subnet": c.get("CHAIN_SUBNET") or 5,
+            "subnet": c.get("CHAIN_SUBNET") or 4, "hotspotIp": bool(c.get("SSID_INCLUDE_IP")),
+            "lang": c.get("DEFAULT_LANG") if c.get("DEFAULT_LANG") in LANGS else "fr",
             "secret": c.get("CHAIN_SECRET") or "", "parentIp": c.get("CHAIN_PARENT_IP") or "",
             "upPass": "" if chain == "lan" else c.get("CHAIN_UPLINK_PASS") or "",
             "botpw": "own" if c.get("HAS_OP_PASSWORD") else "same", "configSha": c.get("CONFIG_SHA") or "", "hasPw": bool(c.get("HAS_ADMIN_PASSWORD")),
@@ -793,7 +912,7 @@ def start_report(s, v, default_ssid="Stump"):
     """What it said as it started, for a setup: ([(what, says, "ok"|"warn"|"err"|"")], [notes])."""
     rows, notes = [], []
     member, first = _member(v), bool(v.get("CHAIN_ENABLED")) and not _member(v)
-    ap = "192.168.%s.1" % (v.get("CHAIN_SUBNET") if member else 4)
+    ap = "192.168.%s.1" % (v.get("CHAIN_SUBNET") or 4)          # its number, in a chain or not (beta.64)
     ssid = v.get("SSID_NAME") or default_ssid
     rows.append(("Its pages", "up" if s["serving"] else "not up yet", "ok" if s["serving"] else "warn"))
     rows.append(("Its own Wi-Fi", "\u201c%s\u201d · http://%s/" % (ssid, ap), ""))

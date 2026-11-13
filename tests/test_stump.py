@@ -203,7 +203,7 @@ class Refused(MakeAStump):
         for a, want in ((answers(name=""), "name"), (answers(pw2="other"), "aren't the same"),
                         (answers(pw="", pw2=""), "admin password"), (answers(ssid="X", wpass="short"), "8 to 63"),
                         (answers(radio="lan", hhost="192.168.1.50"), "home Wi-Fi's name"),
-                        (answers(chain="member", upSsid="Up", subnet="3"), "5 to 254")):
+                        (answers(chain="member", upSsid="Up", subnet="1"), "2 to 254")):
             ok, msg = self.make(a)
             self.assertFalse(ok)
             self.assertIn(want, msg)
@@ -338,6 +338,42 @@ class StumpImages(unittest.TestCase):
         self.assertIn("admin_web.mpy", self.on_board())
         self.assertIn("made again it gets the Stump image", msg)
 
+    def test_an_update_on_a_full_board(self):
+        """As Arborist from 1.0.0-beta.65 (a WROVER with packs): the same files
+        aren't written again, the room is worked out first, a full board said."""
+        files = [("app/x.mpy", b"x" * 30000), ("app/y.mpy", b"y" * 20000)]
+        files = [(p, d, hashlib.sha256(d).hexdigest()) for p, d in files]
+
+        def up(**env):
+            os.environ.update(env)
+            link = self.open_link()
+            try:
+                repl = stump.ready_repl(lambda: link, None, secs=20)
+                return stump.upload(repl, files)
+            finally:
+                link.close()
+                for k in env:
+                    os.environ.pop(k, None)
+        self.assertEqual(up(), {"written": 2, "skipped": 0})
+        self.assertEqual(up(), {"written": 0, "skipped": 2})          # the same: nothing written
+        files[1] = ("app/y.mpy", b"Y" * 20000, hashlib.sha256(b"Y" * 20000).hexdigest())
+        with open(os.path.join(self.root, "app", "z.py.part"), "w") as f:
+            f.write("a write cut short")
+        with self.assertRaises(stump.StumpError) as e:
+            up(FAKE_FREE="20000")                                     # needs 20 KB + 16 KB: short
+        self.assertIn("storage is full", str(e.exception))
+        self.assertIn("Nothing was written", str(e.exception))
+        self.assertIn("(after removing 1 leftovers)", str(e.exception))
+        self.assertIn("app/", str(e.exception))                       # what takes the room
+        with open(os.path.join(self.root, "app", "y.mpy"), "rb") as f:
+            self.assertEqual(f.read(), b"y" * 20000)                  # untouched
+        with self.assertRaises(stump.StumpError) as e:
+            up(FAKE_FULL="app/y.mpy")                                 # fills up while writing it
+        self.assertIn("filled up while writing app/y.mpy", str(e.exception))
+        with open(os.path.join(self.root, "app", "y.mpy"), "rb") as f:
+            self.assertEqual(f.read(), b"y" * 20000)                  # the old one kept
+        self.assertEqual(up(), {"written": 1, "skipped": 1})          # room again: only the changed one
+
     def test_a_board_on_an_image_and_a_release_without_one(self):
         """The release chosen has no image (an older one): its files would hide the
         built-in modules, so a newer image on the board is refused, and the
@@ -395,7 +431,7 @@ class Rules(unittest.TestCase):
         self.assertIn("error", stump.settings_from(answers(chain="first", secret="it's")))
         self.assertNotIn("WIFI_PASS", stump.settings_from(answers(keepWifiPass=True))["values"])
         for bad in ("007", "²5", " 5x"):                                    # as Arborist: digits, no leading 0
-            self.assertIn("5 to 254", stump.settings_from(answers(chain="member", upSsid="U", subnet=bad))["error"])
+            self.assertIn("2 to 254", stump.settings_from(answers(chain="member", upSsid="U", subnet=bad))["error"])
         self.assertIn("1 to 13", stump.settings_from(answers(chain="first", channel="0x"))["error"])
 
     def test_answers_from_what_the_board_says(self):
@@ -434,7 +470,7 @@ class Rules(unittest.TestCase):
         self.assertEqual(kept["CHAIN_UPLINK_PASS"], stump.FROM_WIFI_PASS)    # copied from WIFI_PASS on the board
         self.assertIn("home Wi-Fi's name", stump.settings_from(dict(a, ssid="", wpass="", radio="none"))["error"])
         for k, bad, want in (("secret", "", "chain secret"),
-                             ("parentIp", "192.168.0", "192.168.0.173"), ("subnet", "4", "5 to 254"),
+                             ("parentIp", "192.168.0", "192.168.0.173"), ("subnet", "1", "2 to 254"),
                              ("lanOk", False, "older than 1.0.0-beta.57"), ("hhost", "192.168.0.1", "2 to 254")):
             self.assertIn(want, stump.settings_from(dict(a, **{k: bad}))["error"], k)
         self.assertEqual(stump.settings_from(answers(chain="first", secret="x"))["values"]["CHAIN_PARENT_IP"], "")
@@ -443,6 +479,30 @@ class Rules(unittest.TestCase):
         a = stump.answers_from(c)
         self.assertEqual((a["chain"], a["parentIp"], a["subnet"], a["radio"], a["botpw"]),
                          ("lan", "192.168.0.173", 8, "ap", "own"))
+
+    def test_its_number_language_and_name_as_beta64_67(self):
+        """Every Stump has a number (its Wi-Fi at 192.168.<number>.1), a language,
+        and its address shown in its Wi-Fi's name if wanted (32 characters at most)."""
+        v = stump.settings_from(answers(chain="none", subnet="7", radio="ap"))["values"]
+        self.assertEqual((v["CHAIN_SUBNET"], v["HELTEC"]["host"], v["DEFAULT_LANG"]), (7, "192.168.7.200", "fr"))
+        self.assertEqual(stump.settings_from(answers(chain="none", subnet=""))["values"]["CHAIN_SUBNET"], 4)
+        self.assertEqual(stump.settings_from(answers(chain="first", secret="x", subnet="9"))["values"]["CHAIN_SUBNET"], 9)
+        self.assertIn("older than 1.0.0-beta.64",
+                      stump.settings_from(answers(chain="none", subnet="7", numberOk=False))["error"])
+        self.assertNotIn("error", stump.settings_from(answers(chain="member", upSsid="U", subnet="7", numberOk=False)))
+        w = stump.settings_from(answers(chain="member", upSsid="U", subnet="4"))["warn"]
+        self.assertTrue(any("number of its own" in x for x in w), w)
+        self.assertEqual(stump.settings_from(answers(lang="en"))["values"]["DEFAULT_LANG"], "en")
+        self.assertIn("Unknown language", stump.settings_from(answers(lang="de"))["error"])
+        v = stump.settings_from(answers(hotspot="Cafe", hotspotIp=True, subnet="12"))["values"]
+        self.assertEqual((v["SSID_NAME"], v["SSID_INCLUDE_IP"]), ("Cafe", True))
+        err = stump.settings_from(answers(hotspot="Le Café du Coin de la Place", hotspotIp=True, subnet="12"))["error"]
+        self.assertIn("too long (32 at most)", err)
+        a = stump.answers_from({"NODE_NAME": "N", "CHAIN_SUBNET": 7, "DEFAULT_LANG": "es", "SSID_INCLUDE_IP": True,
+                                "HELTEC": {"enabled": True, "host": "192.168.7.200"}})
+        self.assertEqual((a["subnet"], a["lang"], a["hotspotIp"], a["radio"], a["chain"]), (7, "es", True, "ap", "none"))
+        rows, _ = stump.start_report(stump.boot_summary("[web] serving\n"), dict(v, CHAIN_ENABLED=False), "Stump")
+        self.assertIn("http://192.168.12.1/", dict((k, t) for k, t, _ in rows)["Its own Wi-Fi"])
 
     def test_the_boot_report(self):
         v = stump.settings_from(answers(chain="lan", ssid="Home Net", wpass="longenough", parentIp="192.168.0.173",

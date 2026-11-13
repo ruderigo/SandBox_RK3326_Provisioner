@@ -10,6 +10,37 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.18
+
+Caught up with SandBox_Stump_On 1.0.0-beta.63 to 67 (Team Stump's Arborist
+the reference, as before):
+
+- **Updating a Stump on a full board** (Stump beta.65, kit finding 15: a
+  WROVER with packs stopped with `OSError: 28`). Like Arborist now: a file
+  already on the board and the same isn't written again (updates are faster
+  too); the room an update needs is worked out first, the safe leftovers
+  cleared if it's short (a write cut short, an old .py beside its .mpy),
+  and still short it stops before writing anything and says what takes the
+  room; filling up while writing is said in plain words, the old file kept.
+  Packs' files go the same way.
+- **Its number, for every Stump** (beta.64): 2 to 254, 4 by default, its own
+  Wi-Fi at 192.168.<number>.1 in a chain or not (on its own it used to be
+  192.168.4.1 whatever the number); asked once in the form, not per chain
+  choice (members were 5 to 254, the first always 4). The Heltec on its
+  Wi-Fi follows (.200), and the end of a setup gives that address. A
+  release before beta.64 keeps number 4 on its own: refused otherwise.
+- **Its address in its Wi-Fi's name** (`SSID_INCLUDE_IP`), a choice: the name
+  with the address counted, refused over 32 characters (the Stump would cut it).
+- **Its language** (beta.67, `DEFAULT_LANG`: Français, English, Español;
+  French by default): for visitors who haven't picked one and for what's
+  posted for everyone. Read back in Its settings. (This handheld's own
+  Stump: Team Stump's computer wizard doesn't ask it yet; /admin sets it.)
+- **The shelf at Sandbox 1.0.0-beta.67**: its bundle, both images, its packs
+  (Bavard 1.2, NomadNet 1.2, Tavern 1.2, rnfs 1.2, Simple 1.0).
+- Checked against b67 with no change needed: Team Stump's wizard with the
+  handheld's answers; the handheld repo's cockpit and FireFly against real
+  b67 Stumps (ops and mods, beta.64, show in /names as the Stump writes them).
+
 ## v0.3.0-beta.17
 
 - **Its packs, a page of their own** (This handheld → its Stump → Its
