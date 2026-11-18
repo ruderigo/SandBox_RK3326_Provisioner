@@ -29,7 +29,8 @@ Caught up with SandBox_Stump_On 1.0.0-beta.86 and Reticulum 1.6.1:
   restore.
 - **The shelf at Sandbox 1.0.0-beta.86**, with **all seven packs**: Meter 1.4
   (`/meter ann`) and Marco Polo 1.0 are back (rehashed in beta.83). FireFly's
-  Sandbox at 0.9.7 (packed text), the handheld's at 2.5.3-b.82.
+  Sandbox at 0.9.8 (packed text, Reticulum 1.6.1 and LXMF 1.3.1), the
+  handheld's at 2.5.4-b.86.
 - Checked against b86 with no change needed: Team Stump's wizard with the
   form's answers, pack records and removal (beta.84's rules are the ones
   this already kept), Reticulum 1.6.1 (the Stump's business on a board; a

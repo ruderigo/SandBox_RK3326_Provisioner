@@ -148,8 +148,8 @@ class Shelf(unittest.TestCase):
     def test_the_built_in_shelf(self):
         os.environ.pop("PROVISIONER_BUILTIN_SHELF")
         for p, ch, v in (("stump", "official", "1.0.0-beta.48"), ("stump", "sandbox", "1.0.0-beta.86"),
-                         ("firefly", "official", "0.8.1"), ("firefly", "sandbox", "0.9.7"),
-                         ("handheld", "official", "2.0.0-r36max"), ("handheld", "sandbox", "2.5.3-b.82")):
+                         ("firefly", "official", "0.8.1"), ("firefly", "sandbox", "0.9.8"),
+                         ("handheld", "official", "2.0.0-r36max"), ("handheld", "sandbox", "2.5.4-b.86")):
             c = shelf.best(p, ch, env=self.env)
             self.assertEqual((c["version"], c["where"]), (v, "built-in"), (p, ch))
             with open(shelf.main_file(c), "rb") as f:
