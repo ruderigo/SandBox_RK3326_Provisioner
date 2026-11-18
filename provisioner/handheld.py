@@ -496,6 +496,12 @@ try:
         out = {"old": "1.0.0-beta.75"}
     elif do in ("save", "restore") and not hasattr(P, "read_identity_source"):
         out = {"old": "1.0.0-beta.76"}
+    elif do == "stamps" and not hasattr(P, "stamp_announces"):
+        out = {"old": "1.0.0-beta.86"}
+    elif do == "stamps":
+        wanted, have = P._stamps_files(folder)[2:]
+        todo = sum(1 for h, m in wanted.items() if not P._stamp_ok(bytes.fromhex(m), bytes.fromhex(have.get(h, ""))))
+        out = {"total": len(wanted), "todo": todo, "ok": bool(wanted) and bool(P.stamp_announces(folder))}
     elif do in ("packs", "install", "remove"):
         avail = P.discover_packs()
         rows = P.pack_rows(avail, P.pc_installed_packs(folder))
@@ -552,7 +558,7 @@ print("TEAM" + json.dumps(out))
 """
 
 
-def team(do, folder, home=None, run=subprocess.run, **job):
+def team(do, folder, home=None, run=subprocess.run, timeout=300, **job):
     """Calls Team Stump's provisioner.py (its SandBox_Stump_On clone's) for
     this handheld's Stump. Its answer: a dict; {"error"} when it couldn't,
     {"old": release} when the clone is older than what this needs."""
@@ -563,7 +569,7 @@ def team(do, folder, home=None, run=subprocess.run, **job):
     job.update(clone=clone, folder=folder, do=do)
     try:
         p = run([shutil.which("python3") or "python3", "-I", "-c", TEAM_CODE], input=json.dumps(job) + "\n",
-                cwd=home, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, timeout=300)
+                cwd=home, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as e:
         return {"error": str(e)}
     m = re.search(r"^TEAM(\{.*\})$", p.stdout or "", re.M)

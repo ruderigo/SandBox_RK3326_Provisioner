@@ -67,6 +67,9 @@ run "stump" python3 -W error::ResourceWarning tests/test_stump.py
 step "A Stump's identity in a file (the pretend board; Team Stump's code reading ours, with STUMP_ON)"
 run "identity" python3 -W error::ResourceWarning tests/test_identity.py
 
+step "A Stump's announce stamps (Reticulum 1.6.1's proof of work; Team Stump's code with STUMP_ON)"
+run "stamps" python3 -W error::ResourceWarning tests/test_stamps.py
+
 step "A CH340 through libusb (a pretend chip; the real libusb when here)"
 run "usbserial" python3 -W error::ResourceWarning tests/test_usbserial.py
 

@@ -16,7 +16,7 @@ update from here too. It's an EmulationStation **Ports** entry.
 |---|---|---|---|
 | **ESP32-S3** (Freenove CAM) | **Make a Stump** (its Stump image when the release has one), update it (in place on an image), its settings, check it starts, with **what it said as it started**; **its packs** (install, update, remove); **its identity** saved in a file and brought back | Official / Sandbox / + From File (a `.bundle`, a pack's `.zip`) | tested on the R36MAX up to b51; **the images, the chain over the router and the report: to test** (beta.13) |
 | | **USB Wi-Fi adapter**: the S3 becomes the handheld's Wi-Fi card ([below](#the-s3-as-the-handhelds-wi-fi-card)) | built here (`s3_usb_wifi/`) | 0.2.1 tested (internet through it); **0.3.0 to test** |
-| **ESP32-WROVER** | **a Stump**, as on the CAM (its image at 0x1000; a WROOM, without PSRAM, is refused) | Sandbox 1.0.0-beta.82 (a release with images) | **to test** (beta.13). Its **CH340** (Freenove's) has no kernel driver on these systems: the Provisioner drives it through libusb (`ch340://`, beta.14, **to test**) |
+| **ESP32-WROVER** | **a Stump**, as on the CAM (its image at 0x1000; a WROOM, without PSRAM, is refused) | Sandbox 1.0.0-beta.86 (a release with images) | **to test** (beta.13). Its **CH340** (Freenove's) has no kernel driver on these systems: the Provisioner drives it through libusb (`ch340://`, beta.14, **to test**) |
 | **Classic ESP32** | WLED 16.0.1 (app slot), MicroPython 1.29.0 (full) | the catalogue / + From File (any `.bin`, read for what it is) | tested on the R36MAX |
 | **Heltec V3** | RNode for a CAM, set for the mesh | | *coming* |
 | **Any board** | the serial log (pause, a block, export); erase the flash | | tested on the R36MAX |
@@ -119,7 +119,9 @@ install is recorded in its plugin folders (`.from_pack`, as Team Stump does).
 **Save its identity** writes `<its name>.stump-identity` in your home folder
 (Team Stump's format; whoever has it can be that Stump: keep it safe), and
 **Bring back a saved identity** makes a board that Stump again (the one it
-had saved first; its settings stay).
+had saved first; its settings stay). **Work out its announce stamps** does
+Reticulum 1.6.1's proof of work for a Stump with *Announce stamps* ticked
+in its /admin, every core of the handheld on it.
 
 ## This handheld's Stump
 

@@ -15,7 +15,7 @@ import os
 import threading
 import time
 
-from .. import boards, catalog, files, flasher, handheld, identity, images, installers, packs, s3wifi, shelf, stump
+from .. import boards, catalog, files, flasher, handheld, identity, images, installers, packs, s3wifi, shelf, stamps, stump
 from ..seriallog import SerialLog
 from . import keyboard
 from .keyboard import Keyboard
@@ -271,7 +271,7 @@ class App:
         if b.get("id") in STUMP_BOARDS:        # the Freenove CAM, or a WROVER: a Stump
             rows.append({"kind": "src_stump"})
             rows += [{"kind": k} for k in ("stump_new", "stump_update", "stump_settings", "stump_check", "stump_packs",
-                                           "stump_id_save", "stump_id_restore")]
+                                           "stump_id_save", "stump_id_restore", "stump_stamps")]
         rows += [{"kind": "fw", "entry": e} for e in catalog.for_board(self.entries, b)]
         rows.append({"kind": "fromfile"})
         rows.append({"kind": "log"})
@@ -865,6 +865,14 @@ class App:
                       "Whoever has the file can be this Stump on the mesh: keep it safe, don't share it."],
                      "Save it", lambda: self.run_stump("Saving its identity", lambda t: identity.save_job(
                          self.link_for(port), self._step(t), t.line, where, b.release)[:2]))
+        elif kind == "stump_stamps":
+            self.ask("Work out its announce stamps?",
+                     ["Reticulum 1.6.1 puts a proof of work on announces, and a node can be set to ignore announces "
+                      "without one. A Stump with Announce stamps ticked (/admin -> Stump settings -> Announcing) "
+                      "lists what it announces; a board finds its stamps slowly.",
+                      "Here every core works on them: a minute or more each. It runs meanwhile."],
+                     "Work them out", lambda: self.run_stump("Its announce stamps", lambda t: stamps.board_job(
+                         self.link_for(port), self._step(t), t.line)))
         elif kind == "stump_id_restore":
             self.open_files(exts=(identity.EXT,))
             self.fb["identity"] = True
@@ -903,6 +911,20 @@ class App:
                  "Bring it back", lambda: self.hh_identity_task("Bringing back %s" % (name or "a Stump"), "restore",
                                                                 done, src=src, keep=self.identity_dir()))
 
+    def ask_hh_stamps(self):
+        def done(r):
+            if not r["total"]:
+                return None
+            if not r["todo"]:
+                return "Its %d announce stamp(s) are all there." % r["total"]
+            return "%d announce stamp(s) worked out: it announces stamped within a minute." % r["todo"]
+        self.ask("Work out its announce stamps?",
+                 ["Reticulum 1.6.1 puts a proof of work on announces, and a node can be set to ignore announces "
+                  "without one. With Announce stamps ticked in its /admin, a computer Stump finds them itself in "
+                  "the background; this does it now, every core on it (Team Stump's --stamp-announces).",
+                  "A minute or more each."],
+                 "Work them out", lambda: self.hh_identity_task("Its announce stamps", "stamps", done, timeout=3600))
+
     def hh_identity_task(self, title, do, done, **job):
         folder = self.hh_folder()
 
@@ -913,7 +935,10 @@ class App:
                 return False, ("Its SandBox_Stump_On is older than %s: Update its Stump first." % r["old"]), None
             if r.get("error"):
                 return False, r["error"], None
-            return True, done(r), None
+            msg = done(r)
+            if msg is None:
+                return False, stamps.NOT_YET, None
+            return bool(r.get("ok", True)) or not r.get("todo"), msg, None
         self.task = Task(title, work)
         self.task.after = "product"
         self.screen = "run"
@@ -1790,7 +1815,7 @@ class App:
             if (self.handheld or {}).get("installed"):
                 rows += [{"kind": "hh_packs"},
                          {"kind": "hh_pw", "key": "FSERVBOT_OP_PASSWORD"}, {"kind": "hh_pw", "key": "AUTH_ADMIN_PASSWORD"},
-                         {"kind": "hh_id_save"}, {"kind": "hh_id_restore"}]
+                         {"kind": "hh_id_save"}, {"kind": "hh_id_restore"}, {"kind": "hh_stamps"}]
             rows.append({"kind": "hh_check"})
         if p == "provisioner" and installers.version_in(installers.previous_dir(self.app_dir)):
             rows.append({"kind": "rollback"})
@@ -1840,6 +1865,8 @@ class App:
                 self.open_packs()
             elif r["kind"] == "hh_id_save":
                 self.ask_hh_identity_save()
+            elif r["kind"] == "hh_stamps":
+                self.ask_hh_stamps()
             elif r["kind"] == "hh_id_restore":
                 self.open_files(exts=(identity.EXT,))
                 self.fb.update(identity=True, handheld=True)
@@ -2185,6 +2212,9 @@ class App:
                 title, ready = "Its packs", True
                 about = ("%d of %d installed%s · A: install, update, remove" % (
                     len(have), len(offered), (": " + ", ".join(have)) if have else "") if offered else "None found yet")
+            elif r["kind"] == "hh_stamps":
+                title, ready = "Work out its announce stamps", True
+                about = "Reticulum 1.6.1's proof of work, for Announce stamps ticked in its /admin (Team Stump's tool)."
             elif r["kind"] == "hh_id_save":
                 title, ready = "Save its identity", True
                 about = "Its keys into a file in your home folder: a fresh install can be this same Stump again."
@@ -2439,6 +2469,9 @@ class App:
                                     "first)." % (sum(1 for x in self.bundled_packs() if x[1]), rel), "", MUTED),
                     "stump_id_save": ("Save its identity", "Its keys into a file: a fresh install or another board "
                                       "can be this same Stump again.", "", MUTED),
+                    "stump_stamps": ("Work out its announce stamps", "Reticulum 1.6.1's proof of work, every core "
+                                     "of this handheld on it, for a Stump with Announce stamps ticked in /admin.",
+                                     "", MUTED),
                     "stump_id_restore": ("Bring back a saved identity", "A %s file (or an old Stump's folder): it "
                                          "becomes that Stump; the one it has saved first." % identity.EXT,
                                          "keeps settings", OK),

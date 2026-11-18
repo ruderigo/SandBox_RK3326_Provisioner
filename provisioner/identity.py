@@ -114,22 +114,34 @@ def read_source(src):
 
 
 # -- on a board ------------------------------------------------------------------
-def board_read(repl):
-    """{path: bytes} of the board's identity, or None (it makes one as it first starts)."""
-    out = repl.run("import binascii,json\nd={}\nfor p in %s:\n try:\n"
-                   "  d[p]=binascii.b2a_base64(open(p,'rb').read()).decode().strip()\n except OSError:\n  pass\n"
-                   "print('ID'+json.dumps(d))\n" % json.dumps(list(IDENTITY_FILES)), 30)
-    m = re.search(r"ID(\{.*\})", out)
-    try:
-        if not m:
-            raise ValueError
-        files = dict((k, base64.b64decode(v)) for k, v in json.loads(m.group(1)).items() if k in IDENTITY_FILES)
-    except (ValueError, binascii.Error, AttributeError):
-        # Not read (a garbled line): never taken for "none", or a restore would write over it unsaved.
-        raise stump.StumpError("its identity couldn't be read back over USB: try again")
-    if files.get("rns/identity") and not whole(files):
-        raise stump.StumpError("its identity on the board isn't whole: nothing changed")
-    return files if whole(files) else None
+def board_read(repl, tries=2):
+    """{path: bytes} of the board's identity, or None (it makes one as it
+    first starts). Each file comes with its size and SHA-256 from the board
+    and the copy is checked against them (Team Stump's beta.84), read again
+    once: one that won't read whole is never taken for "none"."""
+    code = ("import binascii,json,hashlib\nd={}\nfor p in %s:\n try:\n  b=open(p,'rb').read()\n"
+            "  d[p]=[binascii.b2a_base64(b).decode().strip(),len(b),binascii.hexlify(hashlib.sha256(b).digest()).decode()]\n"
+            " except OSError:\n  pass\nprint('ID'+json.dumps(d))\n" % json.dumps(list(IDENTITY_FILES)))
+    for n in range(tries):
+        out = repl.run(code, 30)
+        m = re.search(r"ID(\{.*\})", out)
+        try:
+            if not m:
+                raise ValueError
+            files = {}
+            for k, (v, size, digest) in json.loads(m.group(1)).items():
+                if k in IDENTITY_FILES:
+                    b = base64.b64decode(v)
+                    if len(b) != size or hashlib.sha256(b).hexdigest() != digest:
+                        raise ValueError
+                    files[k] = b
+        except (ValueError, TypeError, binascii.Error, AttributeError):
+            continue
+        if files.get("rns/identity") and not whole(files):
+            raise stump.StumpError("its identity on the board isn't whole: nothing changed")
+        return files if whole(files) else None
+    # Not read (a garbled line): never taken for "none", or a restore would write over it unsaved.
+    raise stump.StumpError("its identity couldn't be read back over USB: try again")
 
 
 def board_put(repl, files):

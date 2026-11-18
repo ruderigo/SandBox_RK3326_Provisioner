@@ -10,6 +10,34 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.20
+
+Caught up with SandBox_Stump_On 1.0.0-beta.86 and Reticulum 1.6.1:
+
+- **Work out its announce stamps** (Stump beta.86). Reticulum 1.6.1 puts a
+  proof of work on announces, and a node can be set to ignore announces
+  without one. A Stump with *Announce stamps* ticked in its /admin (Stump
+  settings -> Announcing) lists what it announces; a board finds its stamps
+  slowly. A CAM's new row works them out on this handheld, every core on
+  them (a minute or more each; the board runs meanwhile), and copies them
+  over: Team Stump's `--stamp-announces`, checked by its own code. For this
+  handheld's Stump, Team Stump's tool itself (a computer Stump also finds
+  them in the background on its own). A Stump that hasn't listed them yet
+  says what to tick.
+- **A board's identity is read with its size and SHA-256** and checked (read
+  twice), as Team Stump's beta.84 does: one that won't read whole stops a
+  restore.
+- **The shelf at Sandbox 1.0.0-beta.86**, with **all seven packs**: Meter 1.4
+  (`/meter ann`) and Marco Polo 1.0 are back (rehashed in beta.83). FireFly's
+  Sandbox at 0.9.7 (packed text), the handheld's at 2.5.3-b.82.
+- Checked against b86 with no change needed: Team Stump's wizard with the
+  form's answers, pack records and removal (beta.84's rules are the ones
+  this already kept), Reticulum 1.6.1 (the Stump's business on a board; a
+  computer Stump installs it itself).
+- Tests: `stamps` (new: the check, the search, a CAM's missing stamps over
+  the pretend board, Team Stump's code checking ours and running for a
+  computer Stump); `screens` (both stamp rows).
+
 ## v0.3.0-beta.19
 
 Caught up with SandBox_Stump_On 1.0.0-beta.82 (Team Stump's Arborist and

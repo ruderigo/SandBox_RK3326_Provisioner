@@ -147,18 +147,18 @@ class Shelf(unittest.TestCase):
 
     def test_the_built_in_shelf(self):
         os.environ.pop("PROVISIONER_BUILTIN_SHELF")
-        for p, ch, v in (("stump", "official", "1.0.0-beta.48"), ("stump", "sandbox", "1.0.0-beta.82"),
-                         ("firefly", "official", "0.8.1"), ("firefly", "sandbox", "0.9.6"),
-                         ("handheld", "official", "2.0.0-r36max"), ("handheld", "sandbox", "2.5.2-b.62")):
+        for p, ch, v in (("stump", "official", "1.0.0-beta.48"), ("stump", "sandbox", "1.0.0-beta.86"),
+                         ("firefly", "official", "0.8.1"), ("firefly", "sandbox", "0.9.7"),
+                         ("handheld", "official", "2.0.0-r36max"), ("handheld", "sandbox", "2.5.3-b.82")):
             c = shelf.best(p, ch, env=self.env)
             self.assertEqual((c["version"], c["where"]), (v, "built-in"), (p, ch))
             with open(shelf.main_file(c), "rb") as f:
                 data = f.read()
             shelf.check(p, {os.path.basename(shelf.main_file(c)): data})       # reads as what it is
         b = shelf.from_file("stump", shelf.main_file(shelf.best("stump", "sandbox", env=self.env)))
-        self.assertEqual(b["version"], "1.0.0-beta.82")
+        self.assertEqual(b["version"], "1.0.0-beta.86")
         imgs = sorted(f for f in os.listdir(shelf.best("stump", "sandbox", env=self.env)["dir"]) if f.endswith(".bin"))
-        self.assertEqual(imgs, ["stump-1.0.0-beta.82-s3cam.bin", "stump-1.0.0-beta.82-wrover.bin"])   # its images
+        self.assertEqual(imgs, ["stump-1.0.0-beta.86-s3cam.bin", "stump-1.0.0-beta.86-wrover.bin"])   # its images
 
 
     def test_a_pack_that_fails_its_hashes_is_left_off(self):

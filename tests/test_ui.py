@@ -165,11 +165,11 @@ class Screens(Base):
         self.shot(a, "12-jobs-s3")
         self.assertEqual(a.known["/dev/ttyACM0"]["info"]["psram_mb"], 8)
         kinds = [r["kind"] for r in a.jobs()]
-        self.assertEqual(kinds[:8], ["src_stump", "stump_new", "stump_update", "stump_settings", "stump_check",
-                                     "stump_packs", "stump_id_save", "stump_id_restore"])
+        self.assertEqual(kinds[:9], ["src_stump", "stump_new", "stump_update", "stump_settings", "stump_check",
+                                     "stump_packs", "stump_id_save", "stump_id_restore", "stump_stamps"])
         self.assertEqual([r[1]["name"] for r in a.bundled_packs()], ["rnfs", "tavern"])   # the packs it carries
-        self.assertEqual(a.jobs()[8]["entry"]["id"], "s3-usb-wifi")
-        self.assertEqual(a.jobs()[8]["entry"]["status"], "ready")
+        self.assertEqual(a.jobs()[9]["entry"]["id"], "s3-usb-wifi")
+        self.assertEqual(a.jobs()[9]["entry"]["status"], "ready")
         self.assertEqual(a.jsel, 1)                     # on Make a Stump
 
     def test_a_failure_says_what_to_do(self):
@@ -760,6 +760,20 @@ class FromFileAndPacks(Base):
         with open(os.path.join(self.root, "themes.json")) as f:
             self.assertNotIn("tavern", J.load(f))
 
+    def test_its_announce_stamps(self):
+        """1.0.0-beta.86: a Stump that doesn't list what it announces yet (Announce
+        stamps not ticked): said, nothing copied."""
+        a = self.stump_board()
+        a.jsel = [r["kind"] for r in a.jobs()].index("stump_stamps")
+        a.handle("a")
+        self.assertEqual(a.confirm["title"], "Work out its announce stamps?")
+        self.shot(a, "46-stamps-confirm")
+        a.handle("a")
+        self.wait(a)
+        self.assertFalse(a.task.ok)
+        self.assertIn('tick "Announce stamps"', a.task.msg)
+        self.assertFalse(os.path.exists(os.path.join(self.root, "rns", "stamps.json")))
+
     def test_a_pack_installed_by_hand_shows_as_its_own(self):
         """A plugin with no record (before beta.75, or by hand) is matched to the
         pack it belongs to, its version not recorded; one not among these, its own."""
@@ -910,13 +924,13 @@ class ThisHandheld(Base):
         return {"tag": "v" + version, "version": version, "prerelease": True, "url": "", "repo": "x", "assets": []}
 
     def test_the_page_and_whats_newer_online(self):
-        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.83")})
+        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.87")})
         self.assertEqual(a.rows(), [{"handheld": True}])
         self.shot(a, "70-boards-handheld")
         a.handle("a")
         self.assertEqual((a.screen, a.net), ("handheld", "online"))
         self.assertIn("1 newer", a.net_line()[0])
-        self.assertIn("Sandbox 1.0.0-beta.82 (online: 1.0.0-beta.83)", a.shelf_line("stump")[0])
+        self.assertIn("Sandbox 1.0.0-beta.86 (online: 1.0.0-beta.87)", a.shelf_line("stump")[0])
         self.assertIn("Official 1.0.0-beta.48", a.shelf_line("stump")[0])
         self.assertEqual(a.shelf_line("provisioner")[0], "Shelf: Sandbox none")   # no official Provisioner yet
         self.shot(a, "71-handheld")
@@ -928,12 +942,12 @@ class ThisHandheld(Base):
         a.handle("x")                                   # get beta.52 onto the shelf
         self.wait(a)
         self.assertTrue(a.task.ok, a.task.msg)
-        self.assertEqual(self.fetched, [("stump", "sandbox", "v1.0.0-beta.83")])
+        self.assertEqual(self.fetched, [("stump", "sandbox", "v1.0.0-beta.87")])
         a.handle("a")
         self.assertEqual(a.screen, "product")
         a.handle("a")                                   # use the Sandbox one for the boards
-        self.assertEqual(a.stump_copy()["version"], "1.0.0-beta.82")
-        self.assertEqual(a.bundle().release, "1.0.0-beta.82")
+        self.assertEqual(a.stump_copy()["version"], "1.0.0-beta.86")
+        self.assertEqual(a.bundle().release, "1.0.0-beta.86")
         self.assertIn("now", a.toast_text)
 
     def test_a_stump_that_runs_from_its_port(self):
@@ -965,20 +979,20 @@ class ThisHandheld(Base):
         self.assertIn("Offline", a.toast_text)
         self.assertIsNone(a.task)
         # A bundle from a card: + From File
-        src = os.path.join(A.shelf.best("stump", "sandbox")["dir"], "Stump-1.0.0-beta.82.bundle")
+        src = os.path.join(A.shelf.best("stump", "sandbox")["dir"], "Stump-1.0.0-beta.86.bundle")
         shutil.copy(src, os.path.join(self.home, "mine.bundle"))
         a.psel = [r["kind"] for r in a.product_rows()].index("fromfile")
         a.handle("a")
         self.assertEqual((a.screen, a.fb["exts"]), ("files", (".bundle",)))
         a.choose_file(os.path.join(self.home, "mine.bundle"))
         self.assertEqual(a.screen, "product")
-        self.assertEqual((a.stump_copy()["channel"], a.stump_copy()["version"]), ("file", "1.0.0-beta.82"))
+        self.assertEqual((a.stump_copy()["channel"], a.stump_copy()["version"]), ("file", "1.0.0-beta.86"))
         a.open_files(product="stump")
         a.choose_file(__file__)                         # not a bundle
         self.assertIn("Not used", a.toast_text)
 
     def test_the_library(self):
-        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.83"),
+        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.87"),
                                       ("firefly", "official"): self.rel("0.8.1"),
                                       ("provisioner", "sandbox"): self.rel("0.3.0-beta.11")})
         a.handle("y")                                   # Y on the handheld row: the Library
@@ -1002,7 +1016,7 @@ class ThisHandheld(Base):
         a.handle("x")                                   # refresh the checked ones
         self.wait(a)
         self.assertTrue(a.task.ok, a.task.msg)
-        self.assertEqual(self.fetched, [("stump", "sandbox", "v1.0.0-beta.83")])
+        self.assertEqual(self.fetched, [("stump", "sandbox", "v1.0.0-beta.87")])
         self.assertIn("FireFly Official: has 0.8.1 already", a.task.msg)
         self.shot(a, "78-library-refreshed")
         a.handle("a")
@@ -1010,7 +1024,7 @@ class ThisHandheld(Base):
         a.handle("x")                                   # nothing checked: everything newer
         self.wait(a)
         self.assertEqual(self.fetched[1:], [("provisioner", "sandbox", "v0.3.0-beta.11"),
-                                            ("stump", "sandbox", "v1.0.0-beta.83")])   # the pretend fetch keeps nothing
+                                            ("stump", "sandbox", "v1.0.0-beta.87")])   # the pretend fetch keeps nothing
         a.handle("a")
         a.handle("l")                                   # all / none
         self.assertEqual(len(a.lib["checked"]), 7)      # every shelf pair (no official Provisioner)
@@ -1284,6 +1298,35 @@ class ThisHandheld(Base):
         self.wait(a)
         self.assertFalse(a.task.ok)
         self.assertIn("older than 1.0.0-beta.76", a.task.msg)
+
+    def test_its_announce_stamps(self):
+        a = self.handheld_app(installed=True)
+        a.handheld_fn = lambda: {"installer": None, "why": "", "folder": "/home/ark/Stump", "installed": True,
+                                 "port": True}
+        a.handheld = a.handheld_fn()
+        answers = [{"total": 0, "todo": 0, "ok": False}, {"total": 2, "todo": 1, "ok": True}, {"old": "1.0.0-beta.86"}]
+        calls = []
+
+        def team(do, folder, **job):
+            calls.append((do, job))
+            return answers[len(calls) - 1]
+        a.hh_team_fn = team
+        a.open_product("handheld")
+        kinds = [r["kind"] for r in a.product_rows()]
+        msgs = []
+        for _ in answers:
+            a.psel = kinds.index("hh_stamps")
+            a.handle("a")
+            self.assertEqual(a.confirm["title"], "Work out its announce stamps?")
+            a.handle("a")
+            self.wait(a)
+            msgs.append((a.task.ok, a.task.msg))
+            a.handle("a")
+        self.assertEqual(calls[0], ("stamps", {"timeout": 3600}))
+        self.assertFalse(msgs[0][0])
+        self.assertIn("Announce stamps", msgs[0][1])
+        self.assertEqual(msgs[1], (True, "1 announce stamp(s) worked out: it announces stamped within a minute."))
+        self.assertEqual(msgs[2], (False, "Its SandBox_Stump_On is older than 1.0.0-beta.86: Update its Stump first."))
 
     def test_a_provisioner_newer_than_the_shelf(self):
         """Run from main (untagged): the shelf's copy is older; A goes back to it, said so."""
