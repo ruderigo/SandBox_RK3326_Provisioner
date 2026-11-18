@@ -147,18 +147,46 @@ class Shelf(unittest.TestCase):
 
     def test_the_built_in_shelf(self):
         os.environ.pop("PROVISIONER_BUILTIN_SHELF")
-        for p, ch, v in (("stump", "official", "1.0.0-beta.48"), ("stump", "sandbox", "1.0.0-beta.62"),
-                         ("firefly", "official", "0.8.1"), ("firefly", "sandbox", "0.9.3"),
-                         ("handheld", "official", "2.0.0-r36max"), ("handheld", "sandbox", "2.5.0-b.55")):
+        for p, ch, v in (("stump", "official", "1.0.0-beta.48"), ("stump", "sandbox", "1.0.0-beta.86"),
+                         ("firefly", "official", "0.8.1"), ("firefly", "sandbox", "0.9.8"),
+                         ("handheld", "official", "2.0.0-r36max"), ("handheld", "sandbox", "2.5.4-b.86")):
             c = shelf.best(p, ch, env=self.env)
             self.assertEqual((c["version"], c["where"]), (v, "built-in"), (p, ch))
             with open(shelf.main_file(c), "rb") as f:
                 data = f.read()
             shelf.check(p, {os.path.basename(shelf.main_file(c)): data})       # reads as what it is
         b = shelf.from_file("stump", shelf.main_file(shelf.best("stump", "sandbox", env=self.env)))
-        self.assertEqual(b["version"], "1.0.0-beta.62")
+        self.assertEqual(b["version"], "1.0.0-beta.86")
         imgs = sorted(f for f in os.listdir(shelf.best("stump", "sandbox", env=self.env)["dir"]) if f.endswith(".bin"))
-        self.assertEqual(imgs, ["stump-1.0.0-beta.62-s3cam.bin", "stump-1.0.0-beta.62-wrover.bin"])   # its images
+        self.assertEqual(imgs, ["stump-1.0.0-beta.86-s3cam.bin", "stump-1.0.0-beta.86-wrover.bin"])   # its images
+
+
+    def test_a_pack_that_fails_its_hashes_is_left_off(self):
+        """b82's marcopolo-pack-1.0.zip: its install.py doesn't match its plugin.json.
+        That pack stays off the shelf (said, noted); the Stump and the other packs go on."""
+        import io
+        import zipfile
+        os.environ.pop("PROVISIONER_BUILTIN_SHELF")
+        src = shelf.best("stump", "sandbox", env=self.env)
+        files = {}
+        for n in os.listdir(src["dir"]):
+            if n != "meta.json":
+                with open(os.path.join(src["dir"], n), "rb") as f:
+                    files[n] = f.read()
+        good = sorted(n for n in files if n.startswith("tavern-pack-"))[-1]
+        bad, out = io.BytesIO(), io.BytesIO(files[good])
+        with zipfile.ZipFile(out) as zin, zipfile.ZipFile(bad, "w") as zout:
+            for i in zin.infolist():
+                d = zin.read(i)
+                zout.writestr(i, d + b"# changed\n" if i.filename.endswith("/install.py") else d)
+        files["broken-pack-1.0.zip"] = bad.getvalue()
+        said = []
+        c = shelf.put("stump", "sandbox", src["tag"], src["version"], "", files, env=self.env, log=said.append)
+        self.assertNotIn("broken-pack-1.0.zip", os.listdir(c["dir"]))
+        self.assertIn(good, os.listdir(c["dir"]))
+        self.assertTrue(any("left off: broken-pack-1.0.zip" in s and "changed since it was hashed" in s for s in said))
+        with open(os.path.join(c["dir"], "meta.json")) as f:
+            self.assertIn("broken-pack-1.0.zip", json.load(f)["left_off"])
 
 
 class Installers(unittest.TestCase):

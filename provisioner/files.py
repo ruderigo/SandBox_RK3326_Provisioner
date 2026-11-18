@@ -4,7 +4,7 @@ a folder holds (folders first, then the files it can use)."""
 import glob
 import os
 
-USABLE = (".bin", ".zip")
+USABLE = (".bin", ".zip", ".stump-identity")
 
 
 def roots(home=None):

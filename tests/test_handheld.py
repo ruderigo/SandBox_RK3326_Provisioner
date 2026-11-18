@@ -254,5 +254,65 @@ class TeamStumpsWizard(unittest.TestCase):
         self.assertEqual(H.access_state(folder), "SET")
 
 
+class TeamStumpsCode(unittest.TestCase):
+    """Its packs and its identity by its clone's provisioner.py (1.0.0-beta.75, .76)."""
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp(prefix="home-")
+        self.addCleanup(shutil.rmtree, self.home, True)
+        self.folder = os.path.join(self.home, "Stump")
+        os.makedirs(os.path.join(self.folder, "rns"))
+        open(os.path.join(self.folder, "stump_pc.py"), "w").close()
+        with open(os.path.join(self.folder, "config.py"), "w") as f:
+            f.write("NODE_NAME = 'Hazel'\n")
+        with open(os.path.join(self.folder, "rns", "identity"), "wb") as f:
+            f.write(bytes(range(64)))
+
+    def test_no_clone_yet(self):
+        self.assertIn("isn't there yet", H.team("packs", self.folder, home=self.home)["error"])
+
+    def test_an_older_clone(self):
+        os.makedirs(os.path.join(self.home, "SandBox_Stump_On"))
+        with open(os.path.join(self.home, "SandBox_Stump_On", "provisioner.py"), "w") as f:
+            f.write("print('an old wizard')\n")
+        self.assertEqual(H.team("packs", self.folder, home=self.home), {"old": "1.0.0-beta.75"})
+        self.assertEqual(H.team("save", self.folder, home=self.home, dir=self.home), {"old": "1.0.0-beta.76"})
+
+    @unittest.skipUnless(os.environ.get("STUMP_ON"), "STUMP_ON=path/to/SandBox_Stump_On runs Team Stump's code")
+    def test_packs_and_identity(self):
+        from provisioner import identity as I
+        os.symlink(os.environ["STUMP_ON"], os.path.join(self.home, "SandBox_Stump_On"))
+        r = H.team("packs", self.folder, home=self.home)
+        if r.get("old"):
+            self.skipTest("STUMP_ON is older than %s" % r["old"])
+        self.assertIn("tavern", [x["name"] for x in r["rows"]])
+        self.assertTrue(all(x["state"] == "new" for x in r["rows"]))
+        r = H.team("install", self.folder, home=self.home, name="tavern")
+        self.assertTrue(r["ok"], r)
+        row = next(x for x in r["rows"] if x["name"] == "tavern")
+        self.assertEqual((row["state"], row["here"]), ("same", row["version"]))
+        self.assertEqual(H.keeps_text(row), "its saved data, its theme (tavern)")
+        with open(os.path.join(self.folder, "tavern", ".from_pack")) as f:
+            self.assertEqual(json.load(f)["pack"], "tavern")
+        r = H.team("remove", self.folder, home=self.home, name="tavern", also=False)
+        self.assertTrue(r["ok"], r)
+        self.assertFalse(os.path.exists(os.path.join(self.folder, "tavern")))
+        # its identity: saved (never over another file), read by our code, brought back
+        r1 = H.team("save", self.folder, home=self.home, dir=self.home)
+        r2 = H.team("save", self.folder, home=self.home, dir=self.home)
+        self.assertEqual([os.path.basename(r1["path"]), os.path.basename(r2["path"])],
+                         ["Hazel.stump-identity", "Hazel (2).stump-identity"])
+        files, name = I.read_source(r1["path"])
+        self.assertEqual((files["rns/identity"], name, r1["fingerprint"]), (bytes(range(64)), "Hazel", I.fingerprint(files)))
+        other = I.save({"rns/identity": bytes(64)}, "Elm", self.home)
+        r = H.team("restore", self.folder, home=self.home, src=other, keep=self.home)
+        again = H.team("restore", self.folder, home=self.home, src=r1["path"], keep=self.home)
+        self.assertNotEqual(again["kept"], r["kept"])  # the same minute: never over the first one kept
+        self.assertEqual(r["name"], "Elm")
+        self.assertTrue(r["kept"] and I.read_source(r["kept"])[0]["rns/identity"] == bytes(range(64)), r)
+        self.assertIn("isn't a saved Stump identity", H.team("restore", self.folder, home=self.home,
+                                                            src=os.path.join(self.folder, "config.py"))["error"])
+
+
 if __name__ == "__main__":
     sys.exit(0 if unittest.main(verbosity=1, exit=False).result.wasSuccessful() else 1)

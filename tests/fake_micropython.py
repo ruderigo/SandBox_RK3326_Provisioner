@@ -40,7 +40,8 @@ sys.implementation.version = (1, 28, 0)
 sys.implementation._mpy = int(major) | (int(minor) << 8)
 
 # "/" is the board's folder.
-_open, _stat, _remove, _rename, _mkdir, _listdir = open, os.stat, os.remove, os.rename, os.mkdir, os.listdir
+_open, _stat, _remove, _rename, _mkdir, _listdir, _rmdir = (open, os.stat, os.remove, os.rename, os.mkdir, os.listdir,
+                                                           os.rmdir)
 
 
 def board(p):
@@ -53,6 +54,7 @@ os.remove = lambda p: _remove(board(p))
 os.rename = lambda a, b: _rename(board(a), board(b))
 os.mkdir = lambda p, *a: _mkdir(board(p), *a)
 os.listdir = lambda p=".": _listdir(board(p))
+os.rmdir = lambda p: _rmdir(board(p))
 sys.path[:0] = [ROOT, os.path.join(HERE, "stump_fixtures")]
 # A Stump image (FAKE_FROZEN: a folder standing in for the modules built in,
 # searched after the board's own files, as MicroPython's .frozen), the chip's
@@ -61,6 +63,22 @@ if os.environ.get("FAKE_FROZEN"):
     sys.path.append(os.environ["FAKE_FROZEN"])
 os.uname = lambda: types.SimpleNamespace(machine=os.environ.get("FAKE_MACHINE", "Generic ESP32S3 module with Octal-SPIRAM with ESP32S3"),
                                          sysname="esp32", release="1.28.0")
+# A board's storage (1.0.0-beta.65's checks): FAKE_FREE bytes free (statvfs), and
+# FAKE_FULL a file whose .part fills the storage while it's written (OSError 28).
+if os.environ.get("FAKE_FREE"):
+    _free = int(os.environ["FAKE_FREE"])
+    os.statvfs = lambda p: (4096, 4096, 1 << 20, _free // 4096, _free // 4096, 0, 0, 0, 0, 255)
+if os.environ.get("FAKE_FULL"):
+    _board_open, _full = builtins.open, os.environ["FAKE_FULL"] + ".part"
+
+    def _open_full(name, mode="r", *args, **kw):
+        if str(name).endswith(_full) and ("w" in mode or "a" in mode):
+            raise OSError(28, "ENOSPC")
+        return _board_open(name, mode, *args, **kw)
+    builtins.open = _open_full
+if not hasattr(os, "ilistdir"):                 # MicroPython's: (name, type, inode, size)
+    os.ilistdir = lambda d=".": iter([(n, 0x4000 if os.path.isdir(os.path.join(d, n)) else 0x8000, 0, 0)
+                                      for n in os.listdir(d)])
 import gc  # noqa: E402
 gc.mem_free = lambda: int(os.environ.get("FAKE_MEM", str(8 * 1024 * 1024)))
 gc.mem_alloc = lambda: 0

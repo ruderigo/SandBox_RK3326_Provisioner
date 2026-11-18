@@ -165,10 +165,11 @@ class Screens(Base):
         self.shot(a, "12-jobs-s3")
         self.assertEqual(a.known["/dev/ttyACM0"]["info"]["psram_mb"], 8)
         kinds = [r["kind"] for r in a.jobs()]
-        self.assertEqual(kinds[:5], ["src_stump", "stump_new", "stump_update", "stump_settings", "stump_check"])
-        self.assertEqual([r["plan"]["name"] for r in a.jobs()[5:7]], ["rnfs", "tavern"])   # the packs it carries
-        self.assertEqual(a.jobs()[7]["entry"]["id"], "s3-usb-wifi")
-        self.assertEqual(a.jobs()[7]["entry"]["status"], "ready")
+        self.assertEqual(kinds[:9], ["src_stump", "stump_new", "stump_update", "stump_settings", "stump_check",
+                                     "stump_packs", "stump_id_save", "stump_id_restore", "stump_stamps"])
+        self.assertEqual([r[1]["name"] for r in a.bundled_packs()], ["rnfs", "tavern"])   # the packs it carries
+        self.assertEqual(a.jobs()[9]["entry"]["id"], "s3-usb-wifi")
+        self.assertEqual(a.jobs()[9]["entry"]["status"], "ready")
         self.assertEqual(a.jsel, 1)                     # on Make a Stump
 
     def test_a_failure_says_what_to_do(self):
@@ -359,17 +360,24 @@ class MakeAStumpOnScreen(Base):
         self.assertEqual(a.form["a"]["name"], "Riverside")
         a.form["sel"] = 1                               # its password: /admin, and the fserv bot the same
         self.type_in(a, "pass1234")
-        a.form["sel"] = 6                               # Chain: right twice -> over the router, three: its Wi-Fi
+        keys = lambda: [r["key"] for r in a.form_rows()]  # noqa: E731
+        self.assertEqual(keys()[:10], ["name", "pw", "botpw", "ssid", "wpass", "hotspot", "hotspotIp", "subnet", "lang",
+                                       "chain"])                  # its number and language for every Stump (b64, b67)
+        self.assertEqual(a.form["a"]["subnet"], "4")                 # 4 by default, its Wi-Fi at 192.168.4.1
+        a.form["a"]["subnet"] = "5"
+        a.form["sel"] = keys().index("chain")           # Chain: right twice -> over the router, three: its Wi-Fi
         a.handle("right")
         a.handle("right")
         self.assertEqual(a.form["a"]["chain"], "lan")
-        self.assertEqual([r["key"] for r in a.form_rows()][7:10], ["parentIp", "subnet", "secret"])
+        self.assertEqual(keys()[10:12], ["parentIp", "secret"])
         a.handle("right")
         self.assertEqual(a.form["a"]["chain"], "member")
-        rows = [r["key"] for r in a.form_rows()]
-        self.assertEqual(rows[:3], ["name", "pw", "botpw"])
-        self.assertEqual(rows[6:10], ["chain", "upSsid", "subnet", "secret"])
-        a.form["sel"] = 9
+        self.assertEqual(keys()[9:12], ["chain", "upSsid", "secret"])
+        a.form["sel"] = keys().index("lang")
+        a.handle("right")
+        self.assertEqual(a.form["a"]["lang"], "en")
+        rows = keys()
+        a.form["sel"] = rows.index("secret")
         self.type_in(a, "s3cret")
         self.shot(a, "23-form-filled")
         a.form["sel"] = len(rows) - 1
@@ -387,7 +395,7 @@ class MakeAStumpOnScreen(Base):
         self.assertTrue(a.task.report, "what it said as it started")
         for want in ("NODE_NAME = 'Riverside'", "FSERVBOT_OP_PASSWORD = 'pass1234'", "AUTH_ADMIN_PASSWORD = 'pass1234'",
                      "CHAIN_ENABLED = True",
-                     "CHAIN_SUBNET = 5", "CHAIN_SECRET = 's3cret'", "'192.168.5.200'"):
+                     "CHAIN_SUBNET = 5", "CHAIN_SECRET = 's3cret'", "'192.168.5.200'", "DEFAULT_LANG = 'en'"):
             self.assertIn(want, cfg)
 
         # Its settings, read back into the form, one changed, saved.
@@ -677,11 +685,20 @@ class FromFileAndPacks(Base):
         return a
 
     def test_the_tavern_pack_onto_a_stump(self):
+        """Its packs page (1.0.0-beta.75): read from the board, installed with its
+        record, then up to date, then removed with what it keeps or without."""
+        import json as J
         a = self.stump_board()
-        rows = a.jobs()
-        k = [i for i, r in enumerate(rows) if r["kind"] == "pack" and r["plan"]["name"] == "tavern"][0]
-        a.jsel = k
+        a.jsel = [r["kind"] for r in a.jobs()].index("stump_packs")
         self.shot(a, "42-jobs-packs")
+        a.handle("a")                                       # reads the board's packs
+        self.wait(a)
+        self.assertTrue(a.task.ok, a.task.msg)
+        self.assertEqual(a.task.msg, "No packs on this Stump.")
+        a.handle("a")
+        self.assertEqual(a.screen, "spacks")
+        self.assertEqual([(r["name"], r["state"]) for r in a.spack_rows()], [("rnfs", "new"), ("tavern", "new")])
+        a.handle("down")
         a.handle("a")
         self.assertEqual(a.confirm["title"], "Add tavern 1.1 to its Stump?")
         self.shot(a, "43-pack-confirm")
@@ -690,9 +707,90 @@ class FromFileAndPacks(Base):
         self.assertTrue(a.task.ok, a.task.msg)
         self.assertTrue(os.path.isfile(os.path.join(self.root, "tavern", "install.py")))
         self.assertFalse(os.path.exists(os.path.join(self.root, "tavern", "plugin.json")))   # not for the board
-        import json as J
+        with open(os.path.join(self.root, "tavern", ".from_pack")) as f:
+            rec = J.load(f)
+        self.assertEqual((rec["pack"], rec["version"], rec["plugins"], rec["theme"]), ("tavern", "1.1", ["tavern"], "tavern"))
         with open(os.path.join(self.root, "themes.json")) as f:
             self.assertIn("tavern", J.load(f))
+        a.handle("a")                                       # back on its packs, read again
+        self.assertEqual(a.screen, "spacks")
+        self.assertEqual([(r["name"], r["state"], r["here"]) for r in a.spack_rows()],
+                         [("rnfs", "new", None), ("tavern", "same", "1.1")])
+        self.shot(a, "44-packs-page")
+        a.sp["sel"] = 1
+        a.handle("a")
+        self.assertEqual(a.confirm["title"], "Install again tavern 1.1 on its Stump?")
+        a.handle("b")
+        a.handle("x")                                       # remove: its plugin, then what it keeps
+        self.assertEqual(a.confirm["title"], "Remove tavern from this Stump?")
+        a.handle("right")
+        a.handle("a")
+        self.assertEqual(a.confirm["title"], "Delete what tavern keeps too?")
+        self.assertIn("its theme (tavern)", a.confirm["lines"][0])
+        self.shot(a, "45-pack-remove")
+        os.makedirs(os.path.join(self.root, "sd", "plugins", "tavern"))
+        open(os.path.join(self.root, "sd", "plugins", "tavern", "votes.json"), "w").close()
+        a.handle("left")                                    # keep them
+        a.handle("a")
+        self.wait(a)
+        self.assertTrue(a.task.ok, a.task.msg)
+        self.assertFalse(os.path.exists(os.path.join(self.root, "tavern")))
+        self.assertTrue(os.path.exists(os.path.join(self.root, "sd", "plugins", "tavern", "votes.json")))
+        with open(os.path.join(self.root, "themes.json")) as f:
+            self.assertIn("tavern", J.load(f))
+        a.handle("a")
+        self.assertEqual([r["state"] for r in a.spack_rows()], ["new", "new"])
+        # again, its data too this time
+        a.sp["sel"] = 1
+        a.handle("a")
+        a.handle("a")
+        self.wait(a)
+        a.handle("a")
+        a.sp["sel"] = 1
+        a.handle("x")
+        a.handle("right")
+        a.handle("a")
+        self.assertEqual(a.confirm["choice"], 0)            # starts on Keep them
+        a.handle("right")
+        a.handle("a")                                       # delete them too
+        self.wait(a)
+        self.assertTrue(a.task.ok, a.task.msg)
+        self.assertIn("with what it kept", a.task.msg)
+        self.assertFalse(os.path.exists(os.path.join(self.root, "sd", "plugins", "tavern")))
+        with open(os.path.join(self.root, "themes.json")) as f:
+            self.assertNotIn("tavern", J.load(f))
+
+    def test_its_announce_stamps(self):
+        """1.0.0-beta.86: a Stump that doesn't list what it announces yet (Announce
+        stamps not ticked): said, nothing copied."""
+        a = self.stump_board()
+        a.jsel = [r["kind"] for r in a.jobs()].index("stump_stamps")
+        a.handle("a")
+        self.assertEqual(a.confirm["title"], "Work out its announce stamps?")
+        self.shot(a, "46-stamps-confirm")
+        a.handle("a")
+        self.wait(a)
+        self.assertFalse(a.task.ok)
+        self.assertIn('tick "Announce stamps"', a.task.msg)
+        self.assertFalse(os.path.exists(os.path.join(self.root, "rns", "stamps.json")))
+
+    def test_a_pack_installed_by_hand_shows_as_its_own(self):
+        """A plugin with no record (before beta.75, or by hand) is matched to the
+        pack it belongs to, its version not recorded; one not among these, its own."""
+        a = self.stump_board()
+        for n in ("tavern", "oldbot"):
+            os.makedirs(os.path.join(self.root, n))
+            open(os.path.join(self.root, n, "install.py"), "w").close()
+        a.jsel = [r["kind"] for r in a.jobs()].index("stump_packs")
+        a.handle("a")
+        self.wait(a)
+        self.assertEqual(a.task.msg, "2 packs on this Stump.")
+        a.handle("a")
+        self.assertEqual([(r["name"], r["state"], r["here"]) for r in a.spack_rows()],
+                         [("rnfs", "new", None), ("tavern", "update", ""), ("oldbot", "yours", "")])
+        a.sp["sel"] = 2
+        a.handle("a")
+        self.assertIn("isn't among the packs here", a.toast_text)
 
     def test_a_pack_with_card_files_from_file(self):
         import shutil
@@ -726,19 +824,25 @@ class FromFileAndPacks(Base):
     def test_bavard_needs_plugin_api_4(self):
         """Stump 1.0.0-beta.61's Bavard (a test bot) posts with stump.post(): plugin API 4."""
         import shutil
-        bav = os.path.join(A.shelf.best("stump", "sandbox")["dir"], "bavard-pack-1.1.zip")
+        import glob
+        bav = sorted(glob.glob(os.path.join(A.shelf.best("stump", "sandbox")["dir"], "bavard-pack-*.zip")))[-1]
+        ver = os.path.basename(bav)[len("bavard-pack-"):-len(".zip")]
         for api, ok in ((3, False), (4, True)):
             a = self.stump_board(api=api)
             shutil.copy(bav, os.path.join(self.dir, "bavard.zip"))
             self.browse(a)
             self.pick(a, "bavard.zip")
-            self.assertEqual(a.confirm["title"], "Add bavard 1.1 to its Stump?")
+            self.assertEqual(a.confirm["title"], "Add bavard %s to its Stump?" % ver)
             a.handle("a")
             self.wait(a)
             self.assertEqual(a.task.ok, ok, a.task.msg)
             if ok:
                 self.assertTrue(os.path.isfile(os.path.join(self.root, "bavard", "scene.py")))
                 self.assertIn("misanthrope.txt", os.listdir(os.path.join(self.root, "sd", "tools", "bavard")))
+                # its setup question not marked advanced, as Arborist: its default written, the others left
+                self.assertIn("Set in its config.py: BAVARD_ON.", a.task.msg)
+                with open(os.path.join(self.root, "config.py")) as f:
+                    self.assertIn("BAVARD_ON = 'off'", f.read())
             else:
                 self.assertIn("plugin API 4", a.task.msg)
 
@@ -820,13 +924,13 @@ class ThisHandheld(Base):
         return {"tag": "v" + version, "version": version, "prerelease": True, "url": "", "repo": "x", "assets": []}
 
     def test_the_page_and_whats_newer_online(self):
-        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.63")})
+        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.87")})
         self.assertEqual(a.rows(), [{"handheld": True}])
         self.shot(a, "70-boards-handheld")
         a.handle("a")
         self.assertEqual((a.screen, a.net), ("handheld", "online"))
         self.assertIn("1 newer", a.net_line()[0])
-        self.assertIn("Sandbox 1.0.0-beta.62 (online: 1.0.0-beta.63)", a.shelf_line("stump")[0])
+        self.assertIn("Sandbox 1.0.0-beta.86 (online: 1.0.0-beta.87)", a.shelf_line("stump")[0])
         self.assertIn("Official 1.0.0-beta.48", a.shelf_line("stump")[0])
         self.assertEqual(a.shelf_line("provisioner")[0], "Shelf: Sandbox none")   # no official Provisioner yet
         self.shot(a, "71-handheld")
@@ -838,12 +942,12 @@ class ThisHandheld(Base):
         a.handle("x")                                   # get beta.52 onto the shelf
         self.wait(a)
         self.assertTrue(a.task.ok, a.task.msg)
-        self.assertEqual(self.fetched, [("stump", "sandbox", "v1.0.0-beta.63")])
+        self.assertEqual(self.fetched, [("stump", "sandbox", "v1.0.0-beta.87")])
         a.handle("a")
         self.assertEqual(a.screen, "product")
         a.handle("a")                                   # use the Sandbox one for the boards
-        self.assertEqual(a.stump_copy()["version"], "1.0.0-beta.62")
-        self.assertEqual(a.bundle().release, "1.0.0-beta.62")
+        self.assertEqual(a.stump_copy()["version"], "1.0.0-beta.86")
+        self.assertEqual(a.bundle().release, "1.0.0-beta.86")
         self.assertIn("now", a.toast_text)
 
     def test_a_stump_that_runs_from_its_port(self):
@@ -875,20 +979,20 @@ class ThisHandheld(Base):
         self.assertIn("Offline", a.toast_text)
         self.assertIsNone(a.task)
         # A bundle from a card: + From File
-        src = os.path.join(A.shelf.best("stump", "sandbox")["dir"], "Stump-1.0.0-beta.62.bundle")
+        src = os.path.join(A.shelf.best("stump", "sandbox")["dir"], "Stump-1.0.0-beta.86.bundle")
         shutil.copy(src, os.path.join(self.home, "mine.bundle"))
         a.psel = [r["kind"] for r in a.product_rows()].index("fromfile")
         a.handle("a")
         self.assertEqual((a.screen, a.fb["exts"]), ("files", (".bundle",)))
         a.choose_file(os.path.join(self.home, "mine.bundle"))
         self.assertEqual(a.screen, "product")
-        self.assertEqual((a.stump_copy()["channel"], a.stump_copy()["version"]), ("file", "1.0.0-beta.62"))
+        self.assertEqual((a.stump_copy()["channel"], a.stump_copy()["version"]), ("file", "1.0.0-beta.86"))
         a.open_files(product="stump")
         a.choose_file(__file__)                         # not a bundle
         self.assertIn("Not used", a.toast_text)
 
     def test_the_library(self):
-        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.63"),
+        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.87"),
                                       ("firefly", "official"): self.rel("0.8.1"),
                                       ("provisioner", "sandbox"): self.rel("0.3.0-beta.11")})
         a.handle("y")                                   # Y on the handheld row: the Library
@@ -912,7 +1016,7 @@ class ThisHandheld(Base):
         a.handle("x")                                   # refresh the checked ones
         self.wait(a)
         self.assertTrue(a.task.ok, a.task.msg)
-        self.assertEqual(self.fetched, [("stump", "sandbox", "v1.0.0-beta.63")])
+        self.assertEqual(self.fetched, [("stump", "sandbox", "v1.0.0-beta.87")])
         self.assertIn("FireFly Official: has 0.8.1 already", a.task.msg)
         self.shot(a, "78-library-refreshed")
         a.handle("a")
@@ -920,7 +1024,7 @@ class ThisHandheld(Base):
         a.handle("x")                                   # nothing checked: everything newer
         self.wait(a)
         self.assertEqual(self.fetched[1:], [("provisioner", "sandbox", "v0.3.0-beta.11"),
-                                            ("stump", "sandbox", "v1.0.0-beta.63")])   # the pretend fetch keeps nothing
+                                            ("stump", "sandbox", "v1.0.0-beta.87")])   # the pretend fetch keeps nothing
         a.handle("a")
         a.handle("l")                                   # all / none
         self.assertEqual(len(a.lib["checked"]), 7)      # every shelf pair (no official Provisioner)
@@ -1052,11 +1156,15 @@ class ThisHandheld(Base):
         a.handheld = a.handheld_fn()
         offered = A.handheld.packs_offered("/nonexistent", A.shelf.best("stump", "sandbox")["dir"])
         a.handheld_packs_fn = lambda shelf_dir=None: offered
+        a.hh_team_fn = lambda do, folder, **job: {"old": "1.0.0-beta.75"}     # its clone before --packs
         a.open_product("handheld")
         kinds = [r["kind"] for r in a.product_rows()]
         self.assertIn("hh_packs", kinds)
         a.psel = kinds.index("hh_packs")
         self.shot(a, "77b-handheld-packs-row")
+        a.handle("a")
+        self.wait(a)
+        self.assertIn("older than 1.0.0-beta.75", a.task.msg)
         a.handle("a")
         self.assertEqual(a.screen, "packs")
         names = [p["name"] for p in a.pk["offered"]]
@@ -1077,6 +1185,148 @@ class ThisHandheld(Base):
         ans = self.runs[-1][1]
         self.assertEqual((ans["install bavard"], ans["talk from the start"], ans["change something"]), (True, "off", ""))
         self.assertNotIn("install simple", ans)
+
+    def test_its_packs_by_team_stumps_code(self):
+        """From 1.0.0-beta.75: its packs page is Team Stump's (its clone's
+        provisioner.py, as --packs FOLDER): install, update, remove, asking
+        whether what a pack keeps goes too."""
+        a = self.handheld_app(installed=True)
+        a.handheld_fn = lambda: {"installer": None, "why": "", "folder": "/home/ark/Stump", "installed": True,
+                                 "port": True}
+        a.handheld = a.handheld_fn()
+        rows = [{"name": "bavard", "here": None, "state": "new", "plugins": ["bavard"], "version": "1.3",
+                 "about": "A test bot. More.", "keeps": {"tools": 1, "home": 0, "theme": None}},
+                {"name": "tavern", "here": "1.1", "state": "update", "plugins": ["tavern"], "version": "1.2",
+                 "about": "The reference pack.", "keeps": {"tools": 0, "home": 0, "theme": "tavern"}},
+                {"name": "oldbot", "here": "", "state": "yours", "plugins": ["oldbot"], "version": None,
+                 "about": "", "keeps": {}}]
+        calls = []
+
+        def team(do, folder, **job):
+            calls.append((do, folder, job))
+            return {"rows": rows, "ok": True}
+        a.hh_team_fn = team
+        a.open_product("handheld")
+        a.psel = [r["kind"] for r in a.product_rows()].index("hh_packs")
+        a.handle("a")
+        self.wait(a)
+        self.assertEqual(a.task.msg, "2 packs on this handheld's Stump.")   # tavern, and oldbot (version not recorded)
+        a.handle("a")
+        self.assertEqual(a.screen, "spacks")
+        self.assertEqual(calls[-1], ("packs", "/home/ark/Stump", {}))
+        self.assertEqual([(r["name"], r["state"]) for r in a.spack_rows()],
+                         [("bavard", "new"), ("tavern", "update"), ("oldbot", "yours")])
+        a.sp["sel"] = 1
+        self.shot(a, "77e-handheld-packs-team")
+        a.handle("a")
+        self.assertEqual(a.confirm["title"], "Update tavern 1.2 on this handheld's Stump?")
+        a.handle("a")
+        self.wait(a)
+        self.assertTrue(a.task.ok, a.task.msg)
+        self.assertEqual(calls[-1][0::2], ("install", {"name": "tavern"}))
+        self.assertIn("next time its Port opens", a.task.msg)
+        a.handle("a")
+        self.assertEqual((a.screen, a.sp["sel"]), ("spacks", 1))
+        a.handle("x")
+        self.assertEqual(a.confirm["title"], "Remove tavern from this handheld's Stump?")
+        a.handle("right")
+        a.handle("a")
+        self.assertEqual(a.confirm["lines"][0], "Its saved data, its theme (tavern).")
+        a.handle("left")                                 # keep them
+        a.handle("a")
+        self.wait(a)
+        self.assertEqual(calls[-1][0::2], ("remove", {"name": "tavern", "also": False}))
+        a.handle("a")
+        a.sp["sel"] = 2
+        a.handle("a")
+        self.assertIn("isn't among the packs here", a.toast_text)
+        a.handle("b")
+        self.assertEqual(a.screen, "product")
+
+    def test_its_identity(self):
+        """1.0.0-beta.76: its identity saved into a file, and one brought back
+        (a keepsake chosen in the file browser), by Team Stump's code."""
+        from provisioner import identity as I
+        a = self.handheld_app(installed=True)
+        a.handheld_fn = lambda: {"installer": None, "why": "", "folder": "/home/ark/Stump", "installed": True,
+                                 "port": False}
+        a.handheld = a.handheld_fn()
+        calls = []
+
+        def team(do, folder, **job):
+            calls.append((do, job))
+            if do == "save":
+                return {"path": os.path.join(job["dir"], "Hazel.stump-identity"), "fingerprint": "aaaa bbbb cccc dddd"}
+            return {"name": "Elm", "fingerprint": "1111 2222 3333 4444", "kept": "/home/ark/Hazel (replaced).stump-identity"}
+        a.hh_team_fn = team
+        a.identity_dir = lambda: self.home
+        a.open_product("handheld")
+        kinds = [r["kind"] for r in a.product_rows()]
+        a.psel = kinds.index("hh_id_save")
+        self.shot(a, "77f-handheld-identity")
+        a.handle("a")
+        self.assertEqual(a.confirm["title"], "Save this handheld's Stump's identity?")
+        a.handle("a")
+        self.wait(a)
+        self.assertTrue(a.task.ok, a.task.msg)
+        self.assertEqual(calls[-1], ("save", {"dir": self.home}))
+        self.assertIn("keep it safe", a.task.msg)
+        a.handle("a")
+        self.assertEqual(a.screen, "product")
+        keep = I.save({"rns/identity": bytes(64)}, "Elm", self.home)
+        a.psel = kinds.index("hh_id_restore")
+        a.handle("a")
+        self.assertEqual(a.screen, "files")
+        self.assertEqual(a.fb["exts"], (".stump-identity",))
+        a.choose_file(os.path.join(self.home, "nothing.stump-identity"))
+        self.assertIn("Not used", a.toast_text)
+        a.open_files(exts=(I.EXT,))
+        a.fb.update(identity=True, handheld=True)
+        a.choose_file(keep)
+        self.assertEqual(a.confirm["title"], "Bring back Elm?")
+        self.assertIn(I.fingerprint({"rns/identity": bytes(64)}), a.confirm["lines"][0])
+        a.handle("a")
+        self.wait(a)
+        self.assertTrue(a.task.ok, a.task.msg)
+        self.assertEqual(calls[-1], ("restore", {"src": keep, "keep": self.home}))
+        self.assertIn("saved: /home/ark/Hazel (replaced)", a.task.msg)
+        a.hh_team_fn = lambda do, folder, **job: {"old": "1.0.0-beta.76"}
+        a.handle("a")
+        a.psel = kinds.index("hh_id_save")
+        a.handle("a")
+        a.handle("a")
+        self.wait(a)
+        self.assertFalse(a.task.ok)
+        self.assertIn("older than 1.0.0-beta.76", a.task.msg)
+
+    def test_its_announce_stamps(self):
+        a = self.handheld_app(installed=True)
+        a.handheld_fn = lambda: {"installer": None, "why": "", "folder": "/home/ark/Stump", "installed": True,
+                                 "port": True}
+        a.handheld = a.handheld_fn()
+        answers = [{"total": 0, "todo": 0, "ok": False}, {"total": 2, "todo": 1, "ok": True}, {"old": "1.0.0-beta.86"}]
+        calls = []
+
+        def team(do, folder, **job):
+            calls.append((do, job))
+            return answers[len(calls) - 1]
+        a.hh_team_fn = team
+        a.open_product("handheld")
+        kinds = [r["kind"] for r in a.product_rows()]
+        msgs = []
+        for _ in answers:
+            a.psel = kinds.index("hh_stamps")
+            a.handle("a")
+            self.assertEqual(a.confirm["title"], "Work out its announce stamps?")
+            a.handle("a")
+            self.wait(a)
+            msgs.append((a.task.ok, a.task.msg))
+            a.handle("a")
+        self.assertEqual(calls[0], ("stamps", {"timeout": 3600}))
+        self.assertFalse(msgs[0][0])
+        self.assertIn("Announce stamps", msgs[0][1])
+        self.assertEqual(msgs[1], (True, "1 announce stamp(s) worked out: it announces stamped within a minute."))
+        self.assertEqual(msgs[2], (False, "Its SandBox_Stump_On is older than 1.0.0-beta.86: Update its Stump first."))
 
     def test_a_provisioner_newer_than_the_shelf(self):
         """Run from main (untagged): the shelf's copy is older; A goes back to it, said so."""
@@ -1325,13 +1575,16 @@ class EveryScreenSize(Base):
                 a.handle("a")
                 self.assertEqual(a.screen, "jobs")
                 rows = a.jobs()
-                k = [i for i, r in enumerate(rows) if r["kind"] == "pack"][-1]
-                a.jsel = k
+                a.jsel = [r["kind"] for r in rows].index("stump_id_save")
                 self.shot(a, "61-%s-jobs" % tag)
                 a.handle("a")
                 self.assertIsNotNone(a.confirm)
                 self.shot(a, "62-%s-confirm" % tag)
                 a.handle("b")
+                a.open_spacks({"tavern": {"pack": "tavern", "version": "1.0", "plugins": ["tavern"]}, "oldbot": None})
+                self.shot(a, "62b-%s-packs" % tag)
+                a.handle("b")
+                self.assertEqual(a.screen, "jobs")
                 a.jsel = 1
                 a.handle("a")                            # Make a Stump: the form
                 self.shot(a, "63-%s-form" % tag)

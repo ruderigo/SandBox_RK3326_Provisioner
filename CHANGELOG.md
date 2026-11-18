@@ -10,6 +10,126 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.20
+
+Caught up with SandBox_Stump_On 1.0.0-beta.86 and Reticulum 1.6.1:
+
+- **Work out its announce stamps** (Stump beta.86). Reticulum 1.6.1 puts a
+  proof of work on announces, and a node can be set to ignore announces
+  without one. A Stump with *Announce stamps* ticked in its /admin (Stump
+  settings -> Announcing) lists what it announces; a board finds its stamps
+  slowly. A CAM's new row works them out on this handheld, every core on
+  them (a minute or more each; the board runs meanwhile), and copies them
+  over: Team Stump's `--stamp-announces`, checked by its own code. For this
+  handheld's Stump, Team Stump's tool itself (a computer Stump also finds
+  them in the background on its own). A Stump that hasn't listed them yet
+  says what to tick.
+- **A board's identity is read with its size and SHA-256** and checked (read
+  twice), as Team Stump's beta.84 does: one that won't read whole stops a
+  restore.
+- **The shelf at Sandbox 1.0.0-beta.86**, with **all seven packs**: Meter 1.4
+  (`/meter ann`) and Marco Polo 1.0 are back (rehashed in beta.83). FireFly's
+  Sandbox at 0.9.8 (packed text, Reticulum 1.6.1 and LXMF 1.3.1), the
+  handheld's at 2.5.4-b.86.
+- Checked against b86 with no change needed: Team Stump's wizard with the
+  form's answers, pack records and removal (beta.84's rules are the ones
+  this already kept), Reticulum 1.6.1 (the Stump's business on a board; a
+  computer Stump installs it itself).
+- Tests: `stamps` (new: the check, the search, a CAM's missing stamps over
+  the pretend board, Team Stump's code checking ours and running for a
+  computer Stump); `screens` (both stamp rows).
+
+## v0.3.0-beta.19
+
+Caught up with SandBox_Stump_On 1.0.0-beta.82 (Team Stump's Arborist and
+provisioner.py the reference):
+
+- **Updates clean up after themselves** (Stump beta.74). Updating a CAM now
+  removes the files an earlier release put there and this one no longer has
+  (the list the bundle carries: `flasher_ui.py`, the native ed25519 module),
+  and names them. Only those: settings, identity, data and packs are never
+  touched, nor a file inside a pack's folder.
+- **Its packs, on their own** (beta.75). A CAM's row *Its packs* reads what
+  the board has, then shows each pack here and each one it has, with the
+  version on it: **A** installs, updates or installs again, **X** removes and
+  asks whether what the pack keeps goes too (its saved data, Tools section,
+  home files, theme). Every install records the pack in its plugin folders
+  (`.from_pack`, as Team Stump writes it), so it's updated and removed whole;
+  a pack from before shows its version as not recorded. As many packs as
+  there are. A pack's setup question that isn't marked advanced gets its
+  default where the board has none (Bavard's "talk from the start": off), as
+  Arborist does.
+- **This handheld's Stump's packs** go through Team Stump's own code (its
+  clone's provisioner.py, as `--packs FOLDER`): the same page, install,
+  update, remove, nothing else asked or changed. With a clone older than
+  beta.75, the page is as before (checked, then added by an Update).
+- **A Stump's identity, kept in a file** (beta.76): *Save its identity* and
+  *Bring back a saved identity*, for a CAM and for this handheld's Stump.
+  The file is Team Stump's `<its name>.stump-identity` (each side reads the
+  other's: tested), written in your home folder for you only, never over
+  another one. Bringing one back takes the file, or an old Stump's folder
+  (X in it), and saves the identity it had first. Only the identity: its
+  settings stay. Whoever has the file can be that Stump: keep it safe.
+- **The shelf at Sandbox 1.0.0-beta.82** (bundle, both images, Bavard 1.3,
+  NomadNet, rnfs, Simple, Tavern), the handheld's Sandbox at 2.5.2-b.62,
+  FireFly's at 0.9.6. **Meter 1.3 and Marco Polo 1.0 are left off**: in the
+  b82 release their files don't match their own hashes (Team Stump's checker
+  only warns; Arborist and this refuse). A pack that fails its check is now
+  left off a shelf copy, said and noted, instead of the whole release being
+  refused.
+- Checked against b82 with no change needed: Team Stump's wizard with the
+  form's answers (the handheld's Stump), the boot report, packed text (the
+  Stump's business: nothing for a CAM's setup).
+- From an independent review, before release: a pack's record is read from
+  the board, so only the pack's own places on the card are taken from it
+  (`tools/<name>`, files under `home/`, removed one by one): a crafted one
+  can't empty the card. "Delete what it keeps too?" starts on *Keep them*.
+  A board's identity that won't read back is never taken for none (nothing
+  written); a different mailbox key alone is saved first too. On the
+  handheld the identity it had is saved under a name never used before (two
+  restores in a minute kept both). A pack's setup question with a bad
+  default stops it before anything is copied. fservbot and stumpid are never
+  offered for removal, whatever shelf copy. The handheld's packs are read in
+  the background.
+- Tests: `identity` (new: the pretend board, damaged files, an old folder,
+  Team Stump's code reading ours and ours theirs); `stump` (retired files,
+  not inside a pack); `screens` (the packs page on a CAM: install, record,
+  update, remove with and without what it keeps; a pack installed by hand;
+  the handheld's packs and identity by Team Stump's code); `handheld` (Team
+  Stump's real code on a computer Stump's folder); `shelf` (a broken pack
+  left off).
+
+## v0.3.0-beta.18
+
+Caught up with SandBox_Stump_On 1.0.0-beta.63 to 67 (Team Stump's Arborist
+the reference, as before):
+
+- **Updating a Stump on a full board** (Stump beta.65, kit finding 15: a
+  WROVER with packs stopped with `OSError: 28`). Like Arborist now: a file
+  already on the board and the same isn't written again (updates are faster
+  too); the room an update needs is worked out first, the safe leftovers
+  cleared if it's short (a write cut short, an old .py beside its .mpy),
+  and still short it stops before writing anything and says what takes the
+  room; filling up while writing is said in plain words, the old file kept.
+  Packs' files go the same way.
+- **Its number, for every Stump** (beta.64): 2 to 254, 4 by default, its own
+  Wi-Fi at 192.168.<number>.1 in a chain or not (on its own it used to be
+  192.168.4.1 whatever the number); asked once in the form, not per chain
+  choice (members were 5 to 254, the first always 4). The Heltec on its
+  Wi-Fi follows (.200), and the end of a setup gives that address. A
+  release before beta.64 keeps number 4 on its own: refused otherwise.
+- **Its address in its Wi-Fi's name** (`SSID_INCLUDE_IP`), a choice: the name
+  with the address counted, refused over 32 characters (the Stump would cut it).
+- **Its language** (beta.67, `DEFAULT_LANG`: Français, English, Español;
+  French by default): for visitors who haven't picked one and for what's
+  posted for everyone. Read back in Its settings. (This handheld's own
+  Stump: Team Stump's computer wizard doesn't ask it yet; /admin sets it.)
+- **The shelf at Sandbox 1.0.0-beta.67**: its bundle, both images, its packs
+  (Bavard 1.2, NomadNet 1.2, Tavern 1.2, rnfs 1.2, Simple 1.0).
+- Checked against b67 with no change needed: Team Stump's wizard with the
+  handheld's answers; the handheld repo's cockpit and FireFly against real
+  b67 Stumps (ops and mods, beta.64, show in /names as the Stump writes them).
+
 ## v0.3.0-beta.17
 
 - **Its packs, a page of their own** (This handheld → its Stump → Its
