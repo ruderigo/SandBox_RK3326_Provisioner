@@ -121,9 +121,14 @@ def board_read(repl):
                    "print('ID'+json.dumps(d))\n" % json.dumps(list(IDENTITY_FILES)), 30)
     m = re.search(r"ID(\{.*\})", out)
     try:
-        files = dict((k, base64.b64decode(v)) for k, v in json.loads(m.group(1)).items()) if m else {}
-    except (ValueError, binascii.Error):
-        files = {}
+        if not m:
+            raise ValueError
+        files = dict((k, base64.b64decode(v)) for k, v in json.loads(m.group(1)).items() if k in IDENTITY_FILES)
+    except (ValueError, binascii.Error, AttributeError):
+        # Not read (a garbled line): never taken for "none", or a restore would write over it unsaved.
+        raise stump.StumpError("its identity couldn't be read back over USB: try again")
+    if files.get("rns/identity") and not whole(files):
+        raise stump.StumpError("its identity on the board isn't whole: nothing changed")
     return files if whole(files) else None
 
 
@@ -177,7 +182,7 @@ def restore_job(files, name, open_link, step, log, keep_dir, release=""):
             return False, "There's no Stump on this board (no config.py): make one first, then bring it back."
         step("Saving the one it has")
         cur = board_read(repl)
-        if cur and cur.get("rns/identity") != files.get("rns/identity"):
+        if cur and cur != files:                  # another identity, or its mailbox's key: kept first
             here = _name(repl) or "Stump"
             kept = save(cur, "%s (replaced %s)" % (here, time.strftime("%Y-%m-%d %H%M")), keep_dir, release)
             log("the identity it had, saved first: %s" % kept)

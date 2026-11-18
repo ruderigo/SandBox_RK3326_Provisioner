@@ -433,9 +433,6 @@ def remove_frozen_copies(repl, frozen):
     return int(m.group(1)) if m else 0
 
 
-RETIRED_SKIP = ("rns", "sd", "lib", "urns", "web", "peripherals")
-
-
 def remove_retired(repl, paths, builtins):
     """The files an earlier release put on the board and this one no longer
     has (1.0.0-beta.74, Arborist's removeRetired): only those, never one

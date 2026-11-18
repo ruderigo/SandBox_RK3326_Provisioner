@@ -96,6 +96,31 @@ class OnTheBoard(unittest.TestCase):
         self.assertTrue(ok, msg)
         self.assertEqual(len([f for f in os.listdir(self.out) if "(replaced" in f]), 1)
 
+    def test_an_identity_that_wont_read_is_never_written_over(self):
+        """A garbled line back from the board isn't "no identity": nothing is written."""
+        from provisioner import stump
+        self.put("rns/identity", ONE)
+        real = stump.Repl.run
+
+        def run(repl, code, *a, **k):
+            out = real(repl, code, *a, **k)
+            return out.replace("ID{", "I~{") if "b2a_base64" in code else out
+        stump.Repl.run = run
+        try:
+            with self.assertRaises(stump.StumpError):
+                I.restore_job({"rns/identity": TWO}, "Elm", self.link, self.steps.append, self.log.append, self.out)
+        finally:
+            stump.Repl.run = real
+        self.assertEqual(self.get("rns/identity"), ONE)
+
+    def test_its_mailbox_key_alone_differs_saved_first(self):
+        self.put("rns/identity", TWO)
+        self.put("pn_mailbox_identity", b"m" * 64)
+        ok, msg = I.restore_job({"rns/identity": TWO}, "Elm", self.link, self.steps.append, self.log.append, self.out)
+        self.assertTrue(ok, msg)
+        kept = [f for f in os.listdir(self.out) if "(replaced" in f]
+        self.assertEqual(I.read_source(os.path.join(self.out, kept[0]))[0]["pn_mailbox_identity"], b"m" * 64)
+
     def test_no_stump_no_change(self):
         os.remove(os.path.join(self.root, "config.py"))
         ok, msg = I.restore_job({"rns/identity": TWO}, "Elm", self.link, self.steps.append, self.log.append, self.out)

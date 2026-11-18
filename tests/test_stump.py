@@ -444,6 +444,59 @@ class StumpImages(unittest.TestCase):
         self.assertNotIn("config.py", self.on_board())
 
 
+class APacksRecord(unittest.TestCase):
+    """A .from_pack record is read from the board: a crafted one can't send the
+    removal anywhere but the pack's own places (the review's case: the whole card)."""
+
+    def setUp(self):
+        os.environ["FAKE_MPY"] = "6.3"
+        self.root = tempfile.mkdtemp(prefix="board-")
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.links = []
+        self.addCleanup(lambda: [l.close() for l in self.links])
+        for rel in ("config.py", "fserv.py", "evil/install.py", "fservbot/install.py", "sd/keep.txt",
+                    "sd/plugins/other/data.json", "sd/plugins/evil/data.json", "sd/home/index.html",
+                    "sd/home/sub/page.html", "sd/tools/evil/a.sh", "sd/tools/other/b.sh"):
+            os.makedirs(os.path.dirname(os.path.join(self.root, rel)) or self.root, exist_ok=True)
+            with open(os.path.join(self.root, rel), "w") as f:
+                f.write("def mount_sd():\n pass\n" if rel == "fserv.py" else "x")
+
+    def link(self):
+        self.links.append(PipeLink(self.root))
+        return self.links[-1]
+
+    def on_board(self):
+        return sorted(os.path.relpath(os.path.join(d, f), self.root) for d, _, fs in os.walk(self.root) for f in fs
+                      if "__pycache__" not in d)
+
+    def test_a_crafted_record(self):
+        from provisioner import packs
+        rec = {"pack": "evil", "version": "1", "plugins": ["evil", "fservbot"], "theme": None,
+               "tools": ["", ".", "tools/..", "tools", "plugins", "/", "tools/evil", 1, "../config.py"],
+               "home": ["", ".", "sub", "../keep.txt", "index.html", None]}
+        repl = stump.ready_repl(self.link)
+        try:
+            row = {"name": "evil", "plugins": ["evil", "fservbot", "sd", "../x"], "record": rec, "plan": None}
+            self.assertEqual(packs.keeps(row), (["plugins/evil"], ["tools/evil"], ["home/sub", "home/index.html"], None))
+            packs.remove_from(repl, row, True)
+        finally:
+            repl.link.close()
+        self.assertEqual(self.on_board(), ["config.py", "fserv.py", "fservbot/install.py", "sd/home/sub/page.html",
+                                           "sd/keep.txt", "sd/plugins/other/data.json", "sd/tools/other/b.sh"])
+
+    def test_a_question_the_pack_gets_wrong_copies_nothing(self):
+        from provisioner import packs
+        plan = {"name": "bad", "version": "1", "plugins": [("bad/install.py", b"x", packs.sha(b"x"))], "card": [],
+                "by_reader": [], "theme": None, "names": ["bad"], "stump_api": 1,
+                "questions": [{"plugin": "bad", "refused": [], "prompts": [
+                    {"key": "BAD_ON", "prompt": "On?", "type": "choice", "options": ["on", "off"], "default": "maybe",
+                     "min": None, "max": None, "advanced": False}]}]}
+        ok, msg = packs.install(plan, self.link, lambda s: None, lambda p: None, lambda s: None)
+        self.assertFalse(ok)
+        self.assertIn("Nothing was copied", msg)
+        self.assertNotIn("bad/install.py", self.on_board())
+
+
 class Rules(unittest.TestCase):
     def test_settings_rules(self):
         v = stump.settings_from(answers(chain="member", upSsid="LaBuche3-Stump", subnet="7", secret="s3cret",

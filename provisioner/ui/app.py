@@ -496,7 +496,7 @@ class App:
                 self.open_form("settings", a)
             elif getattr(t, "after", "") == "spacks" and isinstance(t.result, dict):
                 self.open_spacks(t.result)
-            elif getattr(t, "after", "") == "spacks" and getattr(self, "sp", None) and self.sp.get("target") == "hh":
+            elif getattr(t, "after", "") == "spacks" and getattr(t, "hh", False):
                 self.screen = "product"
             elif t.ok and getattr(t, "after", "") == "jobs":
                 self.open_jobs()
@@ -901,7 +901,7 @@ class App:
                   "The identity it has now is saved first, in your home folder.",
                   "The Stump it came from must not run any more: two Stumps with one identity confuse the mesh."],
                  "Bring it back", lambda: self.hh_identity_task("Bringing back %s" % (name or "a Stump"), "restore",
-                                                                done, src=src))
+                                                                done, src=src, keep=self.identity_dir()))
 
     def hh_identity_task(self, title, do, done, **job):
         folder = self.hh_folder()
@@ -946,6 +946,9 @@ class App:
         """found: a CAM's {plugin: record}, or {"hh_rows": [...]} for this handheld's
         Stump (Team Stump's pack_rows, from its own code)."""
         sel = self.sp["sel"] if getattr(self, "sp", None) and self.screen == "run" else 0
+        if found.get("hh_old"):
+            self.open_packs(team=False)
+            return
         if "hh_rows" in found:
             self.sp = {"sel": sel, "target": "hh", "rows": found["hh_rows"]}
         else:
@@ -975,7 +978,7 @@ class App:
             return ok, done(r) if ok else "Not all of it went through: try again.", (
                 {"hh_rows": r["rows"]} if "rows" in r else None)
         self.task = Task(title, work)
-        self.task.after = "spacks"
+        self.task.after, self.task.hh = "spacks", True
         self.screen = "run"
 
     def on_spacks(self, act):
@@ -1043,7 +1046,7 @@ class App:
         def then():
             self.ask("Delete what %s keeps too?" % r["name"],
                      ["%s." % (keeps[:1].upper() + keeps[1:]), "Kept, it's there again if the pack comes back."],
-                     "Delete them too", lambda: go(True), no=("Keep them", lambda: go(False)))
+                     "Delete them too", lambda: go(True), danger=True, no=("Keep them", lambda: go(False)))
         self.ask("Remove %s from %s?" % (r["name"], "this handheld's Stump" if self.sp.get("target") == "hh"
                                          else "this Stump"),
                  ["Its plugin%s: %s." % ("s" if len(r["plugins"]) > 1 else "", ", ".join(r["plugins"])),
@@ -1975,21 +1978,30 @@ class App:
                 back="product")
 
     # -- this handheld's Stump: its packs ------------------------------------------
-    def open_packs(self):
+    def open_packs(self, team=True):
         """Its packs: with Team Stump's code of 1.0.0-beta.75 on (its clone's
         provisioner.py, as --packs FOLDER), each pack there and each one it has,
         to install, update or remove. Before that, every pack its wizard offers,
         a check box each: those it has are on (an Update brings them up to date);
         X adds the ones checked."""
         st = self.handheld or {}
-        if st.get("installed"):
-            r = self.hh_team_fn("packs", self.hh_folder())
-            if "rows" in r:
-                self.open_spacks({"hh_rows": r["rows"]})
-                return
-            if r.get("error"):
-                self.toast("Its packs: %s" % r["error"], 5)
-                return
+        if st.get("installed") and team:
+            folder = self.hh_folder()
+
+            def work(t):
+                t.step = "Reading its packs"
+                r = self.hh_team_fn("packs", folder)
+                if "rows" in r:
+                    n = sum(1 for x in r["rows"] if x["here"] is not None)
+                    return True, "%d pack%s on this handheld's Stump." % (n, "" if n == 1 else "s"), {"hh_rows": r["rows"]}
+                if r.get("old"):
+                    return True, "Its SandBox_Stump_On is older than %s: packs are added by an Update." % r["old"], \
+                        {"hh_old": True}
+                return False, r.get("error") or "no answer", None
+            self.task = Task("Its packs", work)
+            self.task.after, self.task.hh = "spacks", True
+            self.screen = "run"
+            return
         offered = self.handheld_packs()
         have = set(handheld.packs_installed(st.get("folder") or os.path.expanduser("~/Stump"), offered))
         if not offered:

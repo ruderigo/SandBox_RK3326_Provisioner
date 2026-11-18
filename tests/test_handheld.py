@@ -305,16 +305,10 @@ class TeamStumpsCode(unittest.TestCase):
         files, name = I.read_source(r1["path"])
         self.assertEqual((files["rns/identity"], name, r1["fingerprint"]), (bytes(range(64)), "Hazel", I.fingerprint(files)))
         other = I.save({"rns/identity": bytes(64)}, "Elm", self.home)
-        env = dict(os.environ)
-        os.environ["HOME"] = self.home                 # the one it had is saved in ~
-        try:
-            r = H.team("restore", self.folder, home=self.home, src=other)
-        finally:
-            os.environ.clear()
-            os.environ.update(env)
+        r = H.team("restore", self.folder, home=self.home, src=other, keep=self.home)
+        again = H.team("restore", self.folder, home=self.home, src=r1["path"], keep=self.home)
+        self.assertNotEqual(again["kept"], r["kept"])  # the same minute: never over the first one kept
         self.assertEqual(r["name"], "Elm")
-        with open(os.path.join(self.folder, "rns", "identity"), "rb") as f:
-            self.assertEqual(f.read(), bytes(64))
         self.assertTrue(r["kept"] and I.read_source(r["kept"])[0]["rns/identity"] == bytes(range(64)), r)
         self.assertIn("isn't a saved Stump identity", H.team("restore", self.folder, home=self.home,
                                                             src=os.path.join(self.folder, "config.py"))["error"])

@@ -750,6 +750,8 @@ class FromFileAndPacks(Base):
         a.handle("x")
         a.handle("right")
         a.handle("a")
+        self.assertEqual(a.confirm["choice"], 0)            # starts on Keep them
+        a.handle("right")
         a.handle("a")                                       # delete them too
         self.wait(a)
         self.assertTrue(a.task.ok, a.task.msg)
@@ -1147,6 +1149,9 @@ class ThisHandheld(Base):
         a.psel = kinds.index("hh_packs")
         self.shot(a, "77b-handheld-packs-row")
         a.handle("a")
+        self.wait(a)
+        self.assertIn("older than 1.0.0-beta.75", a.task.msg)
+        a.handle("a")
         self.assertEqual(a.screen, "packs")
         names = [p["name"] for p in a.pk["offered"]]
         self.assertEqual(a.pk["have"], {"tavern"})
@@ -1189,6 +1194,9 @@ class ThisHandheld(Base):
         a.hh_team_fn = team
         a.open_product("handheld")
         a.psel = [r["kind"] for r in a.product_rows()].index("hh_packs")
+        a.handle("a")
+        self.wait(a)
+        self.assertEqual(a.task.msg, "2 packs on this handheld's Stump.")   # tavern, and oldbot (version not recorded)
         a.handle("a")
         self.assertEqual(a.screen, "spacks")
         self.assertEqual(calls[-1], ("packs", "/home/ark/Stump", {}))
@@ -1266,7 +1274,7 @@ class ThisHandheld(Base):
         a.handle("a")
         self.wait(a)
         self.assertTrue(a.task.ok, a.task.msg)
-        self.assertEqual(calls[-1], ("restore", {"src": keep}))
+        self.assertEqual(calls[-1], ("restore", {"src": keep, "keep": self.home}))
         self.assertIn("saved: /home/ark/Hazel (replaced)", a.task.msg)
         a.hh_team_fn = lambda do, folder, **job: {"old": "1.0.0-beta.76"}
         a.handle("a")

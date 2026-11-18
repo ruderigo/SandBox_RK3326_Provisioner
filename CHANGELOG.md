@@ -51,6 +51,17 @@ provisioner.py the reference):
 - Checked against b82 with no change needed: Team Stump's wizard with the
   form's answers (the handheld's Stump), the boot report, packed text (the
   Stump's business: nothing for a CAM's setup).
+- From an independent review, before release: a pack's record is read from
+  the board, so only the pack's own places on the card are taken from it
+  (`tools/<name>`, files under `home/`, removed one by one): a crafted one
+  can't empty the card. "Delete what it keeps too?" starts on *Keep them*.
+  A board's identity that won't read back is never taken for none (nothing
+  written); a different mailbox key alone is saved first too. On the
+  handheld the identity it had is saved under a name never used before (two
+  restores in a minute kept both). A pack's setup question with a bad
+  default stops it before anything is copied. fservbot and stumpid are never
+  offered for removal, whatever shelf copy. The handheld's packs are read in
+  the background.
 - Tests: `identity` (new: the pretend board, damaged files, an old folder,
   Team Stump's code reading ours and ours theirs); `stump` (retired files,
   not inside a pack); `screens` (the packs page on a CAM: install, record,

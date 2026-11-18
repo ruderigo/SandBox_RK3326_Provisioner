@@ -290,6 +290,9 @@ def install(plan, open_link, step, progress, log, answers=None, builtins=None, r
     try:
         if not stump.has_stump(repl):
             return False, "There's no Stump on this board (no config.py): make one first."
+        _, err = question_values(plan["questions"], {}, answers)
+        if err:
+            return False, "%s: a setup question the pack gets wrong (%s). Nothing was copied." % (plan["name"], err)
         api = plan.get("stump_api", 1)
         have = _plugin_api(repl)
         if have < api:
@@ -333,6 +336,7 @@ def install(plan, open_link, step, progress, log, answers=None, builtins=None, r
             keys = [q["key"] for g in plan["questions"] for q in g["prompts"]]
             values, err = question_values(plan["questions"], _current(repl, keys), answers)
             if err:
+                stump.restart(repl)                       # never left stopped
                 return False, err
             if values:
                 step("Its settings")
@@ -388,9 +392,13 @@ def record(plan):
 def builtins_of(bundle):
     """The Stump's built-in plugins: the bundle says (1.0.0-beta.74 on), else
     from its files."""
+    out = set(BUILTIN_ALWAYS) | set(known_names(bundle)["builtin"])
     if bundle and bundle.builtins:
-        return list(bundle.builtins)
-    return known_names(bundle)["builtin"]
+        out |= set(bundle.builtins)
+    return sorted(out)
+
+
+BUILTIN_ALWAYS = ("fservbot", "stumpid")    # every Stump's own plugins, whatever copy is on the shelf
 
 
 def board_packs(repl, builtins):
@@ -454,8 +462,29 @@ def keeps(row):
     """What a pack keeps besides its plugins (for "delete those too?"): its
     saved data, Tools sections, home files (paths on the card), its theme."""
     rec = row["record"] or (record(row["plan"]) if row.get("plan") else {})
-    return (["plugins/" + p for p in row["plugins"]], list(rec.get("tools") or []),
-            ["home/" + h for h in rec.get("home") or []], rec.get("theme"))
+    tools = [t for t in _list(rec.get("tools")) if TOOLS_PATH.match(t) and t not in ("tools/.", "tools/..")]
+    home = ["home/" + h for h in _list(rec.get("home")) if _safe_rel(h)]
+    theme = rec.get("theme") if isinstance(rec.get("theme"), str) and rec.get("theme") else None
+    return ["plugins/" + p for p in _plugins(row)], tools, home, theme
+
+
+# A record is read from the board: only a pack's own places on the card are
+# taken from it (never the card itself, plugins/ or home/ whole).
+TOOLS_PATH = re.compile(r"^tools/[A-Za-z0-9_.-]{1,64}$")
+
+
+def _list(v):
+    return [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
+
+
+def _safe_rel(p):
+    parts = p.split("/")
+    return 0 < len(p) <= 200 and all(x and x not in (".", "..") and "\\" not in x for x in parts)
+
+
+def _plugins(row):
+    return [p for p in row["plugins"] if isinstance(p, str) and re.match(r"^[a-z][a-z0-9_]{1,23}$", p)
+            and p not in RESERVED and p not in BUILTIN_ALWAYS]
 
 
 def keeps_text(row):
@@ -473,15 +502,16 @@ def keeps_text(row):
 def remove_from(repl, row, also):
     """A pack off the board: its plugin folders; with also, what it keeps too.
     How many paths went."""
-    plugins = [p for p in row["plugins"] if re.match(r"^[a-z][a-z0-9_]{1,23}$", p) and p not in RESERVED]
+    plugins = _plugins(row)
     data, tools, home, theme = keeps(row)
-    card = [p for p in data + tools + home if ".." not in p.split("/")] if also else []
     code = ("import os\nn=0\ndef rm(p):\n global n\n try:\n  for e in os.listdir(p):\n   rm(p+'/'+e)\n  os.rmdir(p)\n"
             "  n+=1\n except OSError:\n  try:\n   os.remove(p)\n   n+=1\n  except OSError:\n   pass\n"
+            "def rmfile(p):\n global n\n try:\n  os.remove(p)\n  n+=1\n except OSError:\n  pass\n"
             "for p in %s:\n rm(p)\n" % json.dumps(plugins))
-    if card:
+    if also and (data or tools or home):                 # folders whole; home files one by one
         code += ("try:\n import fserv\n fserv.mount_sd()\nexcept Exception:\n pass\nfor p in %s:\n rm(%s+'/'+p)\n"
-                 % (json.dumps(card), stump.py(CARD_ROOT)))
+                 "for p in %s:\n rmfile(%s+'/'+p)\n"
+                 % (json.dumps(data + tools), stump.py(CARD_ROOT), json.dumps(home), stump.py(CARD_ROOT)))
     if also and theme:
         code += ("import json\ntry:\n d=json.load(open('themes.json'))\n d.pop(%s,None)\n f=open('themes.json','w')\n"
                  " f.write(json.dumps(d))\n f.close()\nexcept Exception:\n pass\n" % stump.py(theme))

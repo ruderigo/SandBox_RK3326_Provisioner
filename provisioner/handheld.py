@@ -482,7 +482,7 @@ def restart(line, run=subprocess.run, port=None):
 # `--save-identity` and `--restore-identity` do: these call those functions
 # (they ask nothing), given a JSON line on stdin, and read back one line.
 TEAM_CODE = r"""
-import importlib.util, io, json, os, sys
+import importlib.util, io, json, os, sys, time
 job = json.loads(sys.stdin.readline())
 out = {}
 real = sys.stdout
@@ -533,7 +533,14 @@ try:
         except ValueError as e:
             out = {"error": str(e)}
         else:
-            kept = P._replacing(P.pc_identity(folder), files, P._folder_name(folder))
+            cur, here, kept = P.pc_identity(folder), P._folder_name(folder), None
+            if cur and cur != files:                 # kept first, under a name never used before
+                path = os.path.join(job["keep"], P._keepsake_name(
+                    "%s (replaced %s)" % (here or "Stump", time.strftime("%Y-%m-%d %H%M"))))
+                base, k = path[:-len(P.KEEPSAKE_EXT)], 2
+                while os.path.exists(path):
+                    path, k = "%s (%d)%s" % (base, k, P.KEEPSAKE_EXT), k + 1
+                kept = P.save_keepsake(cur, here, path)
             P.pc_put_identity(folder, files)
             out = {"name": name, "fingerprint": P.identity_fingerprint(files), "kept": str(kept) if kept else None}
     else:
