@@ -475,3 +475,106 @@ def restart(line, run=subprocess.run, port=None):
             line(" ".join(cmd))
             return "The Stump restarted with it."
     return "Restart the Stump for it to apply (Update does, or a reboot)."
+
+
+# -- its packs and its identity, by Team Stump's own code (1.0.0-beta.75, .76) ----
+# Its SandBox_Stump_On clone's provisioner.py does it, as `--packs FOLDER`,
+# `--save-identity` and `--restore-identity` do: these call those functions
+# (they ask nothing), given a JSON line on stdin, and read back one line.
+TEAM_CODE = r"""
+import importlib.util, io, json, os, sys
+job = json.loads(sys.stdin.readline())
+out = {}
+real = sys.stdout
+sys.stdout = io.StringIO()                       # what it prints along the way: kept apart
+try:
+    spec = importlib.util.spec_from_file_location("team_stump", os.path.join(job["clone"], "provisioner.py"))
+    P = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(P)
+    folder, do = job["folder"], job["do"]
+    if do in ("packs", "install", "remove") and not hasattr(P, "pc_install_pack"):
+        out = {"old": "1.0.0-beta.75"}
+    elif do in ("save", "restore") and not hasattr(P, "read_identity_source"):
+        out = {"old": "1.0.0-beta.76"}
+    elif do in ("packs", "install", "remove"):
+        avail = P.discover_packs()
+        rows = P.pack_rows(avail, P.pc_installed_packs(folder))
+        if do == "install":
+            pk = next((p for p in avail if p["spec"]["name"] == job["name"]), None)
+            out = {"ok": bool(pk) and bool(P.pc_install_pack(folder, pk))}
+        elif do == "remove":
+            r = next((r for r in rows if r["name"] == job["name"] and r["here"] is not None), None)
+            out = {"ok": bool(r) and bool(P.pc_remove_pack(folder, r, bool(job.get("also"))))}
+        if do != "packs":
+            rows = P.pack_rows(avail, P.pc_installed_packs(folder))
+        res = []
+        for r in rows:
+            data, tools, home, theme = P._pack_leftovers(r, board=False)
+            spec_ = r["pack"]["spec"] if r["pack"] else {}
+            res.append({"name": r["name"], "here": r["here"], "state": r["state"], "plugins": r["plugins"],
+                        "version": str(spec_.get("version", "")) if r["pack"] else None,
+                        "about": str(spec_.get("description") or ""),
+                        "keeps": {"tools": len(tools), "home": len(home), "theme": theme}})
+        out["rows"] = res
+    elif do == "save":
+        files = P.pc_identity(folder)
+        if not files:
+            out = {"error": "No identity there yet: a Stump makes it the first time it starts."}
+        else:
+            name = P._folder_name(folder)
+            path = os.path.join(job["dir"], P._keepsake_name(name))
+            base, k = path[:-len(P.KEEPSAKE_EXT)], 2
+            while os.path.exists(path):
+                path, k = "%s (%d)%s" % (base, k, P.KEEPSAKE_EXT), k + 1
+            out = {"path": str(P.save_keepsake(files, name, path)), "fingerprint": P.identity_fingerprint(files)}
+    elif do == "restore":
+        try:
+            files, name = P.read_identity_source(job["src"])
+        except ValueError as e:
+            out = {"error": str(e)}
+        else:
+            kept = P._replacing(P.pc_identity(folder), files, P._folder_name(folder))
+            P.pc_put_identity(folder, files)
+            out = {"name": name, "fingerprint": P.identity_fingerprint(files), "kept": str(kept) if kept else None}
+    else:
+        out = {"error": "unknown"}
+except Exception as e:
+    out = {"error": "%s: %s" % (type(e).__name__, e)}
+sys.stdout = real
+print("TEAM" + json.dumps(out))
+"""
+
+
+def team(do, folder, home=None, run=subprocess.run, **job):
+    """Calls Team Stump's provisioner.py (its SandBox_Stump_On clone's) for
+    this handheld's Stump. Its answer: a dict; {"error"} when it couldn't,
+    {"old": release} when the clone is older than what this needs."""
+    home = home or os.path.expanduser("~")
+    clone = os.path.join(home, "SandBox_Stump_On")
+    if not os.path.isfile(os.path.join(clone, "provisioner.py")):
+        return {"error": "Its SandBox_Stump_On isn't there yet: install its Stump first."}
+    job.update(clone=clone, folder=folder, do=do)
+    try:
+        p = run([shutil.which("python3") or "python3", "-I", "-c", TEAM_CODE], input=json.dumps(job) + "\n",
+                cwd=home, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, timeout=300)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return {"error": str(e)}
+    m = re.search(r"^TEAM(\{.*\})$", p.stdout or "", re.M)
+    if not m:
+        return {"error": ((p.stdout or "").strip().splitlines() or ["no answer"])[-1][-200:]}
+    try:
+        return json.loads(m.group(1))
+    except ValueError:
+        return {"error": "an answer that won't read"}
+
+
+def keeps_text(row):
+    k = row.get("keeps") or {}
+    out = ["its saved data"]
+    if k.get("tools"):
+        out.append("its Tools page section%s" % ("s" if k["tools"] > 1 else ""))
+    if k.get("home"):
+        out.append("%d home file%s" % (k["home"], "s" if k["home"] > 1 else ""))
+    if k.get("theme"):
+        out.append("its theme (%s)" % k["theme"])
+    return ", ".join(out)

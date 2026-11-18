@@ -40,7 +40,8 @@ sys.implementation.version = (1, 28, 0)
 sys.implementation._mpy = int(major) | (int(minor) << 8)
 
 # "/" is the board's folder.
-_open, _stat, _remove, _rename, _mkdir, _listdir = open, os.stat, os.remove, os.rename, os.mkdir, os.listdir
+_open, _stat, _remove, _rename, _mkdir, _listdir, _rmdir = (open, os.stat, os.remove, os.rename, os.mkdir, os.listdir,
+                                                           os.rmdir)
 
 
 def board(p):
@@ -53,6 +54,7 @@ os.remove = lambda p: _remove(board(p))
 os.rename = lambda a, b: _rename(board(a), board(b))
 os.mkdir = lambda p, *a: _mkdir(board(p), *a)
 os.listdir = lambda p=".": _listdir(board(p))
+os.rmdir = lambda p: _rmdir(board(p))
 sys.path[:0] = [ROOT, os.path.join(HERE, "stump_fixtures")]
 # A Stump image (FAKE_FROZEN: a folder standing in for the modules built in,
 # searched after the board's own files, as MicroPython's .frozen), the chip's

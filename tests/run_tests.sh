@@ -64,6 +64,9 @@ else echo "(no vermin: pip install vermin)"; fi
 step "Making a Stump (Team Stump's pretend board, the real bundle)"
 run "stump" python3 -W error::ResourceWarning tests/test_stump.py
 
+step "A Stump's identity in a file (the pretend board; Team Stump's code reading ours, with STUMP_ON)"
+run "identity" python3 -W error::ResourceWarning tests/test_identity.py
+
 step "A CH340 through libusb (a pretend chip; the real libusb when here)"
 run "usbserial" python3 -W error::ResourceWarning tests/test_usbserial.py
 

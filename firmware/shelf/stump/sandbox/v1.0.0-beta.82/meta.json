@@ -1,0 +1,23 @@
+{
+ "channel": "sandbox",
+ "fetched": "2026-11-18 09:16",
+ "files": {
+  "Stump-1.0.0-beta.82.bundle": "0d44bf76d41edd1f7fcc13463f95467ae687b9a99487e469bf910c5db8340ab3",
+  "bavard-pack-1.3.zip": "94e2d96b29927481fa8fed4e9d0f0a52727f23eb84bfaac58d69efe5c0d52ce4",
+  "nomadnet-pack-1.2.zip": "730723b6ae6d487d7f8fc681435ef4893fc1a8fa47b369c4fd30025dd5055cd4",
+  "rnfs-pack-1.2.zip": "ba2a5c939682a5e4671eb2bfc82a5fdb11d1157478fbaa923a4336b4939cc57b",
+  "simple-pack-1.0.zip": "cbeca55c04483e5df64fd40a407902ad2ab329801378e86462a6333126969f04",
+  "stump-1.0.0-beta.82-s3cam.bin": "6bb4e605a310e55825f03d907a866143b4f70eea59763bdc43e68302fd4a8801",
+  "stump-1.0.0-beta.82-wrover.bin": "3641571a21fa52f63dd8b2e7cb10ffeb8f6e96f77ffe6ada0a24817091a9b7a9",
+  "stump_image.py": "71ccc4ad1b116d611c41f70434744bf863e94366b54ce2177107d9e313185b62",
+  "tavern-pack-1.2.zip": "cd99c8b722128a02a6f2e34164e391cf38942f42e4151ea5bbfe2b7511593fe6"
+ },
+ "left_off": {
+  "marcopolo-pack-1.0.zip": "marcopolo/install.py changed since it was hashed: not installed.",
+  "meter-pack-1.3.zip": "meter/plugin.json doesn't match the pack's hash."
+ },
+ "product": "stump",
+ "repo": "ruderigo/SandBox_Stump_On",
+ "tag": "v1.0.0-beta.82",
+ "version": "1.0.0-beta.82"
+}

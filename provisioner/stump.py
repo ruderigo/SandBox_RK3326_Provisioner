@@ -129,6 +129,10 @@ class Bundle:
         self.micropython = self.head.get("micropython", "")
         self.mpy = self.head.get("mpy")
         self.template = self.head["config_template"]
+        # From 1.0.0-beta.74: the files an earlier release put on a board and this
+        # one no longer has (an update removes them), and its built-in plugins.
+        self.retired = [r for r in self.head.get("retired") or [] if isinstance(r, str)]
+        self.builtins = [r for r in self.head.get("builtins") or [] if isinstance(r, str)]
         meta = os.path.splitext(path)[0] + ".json"
         try:
             with open(meta, encoding="utf-8") as f:
@@ -427,6 +431,26 @@ def remove_frozen_copies(repl, frozen):
                    " except OSError:\n  pass\nprint('GONE%%d' %% n)\n" % (json.dumps(names), json.dumps(dirs)), 60)
     m = re.search(r"GONE(\d+)", out)
     return int(m.group(1)) if m else 0
+
+
+RETIRED_SKIP = ("rns", "sd", "lib", "urns", "web", "peripherals")
+
+
+def remove_retired(repl, paths, builtins):
+    """The files an earlier release put on the board and this one no longer
+    has (1.0.0-beta.74, Arborist's removeRetired): only those, never one
+    inside a folder that is a plugin the Stump doesn't ship (a pack's).
+    The paths removed."""
+    paths = [p for p in paths or [] if p and not p.startswith("/") and ".." not in p.split("/")]
+    if not paths:
+        return []
+    out = repl.run(
+        "import os\ndef has(t):\n for f in ('/install.py','/install.mpy'):\n  try:\n   os.stat(t+f)\n   return True\n"
+        "  except OSError:\n   pass\n return False\ngone=[]\nfor p in %s:\n t=p.split('/')[0] if '/' in p else None\n"
+        " if t and t not in %s and has(t):\n  continue\n try:\n  os.remove(p)\n  gone.append(p)\n except OSError:\n  pass\n"
+        "print('RETIRED:'+','.join(gone))\n" % (json.dumps(paths), json.dumps(list(builtins or []))), 60)
+    m = re.search(r"RETIRED:(.*)", out)
+    return [g for g in m.group(1).strip().split(",") if g] if m else []
 
 
 def config_sha(repl):
@@ -1135,6 +1159,11 @@ def make(bundle, answers, open_link, flash, step, progress, log, update=False, c
                 log("%d of %d KB · about %s left · %s" % (done // 1024, total // 1024,
                                                            "%d min" % (left // 60) if left > 90 else "%d s" % left, path))
         upload(repl, files, prog)
+        if update and bundle.retired:
+            old = remove_retired(repl, bundle.retired, bundle.builtins)
+            if old:
+                log("%d file(s) this release no longer has removed: %s" % (len(old), ", ".join(old)))
+                note += " Removed, as this release no longer has them: %s." % ", ".join(old)
         if not update:
             step("Its settings")
             tpl = bundle.template.encode()

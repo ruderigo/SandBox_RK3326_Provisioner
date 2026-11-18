@@ -10,6 +10,55 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.19
+
+Caught up with SandBox_Stump_On 1.0.0-beta.82 (Team Stump's Arborist and
+provisioner.py the reference):
+
+- **Updates clean up after themselves** (Stump beta.74). Updating a CAM now
+  removes the files an earlier release put there and this one no longer has
+  (the list the bundle carries: `flasher_ui.py`, the native ed25519 module),
+  and names them. Only those: settings, identity, data and packs are never
+  touched, nor a file inside a pack's folder.
+- **Its packs, on their own** (beta.75). A CAM's row *Its packs* reads what
+  the board has, then shows each pack here and each one it has, with the
+  version on it: **A** installs, updates or installs again, **X** removes and
+  asks whether what the pack keeps goes too (its saved data, Tools section,
+  home files, theme). Every install records the pack in its plugin folders
+  (`.from_pack`, as Team Stump writes it), so it's updated and removed whole;
+  a pack from before shows its version as not recorded. As many packs as
+  there are. A pack's setup question that isn't marked advanced gets its
+  default where the board has none (Bavard's "talk from the start": off), as
+  Arborist does.
+- **This handheld's Stump's packs** go through Team Stump's own code (its
+  clone's provisioner.py, as `--packs FOLDER`): the same page, install,
+  update, remove, nothing else asked or changed. With a clone older than
+  beta.75, the page is as before (checked, then added by an Update).
+- **A Stump's identity, kept in a file** (beta.76): *Save its identity* and
+  *Bring back a saved identity*, for a CAM and for this handheld's Stump.
+  The file is Team Stump's `<its name>.stump-identity` (each side reads the
+  other's: tested), written in your home folder for you only, never over
+  another one. Bringing one back takes the file, or an old Stump's folder
+  (X in it), and saves the identity it had first. Only the identity: its
+  settings stay. Whoever has the file can be that Stump: keep it safe.
+- **The shelf at Sandbox 1.0.0-beta.82** (bundle, both images, Bavard 1.3,
+  NomadNet, rnfs, Simple, Tavern), the handheld's Sandbox at 2.5.2-b.62,
+  FireFly's at 0.9.6. **Meter 1.3 and Marco Polo 1.0 are left off**: in the
+  b82 release their files don't match their own hashes (Team Stump's checker
+  only warns; Arborist and this refuse). A pack that fails its check is now
+  left off a shelf copy, said and noted, instead of the whole release being
+  refused.
+- Checked against b82 with no change needed: Team Stump's wizard with the
+  form's answers (the handheld's Stump), the boot report, packed text (the
+  Stump's business: nothing for a CAM's setup).
+- Tests: `identity` (new: the pretend board, damaged files, an old folder,
+  Team Stump's code reading ours and ours theirs); `stump` (retired files,
+  not inside a pack); `screens` (the packs page on a CAM: install, record,
+  update, remove with and without what it keeps; a pack installed by hand;
+  the handheld's packs and identity by Team Stump's code); `handheld` (Team
+  Stump's real code on a computer Stump's folder); `shelf` (a broken pack
+  left off).
+
 ## v0.3.0-beta.18
 
 Caught up with SandBox_Stump_On 1.0.0-beta.63 to 67 (Team Stump's Arborist

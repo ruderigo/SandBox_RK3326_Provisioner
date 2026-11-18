@@ -317,6 +317,31 @@ class StumpImages(unittest.TestCase):
         self.assertTrue(ok, msg)
         self.assertEqual(self.flashed, [])
 
+    def test_an_update_removes_retired_files(self):
+        """1.0.0-beta.74: the files the release says it no longer has go, never
+        a file inside a pack's folder of the same name, nor settings or data."""
+        b = self.bundle(images=False)
+        b.retired, b.builtins = ["flasher_ui.py", "flasher_ui.mpy", "lib/ed25519_fast_xtensawin.mpy",
+                                 "tavern/old.py", "../config.py"], ["fservbot", "stumpid"]
+        for rel in ("config.py", "flasher_ui.mpy", "lib/ed25519_fast_xtensawin.mpy", "lib/keep.py",
+                    "tavern/install.py", "tavern/old.py", "rns/identity"):
+            os.makedirs(os.path.dirname(os.path.join(self.root, rel)) or self.root, exist_ok=True)
+            open(os.path.join(self.root, rel), "w").close()
+        ok, msg = self.make(b, update=True)
+        self.assertTrue(ok, msg)
+        files = self.on_board()
+        for gone in ("flasher_ui.mpy", "lib/ed25519_fast_xtensawin.mpy"):
+            self.assertNotIn(gone, files)
+        for kept in ("config.py", "lib/keep.py", "tavern/old.py", "rns/identity"):
+            self.assertIn(kept, files)
+        self.assertIn("Removed, as this release no longer has them: flasher_ui.mpy, lib/ed25519_fast_xtensawin.mpy.", msg)
+
+    def test_the_real_bundle_says_what_it_retired(self):
+        if not BUNDLE.release_at_least("1.0.0-beta.74"):
+            self.skipTest("the shelf's Stump is older than 1.0.0-beta.74")
+        self.assertIn("flasher_ui.py", BUNDLE.retired)
+        self.assertIn("stumpid", BUNDLE.builtins)
+
     def test_an_older_layout_is_refused(self):
         b = self.bundle()
         with open(os.path.join(self.root, "config.py"), "w") as f:

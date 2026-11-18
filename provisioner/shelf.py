@@ -209,8 +209,14 @@ def fetch(product, channel, rel, progress=None, log=None, get=_get, env=None):
 
 def put(product, channel, tag, version, repo, files, env=None, log=None):
     """Writes a copy onto the card's shelf (after reading it for what it is),
-    replacing that channel's older ones there."""
-    check(product, files)
+    replacing that channel's older ones there. A pack that fails its own
+    hashes is left off (said, and noted in meta.json): the Stump and the
+    other packs are still good."""
+    left = check(product, files)
+    files = dict((n, d) for n, d in files.items() if n not in left)
+    for n, why in sorted(left.items()):
+        if log:
+            log("left off: %s (%s)" % (n, why))
     d = os.path.join(card_shelf(env), product, channel)
     tmp = os.path.join(d, ".new-%s" % tag)
     shutil.rmtree(tmp, ignore_errors=True)
@@ -220,6 +226,8 @@ def put(product, channel, tag, version, repo, files, env=None, log=None):
             f.write(data)
     meta = {"product": product, "channel": channel, "tag": tag, "version": version, "repo": repo,
             "files": {n: sha(data) for n, data in files.items()}, "fetched": time.strftime("%Y-%m-%d %H:%M")}
+    if left:
+        meta["left_off"] = left
     with open(os.path.join(tmp, "meta.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=1, sort_keys=True)
     final = os.path.join(d, tag)
@@ -235,7 +243,9 @@ def put(product, channel, tag, version, repo, files, env=None, log=None):
 
 # -- what a file is -----------------------------------------------------------
 def check(product, files):
-    """Reads a product's files for what they are; ShelfError if they aren't."""
+    """Reads a product's files for what they are; ShelfError if they aren't.
+    {pack zip: why} for the packs that don't pass their own check."""
+    left = {}
     main = re.compile(PRODUCTS[product]["main"])
     names = [n for n in files if main.match(n)]
     if not names:
@@ -262,13 +272,14 @@ def check(product, files):
                 try:
                     packs.plan_from(packs.read_zip(io.BytesIO(d)))
                 except packs.PackError as e:
-                    raise ShelfError("%s: %s" % (n, e))
+                    left[n] = str(e)
     elif product == "firefly":
         zip_version(data, "firefly/firefly/__init__.py", r'__version__\s*=\s*"([^"]+)"', "firefly/deploy/install.sh")
     elif product == "handheld":
         tar_version(data, "handheld/VERSION", "handheld/install.sh")
     elif product == "provisioner":
         tar_version(data, "VERSION", "install.sh", also="provisioner/__main__.py")
+    return left
 
 
 def bundle_info(data):

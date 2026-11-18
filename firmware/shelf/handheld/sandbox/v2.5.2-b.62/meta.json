@@ -1,0 +1,11 @@
+{
+ "channel": "sandbox",
+ "fetched": "2026-11-18 09:15",
+ "files": {
+  "R36MAX-Stump-handheld-2.5.2-b.62.tar.gz": "89ca6f0a38da72ce988b2ea5ebb937ae3b8eeb4859560444514a3c1ca1e19d7c"
+ },
+ "product": "handheld",
+ "repo": "ruderigo/SandBox_RK3326_Stump",
+ "tag": "v2.5.2-b.62",
+ "version": "2.5.2-b.62"
+}
