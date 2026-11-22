@@ -6,7 +6,7 @@ the hub and it's recognised, given the firmware that fits, flashed and checked;
 the handheld's own Stump, FireFly and the Provisioner itself install and
 update from here too. It's an EmulationStation **Ports** entry.
 
-> **Sandbox, v0.3.0-beta.10.** Tested on an R36MAX (dArkOS); other RK3326
+> **Sandbox, v0.3.0-beta.21.** Tested on an R36MAX (dArkOS); other RK3326
 > handhelds and systems in CI only ([docs/HANDHELDS.md](docs/HANDHELDS.md)).
 > Plan and next steps: [docs/PLAN.md](docs/PLAN.md).
 
@@ -42,6 +42,9 @@ card), once every file matches the SHA-256 GitHub records for it and the
 release's `SHA256SUMS`, and reads as what it should be. Offline from then on.
 The **Library** (Y on the boards screen) shows all of it at once, with no
 board plugged in, and refreshes the ones you check, or everything newer.
+
+New to it? **[QUICKSTART.md](QUICKSTART.md)**: install, the screens, the
+first board, and the sound of what it installs, on one page.
 
 ## Install
 
@@ -166,6 +169,26 @@ python3 -m provisioner flash /dev/ttyUSB0 wled-16.0.1-esp32
 ```
 
 `PROVISIONER_SCREEN=640x480` shows another handheld's layout.
+
+## Sound
+
+**The Provisioner plays no sound**: no clicks, no alerts when a flash ends
+(the screen says it). It opens the screen only, so it never holds the
+sound device another app needs. **The Stump boards it makes are silent
+too**: the Stump firmware has no buzzer or sound.
+
+What the apps it installs on the handheld play, and what they need:
+
+| App | Plays | Where | Turn it off / change it | Its docs |
+|---|---|---|---|---|
+| **FireFly** | Voice notes (when you play them); a message sound (two short notes) when a message from a person or a DM through a Stump arrives | USB-C headphones when plugged in, else the speaker | SETUP → SOUND → *Message sound*: people and DMs, everything, off | [Sound](https://github.com/ruderigo/SandBox_FireFly_RK3326#sound) |
+| **This handheld's Stump** (its cockpit) | Short chimes as you press buttons; a message chime (two notes) when a DM arrives. The Stump itself plays nothing | USB-C headphones when plugged in, else the speaker | OWNER → *Button chimes*, *Message chime* | [Sound](https://github.com/ruderigo/SandBox_RK3326_Stump/blob/main/handheld/README.md#sound) |
+
+FireFly records voice notes too, from a USB mic or headset when one is
+plugged in. Its installer adds the sound tools it uses (`alsa-utils`,
+`opus-tools`, `codec2`); the Stump's installer needs none (its cockpit
+talks to ALSA itself). Only one of them runs at a time (each is a Port),
+so they never compete for the sound device.
 
 ## Tests and releases
 

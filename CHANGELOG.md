@@ -10,7 +10,18 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
-## v0.3.0-beta.20
+## v0.3.0-beta.21
+
+Documentation:
+
+- **A new [QUICKSTART.md](QUICKSTART.md)**: install, the screens and
+  buttons, a first board, the handheld's apps, their sound, help.
+- **The README has a Sound section**: the Provisioner plays none (it opens
+  the screen only), neither do the Stump boards it makes; what FireFly and
+  the handheld's Stump cockpit play, where, how to turn it off, and what
+  they install for it.
+- The README's banner said beta.10: it says this version now.
+
 
 Caught up with SandBox_Stump_On 1.0.0-beta.86 and Reticulum 1.6.1:
 
