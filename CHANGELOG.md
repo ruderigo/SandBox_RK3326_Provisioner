@@ -10,6 +10,21 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.22
+
+- **Your own firmware build, from a `.zip`** (+ From File on a board's page):
+  what ESP-IDF, PlatformIO and the Arduino IDE make, several files each with
+  its own address, flashed in one go. Where each goes comes from ESP-IDF's
+  `flasher_args.json` or `flash_args`, or from the names PlatformIO and the
+  Arduino IDE give them (bootloader, partition table, the program, OTA data,
+  a LittleFS/SPIFFS/FAT image at its data partition). Before anything is
+  written: every file there, no overlaps, all within the board's flash, the
+  bootloader at the chip's address, a partition table, every image for the
+  board's chip, every program fitting its app partition; anything else is
+  refused, saying why. It shows each file with its address and size and asks;
+  then the whole flash is erased, every file written and read back. A Stump
+  pack's `.zip` still goes to its packs, as before.
+
 ## v0.3.0-beta.21
 
 Documentation:

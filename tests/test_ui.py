@@ -642,6 +642,36 @@ class FromFileAndPacks(Base):
         self.assertIn("write_flash --flash_mode keep --flash_size keep 0x10000", calls)
         self.assertNotIn("erase_flash", calls)
 
+    def test_your_own_build_in_a_zip(self):
+        import zipfile
+        os.environ.update(FAKE_BOARD="esp32", FAKE_CALLS=os.path.join(self.dir, "calls"))
+        with open(os.path.join(ROOT, "firmware", "official", "MicroPython_FullErase_v1.29.0.bin"), "rb") as f:
+            mpy = f.read()
+        with zipfile.ZipFile(os.path.join(self.dir, "mysketch.zip"), "w") as z:
+            z.writestr("build/mysketch.ino.bootloader.bin", mpy[:0x7000])
+            z.writestr("build/mysketch.ino.partitions.bin", mpy[0x7000:0x7C00])
+            z.writestr("build/mysketch.ino.bin", mpy[0xF000:])
+        a = self.app([port("/dev/ttyUSB0", "10c4:ea60", "CP210x USB-serial")])
+        a.handle("a")
+        self.wait(a)
+        a.handle("a")
+        self.browse(a)
+        self.pick(a, "mysketch.zip")
+        self.assertEqual(a.confirm["title"], "Flash mysketch.zip?")
+        self.assertIn("A build", a.confirm["lines"][0])
+        self.assertIn("0x01000 · 28 KB · mysketch.ino.bootloader.bin", a.confirm["lines"][1])
+        self.assertTrue(a.confirm["danger"])
+        self.shot(a, "42-from-file-build")
+        self.assertEqual(a.confirm["choice"], 0)        # it erases: Cancel is chosen first
+        a.handle("right")
+        a.handle("a")
+        self.wait(a)
+        self.assertTrue(a.task.ok, a.task.msg)
+        with open(os.path.join(self.dir, "calls")) as f:
+            calls = f.read()
+        self.assertIn("erase_flash", calls)
+        self.assertRegex(calls, r"write_flash --flash_mode keep --flash_size keep 0x1000 \S+ 0x8000 \S+ 0x10000 ")
+
     def test_browsing_up_down_and_every_file(self):
         os.environ["FAKE_BOARD"] = "esp32"
         a = self.app([port("/dev/ttyUSB0", "10c4:ea60", "CP210x USB-serial")])

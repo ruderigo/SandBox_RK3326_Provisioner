@@ -188,6 +188,41 @@ def flash(port, entry, board, on_line=None, on_step=None, on_progress=None):
     return True, "%s written and verified" % entry["title"]
 
 
+def flash_build(port, chip, pairs, title, board=None, on_line=None, on_step=None, on_progress=None):
+    """A build's files (builds.extract's [("0x...", path)]): erases the whole
+    flash, writes them all in one go, reads them all back. (ok, message)."""
+    step = on_step or (lambda s: None)
+    prog = on_progress or (lambda p: None)
+
+    def lines(line):
+        if on_line:
+            on_line(line)
+        pct = progress_of(line)
+        if pct is not None:
+            prog(pct)
+    flat = [x for pair in pairs for x in pair]
+    step("Erasing the whole flash")
+    ok, out = run(["--chip", chip, "--port", port, "--baud", str(BAUD), "erase_flash"], lines, timeout=180)
+    if not ok:
+        return False, explain(out)
+    step("Writing %s (%d files)" % (title, len(pairs)))
+    prog(0)
+    args = ["--chip", chip, "--port", port, "--baud", str(BAUD), "--after", "no_reset", "write_flash",
+            "--flash_mode", "keep", "--flash_size", "keep"] + flat     # see flash()
+    ok, out = run(args, lines, timeout=900)
+    if not ok and BAUD != SLOW_BAUD:
+        step("Writing again, slower")
+        ok, out = run(args[:5] + [str(SLOW_BAUD)] + args[6:], lines, timeout=1200)
+    if not ok:
+        return False, explain(out)
+    prog(100)
+    step("Reading it back")
+    ok, out = run(["--chip", chip, "--port", port, "--baud", str(BAUD), "verify_flash"] + flat, lines, timeout=600)
+    if not ok or not ("verify ok" in out.lower() or "digest matched" in out.lower()):
+        return False, "Written, but the read-back differs: " + explain(out)
+    return True, "%s written and verified (%d files)" % (title, len(pairs))
+
+
 def write_image(port, chip, path, offset="0x0", on_line=None, on_progress=None, erase=True):
     """Erases the whole flash and writes one image (a Stump image, or
     MicroPython), then reads it back. erase=False: written in place, the
