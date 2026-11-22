@@ -43,6 +43,14 @@ SELECT + START closes it. B is back everywhere.
 4. **Make a Stump**, answer the form (its name, the network, the chain),
    and it's flashed, set and checked: what it said as it started is shown.
 
+## Your own firmware
+
+On a board's page, **+ From File** flashes a `.bin` (a full image or one
+program) or your own build zipped (ESP-IDF's `build` folder, PlatformIO's
+`.pio/build/<env>`, the Arduino IDE's export): every file at its address,
+checked first, then the board erased and written. More: the README's
+[Your own firmware](README.md#your-own-firmware).
+
 ## The handheld's apps
 
 **This handheld** installs and updates FireFly and the handheld's own

@@ -47,6 +47,9 @@ run "python" pyflakes_or_compile
 step "Core: detection, catalogue, flashing (fake esptool)"
 run "core" python3 -W error::ResourceWarning tests/test_core.py
 
+step "Your own build in a .zip (ESP-IDF, PlatformIO, Arduino): where each file goes, what's refused"
+run "builds" python3 -W error::ResourceWarning tests/test_builds.py
+
 step "install.sh on ArkOS/dArkOS and AmberELEC/ROCKNIX layouts (a pretend root)"
 run "install" python3 tests/test_install.py
 
@@ -92,7 +95,7 @@ have = set.intersection(*(set(f["glyphs"]) for f in fonts))
 missing = {}
 for path in ("provisioner/ui/app.py", "provisioner/ui/keyboard.py", "provisioner/stump.py", "provisioner/flasher.py",
              "provisioner/handheld.py", "provisioner/shelf.py", "provisioner/installers.py",
-             "provisioner/s3wifi.py",
+             "provisioner/s3wifi.py", "provisioner/builds.py",
              "firmware/catalog.json"):
     src = open(path, encoding="utf-8").read()
     for i, line in enumerate(src.splitlines(), 1):

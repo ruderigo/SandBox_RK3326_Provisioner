@@ -6,7 +6,7 @@ the hub and it's recognised, given the firmware that fits, flashed and checked;
 the handheld's own Stump, FireFly and the Provisioner itself install and
 update from here too. It's an EmulationStation **Ports** entry.
 
-> **Sandbox, v0.3.0-beta.21.** Tested on an R36MAX (dArkOS); other RK3326
+> **Sandbox, v0.3.0-beta.22.** Tested on an R36MAX (dArkOS); other RK3326
 > handhelds and systems in CI only ([docs/HANDHELDS.md](docs/HANDHELDS.md)).
 > Plan and next steps: [docs/PLAN.md](docs/PLAN.md).
 
@@ -20,6 +20,7 @@ update from here too. It's an EmulationStation **Ports** entry.
 | **Classic ESP32** | WLED 16.0.1 (app slot), MicroPython 1.29.0 (full) | the catalogue / + From File (any `.bin`, read for what it is) | tested on the R36MAX |
 | **Heltec V3** | RNode for a CAM, set for the mesh | | *coming* |
 | **Any board** | the serial log (pause, a block, export); erase the flash | | tested on the R36MAX |
+| | **your own firmware build** (ESP-IDF, PlatformIO, Arduino): every file at its address, in one go ([below](#your-own-firmware)) | + From File (a build's `.zip`) | **to test** (beta.22) |
 | **This handheld** | **its own Stump**: install (a form, with every pack the Stump offers), update (everything kept, its packs brought up to date), its password, check | Official / Sandbox / + From File (a `.tar.gz`) | tested on the R36MAX with 2.3.0; **2.5.0 with SandBox_Stump_On b60: to test** (beta.13) |
 | | **FireFly**: install, update (its identity and messages kept) | Official / Sandbox / + From File (a `.zip`) | tested on the R36MAX |
 | | **the Provisioner itself**: update, go back to the one before | Sandbox / + From File (a `.tar.gz`) | tested on the R36MAX |
@@ -125,6 +126,34 @@ install is recorded in its plugin folders (`.from_pack`, as Team Stump does).
 had saved first; its settings stay). **Work out its announce stamps** does
 Reticulum 1.6.1's proof of work for a Stump with *Announce stamps* ticked
 in its /admin, every core of the handheld on it.
+
+## Your own firmware
+
+Built your own firmware with ESP-IDF, PlatformIO or the Arduino IDE? Zip the
+build folder, put the `.zip` on the card or a USB drive, and on the board's
+page choose **+ From File**. One `.bin` already works the same way: a full
+image (a *merged* or *factory* file) or a single program.
+
+A build is several files, each with its own address. The Provisioner reads
+where each one goes from:
+
+| Made by | What to zip | Where each file goes |
+|---|---|---|
+| ESP-IDF | the `build` folder | its `flasher_args.json` (or `flash_args`) |
+| PlatformIO | `.pio/build/<env>` | the names: `bootloader.bin` at the chip's bootloader address, `partitions.bin` at 0x8000, `firmware.bin` at the table's first app partition, `boot_app0.bin` at its OTA data, `littlefs.bin` / `spiffs.bin` / `fatfs.bin` at its data partition |
+| Arduino IDE | the folder *Sketch → Export compiled binary* makes (`build/<board>`) | the same names: `*.ino.bootloader.bin`, `*.ino.partitions.bin`, `*.ino.bin` (the `.merged.bin` is left out) |
+
+Before anything is written it checks that every listed file is in the zip,
+none overlap, all fit the board's flash, the bootloader is at the right
+address for the chip (0x1000 on an ESP32 or S2, 0x0 on an S3, C3, C6...),
+there's a partition table, every image is built for the board's chip, and
+every program fits its app partition. Anything that doesn't add up is
+refused, saying why. Then it shows each file with its address and size, and
+asks. A build is a full install: the whole flash is erased, every file is
+written in one go, then read back.
+
+Two builds in one zip (say an `esp32` and an `esp32s3` folder): the one for
+the board's chip is used.
 
 ## This handheld's Stump
 

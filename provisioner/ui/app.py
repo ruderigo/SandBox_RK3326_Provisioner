@@ -15,7 +15,7 @@ import os
 import threading
 import time
 
-from .. import boards, catalog, files, flasher, handheld, identity, images, installers, packs, s3wifi, shelf, stamps, stump
+from .. import boards, builds, catalog, files, flasher, handheld, identity, images, installers, packs, s3wifi, shelf, stamps, stump
 from ..seriallog import SerialLog
 from . import keyboard
 from .keyboard import Keyboard
@@ -727,6 +727,14 @@ class App:
             self.ask_identity(path)
             return
         if path.lower().endswith(".zip"):
+            try:
+                inside = packs.read_zip(path)
+            except (packs.PackError, OSError) as e:
+                self.toast("Can't read it: %s" % e, 5)
+                return
+            if builds.looks_like(inside):
+                self.ask_build(path, inside, board)
+                return
             if board.get("id") not in STUMP_BOARDS:
                 self.toast("A pack's .zip is for a Stump (an ESP32-S3-CAM or a WROVER)", 4)
                 return
@@ -767,6 +775,39 @@ class App:
             return
         self.ask("Flash %s?" % entry["title"], lines, "Flash it", lambda: self.start_flash(entry),
                  danger=(info["kind"] == "full"))
+
+    def ask_build(self, path, inside, board):
+        """Your own build (ESP-IDF, PlatformIO, Arduino) in a .zip: every file
+        at its address, checked first, then erase, write and read back."""
+        try:
+            plan = builds.plan(inside, board["chip"], board.get("flash_mb") or 0)
+        except builds.BuildError as e:
+            self.toast("Not flashed: %s" % e, 6)
+            return
+        title = os.path.basename(path)
+        lines = builds.describe(plan) + ["Everything on the board goes: firmware, settings, files."]
+        self.ask("Flash %s?" % title, lines, "Flash it", lambda: self.start_build(plan, title), danger=True)
+
+    def start_build(self, plan, title):
+        port, chip = self.cur["port"], self.known[self.cur["port"]]["board"]["chip"]
+
+        def work(t):
+            import shutil
+            import tempfile
+            def step(s):
+                t.step, t.pct = s, (0 if s.startswith("Writing") else None)
+            def pct(p):
+                t.pct = p
+            tmp = tempfile.mkdtemp(prefix="provisioner-build-")
+            try:
+                pairs = builds.extract(plan, tmp)
+                ok, msg = flasher.flash_build(port, chip, pairs, title, on_line=t.line, on_step=step, on_progress=pct)
+            finally:
+                shutil.rmtree(tmp, True)
+            return ok, msg, None
+        self.task = Task("Flashing %s" % title, work)
+        self.task.after = "jobs"
+        self.screen = "run"
 
     def ask_pack(self, plan, src="", row=None):
         """Installs a pack, or updates it (the same steps; its settings kept);
