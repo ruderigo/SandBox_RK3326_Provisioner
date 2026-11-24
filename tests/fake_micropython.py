@@ -79,6 +79,30 @@ if os.environ.get("FAKE_FULL"):
 if not hasattr(os, "ilistdir"):                 # MicroPython's: (name, type, inode, size)
     os.ilistdir = lambda d=".": iter([(n, 0x4000 if os.path.isdir(os.path.join(d, n)) else 0x8000, 0, 0)
                                       for n in os.listdir(d)])
+# A compiled module (.mpy, the bundle's) on the board imports as an empty
+# one: CPython can't run it, but whether it's there is what's checked.
+import importlib.abc  # noqa: E402
+import importlib.machinery  # noqa: E402
+
+
+class _Mpy(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    def find_spec(self, name, path=None, target=None):
+        base = os.path.join(*name.split("."))         # relative: "/" is the board's folder here
+        if os.path.isfile(os.path.join(base, "__init__.mpy")):
+            return importlib.machinery.ModuleSpec(name, self, is_package=True)
+        if os.path.isfile(base + ".mpy") and not os.path.isfile(base + ".py"):
+            return importlib.machinery.ModuleSpec(name, self)
+        return None
+
+    def create_module(self, spec):
+        return None
+
+    def exec_module(self, module):
+        if module.__spec__.submodule_search_locations is not None:
+            module.__path__ = [os.path.join(*module.__name__.split("."))]
+
+
+sys.meta_path.append(_Mpy())             # after the sources (stump_fixtures): only what nothing else has
 import gc  # noqa: E402
 gc.mem_free = lambda: int(os.environ.get("FAKE_MEM", str(8 * 1024 * 1024)))
 gc.mem_alloc = lambda: 0

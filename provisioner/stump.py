@@ -457,6 +457,24 @@ def asked_json(repl, code, tag, secs=30.0, tries=3, empty=r"\{.*\}"):
     raise StumpError(NO_ANSWER)
 
 
+def modules_load(repl, names=("urns.mem", "boot_common")):
+    """Before it restarts: the Stump's mesh code imports, as it will at its
+    start ("ImportError: no module named 'urns.mem'" after Make a Stump on a
+    WROVER, 2026-11-24, with no way to tell why). None, or what's wrong in
+    words: the error, where urns came from, the import path."""
+    if not names:
+        return None
+    m = asked(repl, "import sys\ntry:\n import " + ", ".join(names) + "\n print('MOD'+'OK')\nexcept Exception as e:\n"
+                    " w=''\n try:\n  import urns\n  w=getattr(urns,'__file__','') or str(getattr(urns,'__path__',''))\n"
+                    " except Exception:\n  pass\n print('MOD'+'BAD|%r|%s|%s' % (e, w, sys.path))\n",
+              r"MOD(OK|BAD\|[^\r\n]*)")
+    if m.group(1) == "OK":
+        return None
+    _, err, where, path = (m.group(1).split("|") + ["", "", ""])[:4]
+    return ("Its files are in, but the Stump's code doesn't load: %s. urns comes from %s; it looks in %s. "
+            "Nothing else was changed; send this to the team." % (err, where or "nowhere", path))
+
+
 def board_info(repl):
     m = asked(repl, "import sys, os\nv=getattr(sys.implementation,'_mpy',0)\n"
                     "print('INFO', '.'.join(str(x) for x in sys.implementation.version[:3]), "
@@ -1260,6 +1278,11 @@ def make(bundle, answers, open_link, flash, step, progress, log, update=False, c
             if old:
                 log("%d file(s) this release no longer has removed: %s" % (len(old), ", ".join(old)))
                 note += " Removed, as this release no longer has them: %s." % ", ".join(old)
+        names = set(re.sub(r"\.(py|mpy)$", "", p).replace("/", ".") for p, _, _ in bundle.app())
+        problem = modules_load(repl, [n for n in ("urns.mem", "boot_common") if n in names])
+        if problem:
+            restart(repl)
+            return False, problem
         if not update:
             step("Its settings")
             tpl = bundle.template.encode()

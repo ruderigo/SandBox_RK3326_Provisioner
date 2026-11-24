@@ -57,6 +57,13 @@ its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
   that says it's non-fatal is a note now. And "MicroPython ?" there: the
   version the board gave is used when its start banner is missed.
 
+- **Its code checked before it restarts.** After copying, the Provisioner
+  imports the Stump's mesh code on the board (`urns.mem`, `boot_common`, as
+  far as the release has them) before restarting it: a Stump that would stop
+  at its start ("ImportError: no module named 'urns.mem'" after Make a Stump
+  on a WROVER, 2026-11-24) is said there, with where `urns` came from and
+  where it looked, instead of a Stump whose pages never come up.
+
 
 
 - **The board bench only.** The Provisioner is now about ESP32 boards:
