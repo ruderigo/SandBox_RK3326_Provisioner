@@ -225,26 +225,45 @@ class Refused(MakeAStump):
         class Silent:
             def run(self, code, secs=30.0):
                 return "I (5123) wifi:mode : softAP\r\n"
-        with self.assertRaisesRegex(stump.StumpError, "didn't come through"):
+        with self.assertRaisesRegex(stump.StumpError, "didn't come through whole"):
             stump.board_info(Silent())
-        with self.assertRaisesRegex(stump.StumpError, "didn't come through"):
+        with self.assertRaisesRegex(stump.StumpError, "didn't come through whole"):
             stump.board_image(Silent())
 
-    def test_an_answer_cut_by_a_line_it_printed_is_asked_again(self):
-        """"Expecting ',' delimiter: line 1 column 1342" (a WROVER updating,
-        2026-11-24): a line of its own landed in the middle of the JSON."""
-        class Once:
-            n = 0
+    def test_only_an_answer_that_came_whole_is_one(self):
+        """Its length and checksum with every line (a WROVER's USB lost bytes,
+        2026-11-24): cut by a line it printed ("Expecting ',' delimiter: column
+        1342"), or short of a piece and still JSON (the image's module list a
+        few names short: a built-in module copied beside the image, "no module
+        named 'urns.mem'" at its start), it's asked again, slower."""
+        whole = 'HAVE{"files": {"a.py": ["ab", 3], "urns/lxmf.py": ["cd", 4]}, "free": 100}'
+        sealed = stump.seal(whole)
+
+        class Board:
+            n, codes = 0, []
 
             def run(self, code, secs=30.0):
-                assert code.startswith(stump.PACED_PRINT)       # a long answer comes in small pieces
+                self.codes.append(code)
                 self.n += 1
-                if self.n == 1:
-                    return 'HAVE{"files": {"a.py": ["ab", 3]I (5123) wifi:mode : softAP\r\n, "free": 100}\r\n'
-                return 'HAVE{"files": {"a.py": ["ab", 3]}, "free": 100}\r\n'
-        r = Once()
-        self.assertEqual(stump.have_on_board(r, ["a.py"]), ({"a.py": ("ab", 3)}, 100))
-        self.assertEqual(r.n, 2)
+                if self.n == 1:                      # a line of its own in the middle
+                    return sealed[:30] + "I (5123) wifi:mode : softAP\r\n" + sealed[30:] + "\r\n"
+                if self.n == 2:                      # a piece lost: still JSON, not what it sent
+                    return sealed.replace('"a.py": ["ab", 3], ', "") + "\r\n"
+                return "I (77) boot: x\r\n" + sealed + "\r\n"
+        b = Board()
+        self.assertEqual(stump.have_on_board(b, ["a.py"]), ({"a.py": ("ab", 3), "urns/lxmf.py": ("cd", 4)}, 100))
+        self.assertEqual(b.n, 3)
+        self.assertTrue(b.codes[0].startswith(stump.paced_print(64, 8)))      # slower each time
+        self.assertTrue(b.codes[2].startswith(stump.paced_print(16, 20)))
+        self.assertEqual(stump.whole_lines(sealed + "\r\n" + sealed[:-1] + "\r\nplain\r\n"), [whole])
+
+    def test_the_modules_built_in_are_the_releases_own_list(self):
+        class B:
+            image_head = {"release": "1.0.0-beta.88", "partitions": "stump-1", "frozen": ["urns/mem.py", "rrc.py"]}
+        said = {"release": "1.0.0-beta.88", "partitions": "stump-1", "frozen": ["rrc.py"]}       # a name short
+        self.assertEqual(stump.frozen_of(said, B), ["urns/mem.py", "rrc.py"])
+        self.assertEqual(stump.frozen_of(dict(said, release="1.0.0-beta.86"), B), ["rrc.py"])   # another image: its own word
+        self.assertEqual(stump.frozen_of(None, B), [])
 
     def test_a_running_stump_is_stopped_first_and_plain_raw_mode_works(self):
         global BUNDLE

@@ -13,7 +13,6 @@ import hashlib
 import json
 import multiprocessing
 import os
-import re
 import time
 
 from . import stump
@@ -96,12 +95,8 @@ NOT_YET = ("It doesn't list what it announces yet: in its /admin, Stump settings
 
 
 def _read(repl, name):
-    out = repl.run("try:\n print('J'+open('rns/%s').read())\nexcept OSError:\n print('J{}')\n" % name, 20)
-    m = re.search(r"J(\{.*\})", out, re.S)
-    try:
-        d = json.loads(m.group(1)) if m else {}
-    except ValueError:
-        d = {}
+    d = stump.asked_json(repl, "import json\ntry:\n d=json.loads(open('rns/%s').read())\nexcept (OSError, ValueError):\n"
+                               " d={}\nprint('J'+json.dumps(d if isinstance(d, dict) else {}))\n" % name, "J", 20)
     return d if isinstance(d, dict) else {}
 
 

@@ -304,9 +304,10 @@ def install(plan, open_link, step, progress, log, answers=None, builtins=None, r
         no_card = False
         if plan["card"]:
             step("Copying its files to the SD card")
-            out = repl.run(CARD_MOUNT + "import os\ntry:\n os.stat(%s)\n print('HASCARD')\nexcept OSError:\n pass\n"
-                           % stump.py(CARD_ROOT), 30)
-            if "HASCARD" in out:
+            card = stump.asked(repl, CARD_MOUNT + "import os\ntry:\n os.stat(%s)\n print('CARD'+'YES')\n"
+                               "except OSError:\n print('CARD'+'NO')\n" % stump.py(CARD_ROOT), r"CARD(YES|NO)$",
+                               secs=30).group(1)
+            if card == "YES":
                 stump.upload(repl, [(CARD_ROOT + "/" + p, d, s) for p, d, s in plan["card"]], prog)
             else:
                 # Best effort, as Team Stump's provisioner: the plugins run without them
@@ -360,10 +361,8 @@ def install(plan, open_link, step, progress, log, answers=None, builtins=None, r
 
 def _plugin_api(repl):
     """The plugin API the board's Stump offers (plugins.API_VERSION), 0 if none."""
-    out = repl.run("try:\n import plugins\n print('API', getattr(plugins, 'API_VERSION', 0))\n"
-                   "except Exception:\n print('API 0')\n")
-    m = re.search(r"API (\d+)", out)
-    return int(m.group(1)) if m else 0
+    return int(stump.asked(repl, "try:\n import plugins\n print('API', getattr(plugins, 'API_VERSION', 0))\n"
+                                 "except Exception:\n print('API 0')\n", r"API (\d+)$").group(1))
 
 
 # -- a board's packs (1.0.0-beta.75) ----------------------------------------------

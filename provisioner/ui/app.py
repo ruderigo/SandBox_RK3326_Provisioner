@@ -118,6 +118,7 @@ class App:
         self.running = True
         self.bundle_dir = None
         self._bundle = False            # loaded on first use (None: there's none)
+        self._copy_for = {}             # the copy a board that needs an image gets, per chip
         self.form = None                # {"mode": "new"|"settings", "a": answers, "sel": row}
         self.kb = None                  # the keyboard, while typing (and the field it fills)
         self.kb_key = None
@@ -225,8 +226,28 @@ class App:
         return rows
 
     def stump_copy(self):
-        """The Stump the boards get: the one chosen, else the shelf's (Official, else Sandbox)."""
-        return self.stump_src or stump.default_copy()
+        """The Stump the boards get: the one chosen, else the shelf's (Official,
+        else Sandbox); for a board that only takes a Stump image (a WROVER),
+        the first of them that has one for it."""
+        if self.stump_src:
+            return self.stump_src
+        chip = self.chip_of(self.cur["port"]) if self.cur else None
+        if chip and chip != "esp32s3":
+            key = (chip, tuple(c["dir"] for c in self.stump_choices()))
+            if self._copy_for.get("key") != key:
+                pick = None
+                for c in self.stump_choices():
+                    try:
+                        b = stump.find_bundle(c["dir"])
+                    except Exception:
+                        b = None
+                    if b and b.image_for(chip)[0]:
+                        pick = c
+                        break
+                self._copy_for = {"key": key, "copy": pick}
+            if self._copy_for["copy"]:
+                return self._copy_for["copy"]
+        return stump.default_copy()
 
     def stump_dir(self):
         c = self.stump_copy()
@@ -309,6 +330,8 @@ class App:
                 self.open_product("provisioner", back="boards")
         elif act in ("a", "x", "y") and n:
             p = rows[self.sel]
+            if self.cur is None or self.cur.get("port") != p["port"]:
+                self._bundle, self._packs = False, None      # another board: maybe another Stump copy (its chip)
             self.cur = p
             go = self.open_log if act == "y" else (self.identify if act == "x" or p["port"] not in self.known
                                                    else self.open_jobs)
@@ -332,6 +355,7 @@ class App:
             info = boards.parse_probe(out)
             board = boards.identify(info["chip"], self.cur["usb"])
             self.known[port] = {"board": dict(board, flash_mb=info["flash_mb"]), "info": info}
+            self._bundle, self._packs = False, None          # its chip is known now: the Stump copy that suits it
             return True, "%s, %s, %g MB flash" % (board["name"], info["chip_text"], info["flash_mb"]), None
         self.task = Task("Identifying %s" % port, work)
         self.task.after = "jobs"
@@ -1208,8 +1232,10 @@ class App:
         if self.confirm:
             self.draw_confirm()
         if self.toast_text and time.time() < self.toast_until:
-            d.fill_rrect(30, 100, W - 60, 40, 8, EMBER)
-            d.text(F20, 46, 108, self.toast_text, BG, W - 92)
+            lines = wrap(d, F20, self.toast_text, W - 92)[:4]      # all of it (it used to be cut at one line)
+            d.fill_rrect(30, 100, W - 60, 14 + 26 * len(lines), 8, EMBER)
+            for i, line in enumerate(lines):
+                d.text(F20, 46, 108 + 26 * i, line, BG, W - 92)
         d.present()
 
     def draw_header(self):

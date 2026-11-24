@@ -46,17 +46,33 @@ its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
   empty would have had its defaults written over the board's, its themes
   read back empty would have written the others away. And ESP-IDF's own log
   is turned off while the Provisioner talks to the board.
-- **Long answers in small pieces.** A WROVER's USB-serial chip (CH340) on
-  the RK3326's USB lost bytes from long answers sent at full speed: its file
-  list, the Stump image's list of modules (*Make a Stump* stopping right
-  after the flash), its pack list; short ones came whole. The board now
-  sends them 64 bytes at a time with a short pause, under the line's speed.
+- **Every answer comes with its length and checksum.** A WROVER's
+  USB-serial chip (CH340) on the RK3326's USB lost bytes from what the board
+  sent. Some answers then failed to read; one still read, a few names short:
+  the Stump image's list of built-in modules, so a file of the built-in
+  `urns` was copied beside the image, hid the built-in package, and the new
+  Stump stopped at its start on "no module named 'urns.mem'". The board's
+  `print` is now replaced while the Provisioner talks to it: each line ends
+  with its checksum and length and goes out a few bytes at a time; only a
+  line that matches is an answer, anything else is asked again, slower each
+  time (4 tries), and never guessed. Its settings, files, packs, themes,
+  radio, identity, stamps, memory and SD card are all read that way.
+- **The modules built into an image: the release's own list** (the
+  `stump_image.py` on the shelf with it) when the board runs that release's
+  image, not what came over USB.
 - **"Checking it starts" took a harmless line for a failure.** "[adc_reader]
   battery init failed (non-fatal, continuing without it)" (a WROVER has no
   battery pin) made a Stump that started fine read "It didn't work". A line
   that says it's non-fatal is a note now. And "MicroPython ?" there: the
   version the board gave is used when its start banner is missed.
 
+- **A WROVER gets the Stump copy that has an image for it.** On a fresh
+  install the boards got Official (1.0.0-beta.48), which has no WROVER image
+  and no chain over the router: *Make a Stump* answered "older than
+  1.0.0-beta.57: no …", cut at one line. A board that only takes a Stump
+  image now starts on the first copy that has one for it (Sandbox today);
+  one chosen by hand stays. Messages at the top of the screen show whole (up
+  to four lines), and that one says where to choose.
 - **Its code checked before it restarts.** After copying, the Provisioner
   imports the Stump's mesh code on the board (`urns.mem`, `boot_common`, as
   far as the release has them) before restarting it: a Stump that would stop

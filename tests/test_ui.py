@@ -609,6 +609,24 @@ class FromFileAndPacks(Base):
         self.assertIn("write_flash --flash_mode keep --flash_size keep 0x10000", calls)
         self.assertNotIn("erase_flash", calls)
 
+    def test_a_wrover_gets_the_copy_that_has_its_image(self):
+        """Official (beta.48) has no image for a WROVER: its page takes the
+        Sandbox copy by itself (a fresh install asked for the chain over the
+        router and was told "older than 1.0.0-beta.57", cut at one line)."""
+        os.environ.update(FAKE_BOARD="esp32")
+        a = self.app([port("/dev/ttyUSB0", "10c4:ea60", "CP210x USB-serial")])
+        a.handle("a")
+        self.wait(a)
+        a.handle("a")
+        self.assertEqual(a.screen, "jobs")
+        self.assertEqual(a.stump_copy()["channel"], "sandbox")
+        self.assertTrue(a.bundle().image_for("esp32")[0])
+        a.stump_src = A.shelf.best("stump", "official")          # chosen by hand: kept
+        self.assertEqual(a.stump_copy()["channel"], "official")
+        a.toast("This Stump release is older than 1.0.0-beta.57: no chain over the router. On the board's page, "
+                "the first row chooses a newer one (Sandbox).", 5)
+        self.shot(a, "43-toast-whole")
+
     def test_your_own_build_in_a_zip(self):
         import zipfile
         os.environ.update(FAKE_BOARD="esp32", FAKE_CALLS=os.path.join(self.dir, "calls"))

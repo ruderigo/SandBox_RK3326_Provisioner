@@ -25,6 +25,7 @@ control when the board has it, as mpremote and Arborist do.
 """
 
 import base64
+import binascii
 import gzip
 import hashlib
 import json
@@ -95,6 +96,17 @@ def images_in(d, release=None):
         if m and (release is None or m.group(1) == release):
             out[m.group(2)] = os.path.join(d, n)
     return out
+
+
+def frozen_of(image, bundle):
+    """The modules built into the image a board runs: the release's own list
+    (stump_image.py, on the shelf with it) when the board runs that release's
+    image, else what the board says."""
+    head = getattr(bundle, "image_head", None) or {}
+    if image and head.get("frozen") and image.get("release") == head.get("release") \
+            and image.get("partitions") == head.get("partitions"):
+        return head["frozen"]
+    return (image or {}).get("frozen") or []
 
 
 def not_frozen(files, frozen):
@@ -405,56 +417,89 @@ def restart(repl):
     time.sleep(0.3)
 
 
-NO_ANSWER = ("The board's answers didn't come through: it printed something of its own while being asked, or its "
-             "USB connection dropped. Unplug it, plug it back in and try again.")
+NO_ANSWER = ("The board's answers didn't come through whole, asked several times: something on its USB line "
+             "loses or adds bytes (the cable, the hub, its power). Unplug it, plug it back in and try again.")
+
+# Every answer comes with its length and checksum, in small pieces.
+#
+# A WROVER's USB-serial chip (CH340) on the RK3326's USB lost bytes from
+# what the board sent (R36MAX, 2026-11-24). A long answer read "Expecting ','
+# delimiter: column 1342", or worse, still read as JSON with pieces missing:
+# the Stump image's list of built-in modules came back a few names short, a
+# file of the built-in `urns` was copied beside the image for it, and the
+# Stump stopped at its start on "no module named 'urns.mem'" (the copy hid
+# the built-in package). And what the board prints by itself (ESP-IDF's
+# Wi-Fi log) lands in the middle of answers.
+#
+# So the board's print is replaced while we talk to it: each line ends with
+# ~~c<crc32>~<length> and goes out a few bytes at a time with a pause. Only
+# a line whose length and checksum match is an answer; anything else is
+# asked again, slower each time (64 bytes every 8 ms, 32 every 12, 16 every
+# 20). Never a guess: NO_ANSWER when it never comes whole.
+PACES = ((64, 8), (32, 12), (16, 20), (16, 40))
 
 
-def asked(repl, code, pat, tries=3, secs=30.0):
-    """A question to the board, asked again when its answer doesn't come
-    through (something it printed by itself mixed in): the match, or
-    StumpError (NO_ANSWER)."""
+def paced_print(chunk=64, ms=8):
+    return ("def print(*a, end='\\n'):\n import sys, time\n s=' '.join(str(x) for x in a)\n b=s.encode()\n"
+            " try:\n  import binascii\n  c=binascii.crc32(b)&0xffffffff\n  k='c'\n"
+            " except Exception:\n  c=0\n  k='f'\n  for x in b:\n   c=(c*31+x)&0xffffffff\n"
+            " s=s+'~~%s%08x~%d' % (k,c,len(b))+end\n"
+            " for i in range(0, len(s), " + str(chunk) + "):\n  sys.stdout.write(s[i:i+" + str(chunk) + "])\n"
+            "  time.sleep(" + str(ms / 1000.0) + ")\n")
+
+
+def _sum(kind, b):
+    if kind == "c":
+        return binascii.crc32(b) & 0xffffffff
+    c = 0
+    for x in b:
+        c = (c * 31 + x) & 0xffffffff
+    return c
+
+
+def seal(s):
+    """A line as the board's print sends it (the tests' pretend boards use it)."""
+    b = s.encode()
+    return "%s~~c%08x~%d" % (s, _sum("c", b), len(b))
+
+
+def whole_lines(out):
+    """The lines of what the board said that came whole: length and checksum right."""
+    good = []
+    for line in out.replace("\r", "").split("\n"):
+        m = re.match(r"^(.*)~~([cf])([0-9a-f]{8})~(\d+)$", line, re.S)
+        if not m:
+            continue
+        b = m.group(1).encode()
+        if len(b) == int(m.group(4)) and _sum(m.group(2), b) == int(m.group(3), 16):
+            good.append(m.group(1))
+    return good
+
+
+def asked(repl, code, pat, tries=4, secs=30.0):
+    """A question to the board: the match of pat in a line that came whole,
+    asked again (slower) when none did, or StumpError (NO_ANSWER)."""
     out = ""
-    for _ in range(tries):
-        out = repl.run(code, secs)
-        m = re.search(pat, out)
-        if m:
-            return m
+    for n in range(tries):
+        out = repl.run(paced_print(*PACES[min(n, len(PACES) - 1)]) + code, secs)
+        for line in whole_lines(out):
+            m = re.search(pat, line)
+            if m:
+                return m
         time.sleep(0.3)
     log = getattr(repl, "log", None)
     if log:                                   # what came instead, for the log screen
-        log("its answer didn't come through; it said: %r" % out.strip()[-160:])
-    raise StumpError(NO_ANSWER)
-
-
-# A long answer printed in small pieces with a pause between them: a WROVER's
-# USB-serial chip (CH340) on the RK3326's USB lost bytes from long answers
-# sent at full speed (a file list "Expecting ',' delimiter: column 1342", the
-# Stump image's list of modules, a pack list never read whole; short answers
-# fine; R36MAX, 2026-11-24). 64 bytes every 8 ms: about 8 KB/s, under the
-# line's 11.5.
-PACED_PRINT = ("def print(*a, end='\\n'):\n import sys, time\n s=' '.join(str(x) for x in a)+end\n"
-               " for i in range(0, len(s), 64):\n  sys.stdout.write(s[i:i+64])\n  time.sleep(0.008)\n")
-
-
-def asked_json(repl, code, tag, secs=30.0, tries=3, empty=r"\{.*\}"):
-    """A question whose answer is one JSON line after tag (TAG{...}): the
-    value, asked again when it doesn't come through or doesn't read whole (a
-    line it printed by itself landed in the middle: "Expecting ',' delimiter",
-    a WROVER, 2026-11-24). Never a guess: NO_ANSWER when it never reads."""
-    out = ""
-    for _ in range(tries):
-        out = repl.run(PACED_PRINT + code, secs)
-        m = re.search(re.escape(tag) + "(" + empty + ")", out)
-        if m:
-            try:
-                return json.loads(m.group(1))
-            except ValueError:
-                pass
-        time.sleep(0.3)
-    log = getattr(repl, "log", None)
-    if log:
         log("its answer didn't come through whole; it said: %r" % out.strip()[-160:])
     raise StumpError(NO_ANSWER)
+
+
+def asked_json(repl, code, tag, secs=30.0, tries=4, empty=r"\{.*\}"):
+    """A question whose answer is one JSON line after tag (TAG{...}): the value."""
+    m = asked(repl, code, re.escape(tag) + "(" + empty + ")$", tries, secs)
+    try:
+        return json.loads(m.group(1))
+    except ValueError:                        # whole, and not JSON: the board's own doing
+        raise StumpError("the board's answer isn't what was asked: %r" % m.group(1)[:80])
 
 
 def modules_load(repl, names=("urns.mem", "boot_common")):
@@ -504,8 +549,8 @@ def board_image(repl):
 
 def memory(repl):
     """Its memory at the prompt (bytes), or None: PSRAM gives megabytes."""
-    m = re.search(r"MEM(\d+)", repl.run("import gc\ngc.collect()\nprint('MEM%d' % (gc.mem_free() + gc.mem_alloc()))\n"))
-    return int(m.group(1)) if m else None
+    return int(asked(repl, "import gc\ngc.collect()\nprint('MEM%d' % (gc.mem_free() + gc.mem_alloc()))\n",
+                     r"MEM(\d+)$").group(1))
 
 
 def remove_frozen_copies(repl, frozen):
@@ -539,10 +584,9 @@ def remove_retired(repl, paths, builtins):
 
 def config_sha(repl):
     """The SHA-256 of its config.py, or "" (to tell it's the board read earlier)."""
-    out = repl.run("import hashlib,binascii\ntry:\n h=hashlib.sha256(open('config.py','rb').read())\n"
-                   " print('SHA'+binascii.hexlify(h.digest()).decode())\nexcept OSError:\n print('SHA')\n", 30)
-    m = re.search(r"SHA([0-9a-f]{64})", out)
-    return m.group(1) if m else ""
+    return asked(repl, "import hashlib,binascii\ntry:\n h=hashlib.sha256(open('config.py','rb').read())\n"
+                       " print('SHA'+binascii.hexlify(h.digest()).decode())\nexcept OSError:\n print('SHA')\n",
+                 r"SHA([0-9a-f]{64})?$").group(1) or ""
 
 
 def has_stump(repl):
@@ -894,7 +938,8 @@ def settings_from(a):
         # A member over the router (chain.py's CHAIN_PARENT_IP, 1.0.0-beta.57): it
         # stays on the home Wi-Fi and links to the first Stump there.
         if a.get("lanOk") is False:
-            return no("This Stump release is older than 1.0.0-beta.57: no chain over the router (a newer one on the shelf).")
+            return no("This Stump release is older than 1.0.0-beta.57: no chain over the router. On the board's page, "
+                      "the first row chooses a newer one (Sandbox).")
         secret = (a.get("secret") or "").strip()
         if not secret:
             return no("Over the home Wi-Fi the first Stump only takes Stumps with the chain secret: type it in.")
@@ -1214,8 +1259,8 @@ def make(bundle, answers, open_link, flash, step, progress, log, update=False, c
                                "A Stump needs an ESP32-WROVER or the Freenove ESP32-S3-CAM." % (mem // 1024))
             im = board_image(repl)
             if im:
-                files = not_frozen(files, im.get("frozen"))
-                log("the Stump image %s: %d modules built in" % (im.get("release"), len(im.get("frozen") or [])))
+                files = not_frozen(files, frozen_of(im, bundle))
+                log("the Stump image %s: %d modules built in" % (im.get("release"), len(frozen_of(im, bundle))))
         else:
             if not has_stump(repl):
                 return False, "There's no Stump on this board to update (no config.py): choose Make a Stump."
@@ -1239,8 +1284,8 @@ def make(bundle, answers, open_link, flash, step, progress, log, update=False, c
                     repl = ready_repl(open_link, log)
                     links.append(repl.link)
                 now = board_image(repl) or {}
-                files = not_frozen(files, now.get("frozen"))
-                gone = remove_frozen_copies(repl, now.get("frozen"))
+                files = not_frozen(files, frozen_of(now, bundle))
+                gone = remove_frozen_copies(repl, frozen_of(now, bundle))
                 if gone:
                     log("%d old copies of built-in modules removed" % gone)
             elif cur and img:
