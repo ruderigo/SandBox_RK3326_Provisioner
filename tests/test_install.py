@@ -1,11 +1,13 @@
 """install.sh on each kind of system, in a pretend root (PROVISIONER_TEST_ROOT):
-ArkOS/dArkOS (a user's home, /roms and /roms2, /etc/udev) and AmberELEC/
-ROCKNIX (everything under /storage, /roms a link to it, udev rules there)."""
+ArkOS/dArkOS (a user's home, /roms and /roms2, /etc/udev), AmberELEC/
+ROCKNIX (everything under /storage, /roms a link to it, udev rules there) and
+RK3326 Linux (its dock: an entry in /data/ark/apps, no Ports folder needed)."""
 
 import os
 import shutil
 import subprocess
 import sys
+import json
 import tempfile
 import unittest
 
@@ -71,6 +73,42 @@ class Install(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(self.r, "storage", ".config", "udev.rules.d",
                                                     "99-rk3326-provisioner.rules")))
         self.assertFalse(os.path.exists(os.path.join(self.r, "etc", "udev")))   # read-only there
+
+    def test_rk3326_linux(self):
+        home = self.mk("home", "ark")
+        self.mk("usr", "share", "rk", "apps")
+        self.mk("data", "ark")
+        self.mk("etc", "udev", "rules.d")
+        with open(os.path.join(self.r, "etc", "os-release"), "w") as f:
+            f.write('PRETTY_NAME="Debian GNU/Linux 13 (trixie)"\n')
+        code, out = run_install(self.r, home)
+        self.assertEqual(code, 0, out)
+        app = os.path.join(home, "rk3326_provisioner")
+        entry = os.path.join(self.r, "data", "ark", "apps", "provisioner.json")
+        with open(entry) as f:
+            e = json.load(f)
+        self.assertEqual((e["name"], e["icon"], e["group"], e["mouse"]), ("Provisioner", "chip", "Workshop", False))
+        self.assertEqual(e["exec"], [os.path.join(app, "RK3326_Provisioner.sh")])
+        self.assertTrue(os.access(e["exec"][0], os.X_OK))
+        self.assertIn('"%s"' % app, self.launcher_app(e["exec"][0]))
+        self.assertNotIn("EmulationStation (Ports)", out)            # no roms/ports there: not needed
+        self.assertIn("The dock -> Workshop -> Provisioner", out)
+        self.assertTrue(os.path.isfile(os.path.join(self.r, "etc", "udev", "rules.d", "99-rk3326-provisioner.rules")))
+        code, out = run_install(self.r, home)
+        self.assertEqual(code, 0, out)
+        self.assertIn("provisioner.json (unchanged)", out)
+        # The image has its own entry now: that one, and ours goes.
+        with open(os.path.join(self.r, "usr", "share", "rk", "apps", "provisioner.json"), "w") as f:
+            f.write("{}")
+        code, out = run_install(self.r, home)
+        self.assertEqual(code, 0, out)
+        self.assertIn("on the dock already", out)
+        self.assertFalse(os.path.exists(entry))
+        # With a roms/ports folder too: both.
+        self.mk("roms", "ports")
+        code, out = run_install(self.r, home)
+        self.assertEqual(code, 0, out)
+        self.assertTrue(os.path.isfile(os.path.join(self.r, "roms", "ports", "RK3326_Provisioner.sh")))
 
     def test_not_a_handheld_nothing_touched(self):
         home = self.mk("home", "ark")

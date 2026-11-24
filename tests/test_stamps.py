@@ -2,7 +2,7 @@
 """A Stump's announce stamps (SandBox_Stump_On 1.0.0-beta.86), worked out
 here: Reticulum 1.6.1's proof of work, checked as Team Stump's code checks
 it; a CAM's missing ones over the pretend board (a cheap cost, so the test
-is quick); and, with STUMP_ON, this handheld's Stump by Team Stump's code.
+is quick).
     python3 tests/test_stamps.py
 """
 import json
@@ -15,7 +15,6 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tests"))
-from provisioner import handheld as H  # noqa: E402
 from provisioner import stamps as S  # noqa: E402
 from test_stump import PipeLink  # noqa: E402
 from test_identity import team_stump  # noqa: E402
@@ -83,26 +82,6 @@ class OnTheBoard(unittest.TestCase):
         self.assertTrue(S.ok(M2, bytes.fromhex(got["bb"]), 12))
         ok, msg = self.job()
         self.assertEqual((ok, msg), (True, "Its 2 announce stamp(s) are all there."))
-
-
-class ThisHandheldsStump(unittest.TestCase):
-    @unittest.skipUnless(os.environ.get("STUMP_ON"), "STUMP_ON=path/to/SandBox_Stump_On runs Team Stump's code")
-    def test_by_team_stumps_code(self):
-        home = tempfile.mkdtemp(prefix="home-")
-        self.addCleanup(shutil.rmtree, home, True)
-        folder = os.path.join(home, "Stump")
-        os.makedirs(os.path.join(folder, "rns"))
-        open(os.path.join(folder, "stump_pc.py"), "w").close()
-        os.symlink(os.environ["STUMP_ON"], os.path.join(home, "SandBox_Stump_On"))
-        r = H.team("stamps", folder, home=home)
-        if r.get("old"):
-            self.skipTest("STUMP_ON is older than %s" % r["old"])
-        self.assertEqual((r["total"], r["ok"]), (0, False))           # not ticked yet
-        with open(os.path.join(folder, "rns", "stamps_wanted.json"), "w") as f:
-            json.dump({"aa": M1.hex()}, f)
-        with open(os.path.join(folder, "rns", "stamps.json"), "w") as f:
-            json.dump({"aa": REAL}, f)
-        self.assertEqual(H.team("stamps", folder, home=home), {"total": 1, "todo": 0, "ok": True})
 
 
 if __name__ == "__main__":

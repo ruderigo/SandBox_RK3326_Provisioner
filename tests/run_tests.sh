@@ -53,12 +53,8 @@ run "builds" python3 -W error::ResourceWarning tests/test_builds.py
 step "install.sh on ArkOS/dArkOS and AmberELEC/ROCKNIX layouts (a pretend root)"
 run "install" python3 tests/test_install.py
 
-step "The shelf: Official and Sandbox copies, offline and online; the installers"
+step "The shelf: Official and Sandbox copies, offline and online; the Provisioner updating itself"
 run "shelf" python3 -W error::ResourceWarning tests/test_shelf.py
-
-WIZARD=""; [ -n "${STUMP_ON:-}" ] && WIZARD=" (and Team Stump's own wizard, in $STUMP_ON)"
-step "This handheld's Stump: the installer, its answers$WIZARD"
-run "handheld" python3 -W error::ResourceWarning tests/test_handheld.py
 
 step "Python 3.6 and newer (the oldest on these systems is ArkOS's 3.7)"
 if command -v vermin >/dev/null; then run "python-min" vermin -q --no-tips --violations -t=3.6- provisioner
@@ -70,7 +66,7 @@ run "stump" python3 -W error::ResourceWarning tests/test_stump.py
 step "A Stump's identity in a file (the pretend board; Team Stump's code reading ours, with STUMP_ON)"
 run "identity" python3 -W error::ResourceWarning tests/test_identity.py
 
-step "A Stump's announce stamps (Reticulum 1.6.1's proof of work; Team Stump's code with STUMP_ON)"
+step "A Stump's announce stamps (Reticulum 1.6.1's proof of work)"
 run "stamps" python3 -W error::ResourceWarning tests/test_stamps.py
 
 step "A CH340 through libusb (a pretend chip; the real libusb when here)"
@@ -94,7 +90,7 @@ fonts = load_fonts("assets/cockpit_font.bin")
 have = set.intersection(*(set(f["glyphs"]) for f in fonts))
 missing = {}
 for path in ("provisioner/ui/app.py", "provisioner/ui/keyboard.py", "provisioner/stump.py", "provisioner/flasher.py",
-             "provisioner/handheld.py", "provisioner/shelf.py", "provisioner/installers.py",
+             "provisioner/shelf.py", "provisioner/installers.py",
              "provisioner/s3wifi.py", "provisioner/builds.py",
              "firmware/catalog.json"):
     src = open(path, encoding="utf-8").read()

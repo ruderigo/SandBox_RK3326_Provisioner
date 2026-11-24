@@ -4,15 +4,16 @@ when the handheld is online (EmulationStation's network: Wi-Fi, a dongle,
 the S3 adapter).
 
     the Stump (CAM boards)  LaBuche-Stump                SandBox_Stump_On
-    this handheld's Stump   R36MAX-Stump                 SandBox_RK3326_Stump
-    FireFly (RK3326)        FireFly_RK3326_R36MAX_R36S   SandBox_FireFly_RK3326
     the Provisioner         (none yet)                   SandBox_RK3326_Provisioner
+
+(The handheld's own apps, its Stump and FireFly, install and update
+themselves: their own installers, and RK3326 Linux's Apps window.)
 
 "Official" is the public repo's newest release, "Sandbox" the sandbox's
 newest (pre-releases included: Team Stump's are all betas). A copy is
 taken only after every file matches the SHA-256 GitHub records for it, and
 the release's SHA256SUMS when it has one; then it's read for what it is (a
-Stump bundle and its packs, a tarball or zip with its installer). The
+Stump bundle and its packs, the Provisioner's tarball with its installer). The
 shelf on the games card (provisioner-shelf/) holds what was fetched; the
 Provisioner carries its own (firmware/shelf/), so it works offline from the
 start. + From File takes any such file from a card or a USB drive.
@@ -29,7 +30,6 @@ import shutil
 import tarfile
 import time
 import urllib.request
-import zipfile
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILTIN = os.path.join(HERE, "firmware", "shelf")
@@ -44,19 +44,12 @@ PRODUCTS = {
               "main": r"^Stump-(.+)\.bundle$", "assets": [r"^Stump-.+\.bundle$", r"^[a-z][a-z0-9_-]*-pack-.+\.zip$",
                          r"^stump-.+-(s3cam|wrover)\.bin$", r"^stump_image\.py$"],    # its images (beta.57 on)
               "file": (".bundle",)},
-    "handheld": {"title": "This handheld's Stump", "short": "handheld Stump",
-                 "official": "ruderigo/R36MAX-Stump", "sandbox": "ruderigo/SandBox_RK3326_Stump",
-                 "main": r"^R36MAX-Stump-handheld-(.+)\.tar\.gz$", "assets": [r"^R36MAX-Stump-handheld-.+\.tar\.gz$"],
-                 "file": (".tar.gz", ".tgz")},
-    "firefly": {"title": "FireFly", "short": "FireFly",
-                "official": "ruderigo/FireFly_RK3326_R36MAX_R36S", "sandbox": "ruderigo/SandBox_FireFly_RK3326",
-                "main": r"^FireFly-RK3326-(.+)\.zip$", "assets": [r"^FireFly-RK3326-.+\.zip$"], "file": (".zip",)},
     "provisioner": {"title": "The Provisioner", "short": "Provisioner",
                     "official": None, "sandbox": "ruderigo/SandBox_RK3326_Provisioner",
                     "main": r"^RK3326-Provisioner-(.+)\.tar\.gz$", "assets": [r"^RK3326-Provisioner-.+\.tar\.gz$"],
                     "file": (".tar.gz", ".tgz")},
 }
-ORDER = ["provisioner", "handheld", "firefly", "stump"]
+ORDER = ["provisioner", "stump"]
 
 
 class ShelfError(Exception):
@@ -80,11 +73,12 @@ def version_key(v):
 
 
 def card_shelf(env=None):
-    """Where fetched copies go: the games card (a card reader reaches it), else home."""
+    """Where fetched copies go: the games card (a card reader reaches it), RK3326
+    Linux's data partition, else home."""
     env = os.environ if env is None else env
     if env.get("PROVISIONER_SHELF"):
         return env["PROVISIONER_SHELF"]
-    for roms in ("/roms", "/storage/roms", "/roms2"):
+    for roms in ("/roms", "/storage/roms", "/roms2", "/data/ark"):   # /data/ark: RK3326 Linux's data
         if os.path.isdir(roms) and os.access(roms, os.W_OK):
             return os.path.join(roms, "provisioner-shelf")
     return os.path.join(os.path.expanduser("~"), "provisioner-shelf")
@@ -273,10 +267,6 @@ def check(product, files):
                     packs.plan_from(packs.read_zip(io.BytesIO(d)))
                 except packs.PackError as e:
                     left[n] = str(e)
-    elif product == "firefly":
-        zip_version(data, "firefly/firefly/__init__.py", r'__version__\s*=\s*"([^"]+)"', "firefly/deploy/install.sh")
-    elif product == "handheld":
-        tar_version(data, "handheld/VERSION", "handheld/install.sh")
     elif product == "provisioner":
         tar_version(data, "VERSION", "install.sh", also="provisioner/__main__.py")
     return left
@@ -324,23 +314,6 @@ def tar_version(data, version_path, need, also=None):
         raise ShelfError("no %s in it" % version_path)
 
 
-def zip_version(data, version_path, pattern, need):
-    try:
-        with zipfile.ZipFile(io.BytesIO(data)) as z:
-            names = z.namelist()
-            for n in names:
-                if n.startswith("/") or ".." in n.split("/"):
-                    raise ShelfError("a path that climbs out in the zip: %s" % n)
-            if need not in names:
-                raise ShelfError("no %s in it" % need)
-            m = re.search(pattern, z.read(version_path).decode("utf-8", "replace"))
-            return m.group(1) if m else ""
-    except (zipfile.BadZipFile, OSError):
-        raise ShelfError("that isn't a zip this can read")
-    except KeyError:
-        raise ShelfError("no %s in it" % version_path)
-
-
 def from_file(product, path, max_bytes=64 * 1024 * 1024):
     """A copy from a file the user chose (+ From File): read for what it is,
     left where it is. {product, channel: "file", tag, version, files, dir}."""
@@ -353,13 +326,6 @@ def from_file(product, path, max_bytes=64 * 1024 * 1024):
     if product == "stump":
         version = bundle_info(data)[0]
         files = {"Stump-%s.bundle" % version: path}
-    elif product == "firefly":
-        version = zip_version(data, "firefly/firefly/__init__.py", r'__version__\s*=\s*"([^"]+)"',
-                              "firefly/deploy/install.sh")
-        files = {"FireFly-RK3326-%s.zip" % version: path}             # by its release name, whatever the file's
-    elif product == "handheld":
-        version = tar_version(data, "handheld/VERSION", "handheld/install.sh")
-        files = {"R36MAX-Stump-handheld-%s.tar.gz" % version: path}
     else:
         version = tar_version(data, "VERSION", "install.sh", also="provisioner/__main__.py")
         files = {"RK3326-Provisioner-%s.tar.gz" % version: path}

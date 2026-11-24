@@ -10,7 +10,6 @@ import sys
 import tarfile
 import tempfile
 import unittest
-import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -32,12 +31,16 @@ def tgz(top, files):
     return buf.getvalue()
 
 
-def firefly_zip(version, install="#!/bin/bash\necho '== 1/5 Packages'\necho done\n"):
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as z:
-        z.writestr("firefly/firefly/__init__.py", '__version__ = "%s"\n' % version)
-        z.writestr("firefly/deploy/install.sh", install)
-    return buf.getvalue()
+def prov_tgz(version, install="#!/bin/bash\necho '>>> The app'\necho done\n"):
+    return tgz("RK3326-Provisioner-%s" % version, {"VERSION": version + "\n", "install.sh": install,
+                                                    "provisioner/__main__.py": ""})
+
+
+REPO = "ruderigo/SandBox_RK3326_Provisioner"
+
+
+def name(v):
+    return "RK3326-Provisioner-%s.tar.gz" % v
 
 
 class Pretend:
@@ -79,62 +82,64 @@ class Shelf(unittest.TestCase):
         self.assertLess(k("0.8.1"), k("0.10.0"))
 
     def test_online_newest_with_its_file(self):
-        z = firefly_zip("0.9.0")
-        gh = Pretend({"ruderigo/SandBox_FireFly_RK3326": [
-            release("v0.8.1", {"FireFly-RK3326-0.8.1.zip": firefly_zip("0.8.1")}),
-            release("v0.9.0", {"FireFly-RK3326-0.9.0.zip": z, "notes.txt": b"x"}),
-            release("v1.0.0", {"something-else.zip": b"x"})]}, {})          # no FireFly zip: not a FireFly release
-        r = shelf.online("firefly", "sandbox", get=gh)
-        self.assertEqual((r["tag"], r["version"]), ("v0.9.0", "0.9.0"))
-        self.assertEqual([a["name"] for a in r["assets"]], ["FireFly-RK3326-0.9.0.zip"])
+        z = prov_tgz("0.3.0-beta.9")
+        gh = Pretend({REPO: [
+            release("v0.3.0-beta.8", {name("0.3.0-beta.8"): prov_tgz("0.3.0-beta.8")}),
+            release("v0.3.0-beta.9", {name("0.3.0-beta.9"): z, "notes.txt": b"x"}),
+            release("v1.0.0", {"something-else.zip": b"x"})]}, {})          # no tarball: not a Provisioner release
+        r = shelf.online("provisioner", "sandbox", get=gh)
+        self.assertEqual((r["tag"], r["version"]), ("v0.3.0-beta.9", "0.3.0-beta.9"))
+        self.assertEqual([a["name"] for a in r["assets"]], [name("0.3.0-beta.9")])
         self.assertEqual(r["assets"][0]["sha256"], sha(z))
         self.assertIsNone(shelf.online("provisioner", "official", get=gh))       # no official Provisioner
         with self.assertRaises(shelf.ShelfError):
-            shelf.online("firefly", "official", get=gh)                        # "no network"
+            shelf.online("stump", "official", get=gh)                          # "no network"
 
     def test_fetch_checked_then_on_the_shelf(self):
-        z = firefly_zip("0.9.0")
-        rel = release("v0.9.0", {"FireFly-RK3326-0.9.0.zip": z})
-        gh = Pretend({"ruderigo/SandBox_FireFly_RK3326": [rel]}, {"https://dl/v0.9.0/FireFly-RK3326-0.9.0.zip": z})
-        r = shelf.online("firefly", "sandbox", get=gh)
-        c = shelf.fetch("firefly", "sandbox", r, get=gh, env=self.env)
-        self.assertEqual((c["version"], c["where"]), ("0.9.0", "card"))
+        v = "0.3.0-beta.9"
+        z = prov_tgz(v)
+        rel = release("v" + v, {name(v): z})
+        url = "https://dl/v%s/%s" % (v, name(v))
+        gh = Pretend({REPO: [rel]}, {url: z})
+        r = shelf.online("provisioner", "sandbox", get=gh)
+        c = shelf.fetch("provisioner", "sandbox", r, get=gh, env=self.env)
+        self.assertEqual((c["version"], c["where"]), (v, "card"))
         os.environ["PROVISIONER_SHELF"] = self.env["PROVISIONER_SHELF"]
         self.addCleanup(os.environ.pop, "PROVISIONER_SHELF", None)
-        self.assertEqual(shelf.best("firefly", "sandbox")["version"], "0.9.0")
+        self.assertEqual(shelf.best("provisioner", "sandbox")["version"], v)
         with open(shelf.main_file(c), "rb") as f:
             self.assertEqual(f.read(), z)
         # Changed on the way: refused, nothing kept.
-        gh.blobs["https://dl/v0.9.0/FireFly-RK3326-0.9.0.zip"] = z + b"!"
+        gh.blobs[url] = z + b"!"
         shutil.rmtree(self.env["PROVISIONER_SHELF"])
         with self.assertRaises(shelf.ShelfError):
-            shelf.fetch("firefly", "sandbox", r, get=gh, env=self.env)
-        self.assertIsNone(shelf.best("firefly", "sandbox"))
+            shelf.fetch("provisioner", "sandbox", r, get=gh, env=self.env)
+        self.assertIsNone(shelf.best("provisioner", "sandbox"))
         # Nothing to check it against: refused.
-        bare = shelf.online("firefly", "sandbox", get=Pretend(
-            {"ruderigo/SandBox_FireFly_RK3326": [release("v0.9.0", {"FireFly-RK3326-0.9.0.zip": z}, digest=False)]}, {}))
+        bare = shelf.online("provisioner", "sandbox", get=Pretend(
+            {REPO: [release("v" + v, {name(v): z}, digest=False)]}, {}))
         with self.assertRaisesRegex(shelf.ShelfError, "no SHA-256"):
-            shelf.fetch("firefly", "sandbox", bare, get=gh, env=self.env)
+            shelf.fetch("provisioner", "sandbox", bare, get=gh, env=self.env)
 
     def test_sha256sums_checked_too(self):
-        t = tgz("R36MAX-Stump-2.3.0-r36max", {"handheld/VERSION": "2.3.0-r36max\n", "handheld/install.sh": "x"})
-        name = "R36MAX-Stump-handheld-2.3.0-r36max.tar.gz"
-        sums = ("%s  %s\n" % ("0" * 64, name)).encode()                   # disagrees with the file
-        rel = release("v2.3.0-r36max", {name: t, "SHA256SUMS": sums})
-        gh = Pretend({"ruderigo/SandBox_RK3326_Stump": [rel]}, {"https://dl/v2.3.0-r36max/" + name: t,
-                                                                 "https://dl/v2.3.0-r36max/SHA256SUMS": sums})
-        r = shelf.online("handheld", "sandbox", get=gh)
+        v = "0.3.0-beta.9"
+        t = prov_tgz(v)
+        sums = ("%s  %s\n" % ("0" * 64, name(v))).encode()                # disagrees with the file
+        rel = release("v" + v, {name(v): t, "SHA256SUMS": sums})
+        gh = Pretend({REPO: [rel]}, {"https://dl/v%s/%s" % (v, name(v)): t, "https://dl/v%s/SHA256SUMS" % v: sums})
+        r = shelf.online("provisioner", "sandbox", get=gh)
         with self.assertRaisesRegex(shelf.ShelfError, "doesn't match"):
-            shelf.fetch("handheld", "sandbox", r, get=gh, env=self.env)
+            shelf.fetch("provisioner", "sandbox", r, get=gh, env=self.env)
 
     def test_files_read_for_what_they_are(self):
-        p = os.path.join(self.d, "anything.zip")
+        p = os.path.join(self.d, "anything.tar.gz")
         with open(p, "wb") as f:
-            f.write(firefly_zip("0.8.2"))
-        c = shelf.from_file("firefly", p)
-        self.assertEqual((c["version"], list(c["files"])), ("0.8.2", ["FireFly-RK3326-0.8.2.zip"]))
+            f.write(prov_tgz("0.3.0-beta.8"))
+        c = shelf.from_file("provisioner", p)
+        self.assertEqual((c["version"], list(c["files"])), ("0.3.0-beta.8", [name("0.3.0-beta.8")]))
         with self.assertRaisesRegex(shelf.ShelfError, "is a"):
-            shelf.from_file("provisioner", p)
+            shelf.from_file("stump", p)
+        self.assertEqual(shelf.ORDER, ["provisioner", "stump"])          # the handheld's apps: their own setup
         bad = os.path.join(self.d, "bad.tar.gz")
         with open(bad, "wb") as f:
             f.write(tgz("x", {"VERSION": "1\n"}))
@@ -143,13 +148,11 @@ class Shelf(unittest.TestCase):
         with open(bad, "wb") as f:
             f.write(b"not a tarball")
         with self.assertRaises(shelf.ShelfError):
-            shelf.from_file("handheld", bad)
+            shelf.from_file("provisioner", bad)
 
     def test_the_built_in_shelf(self):
         os.environ.pop("PROVISIONER_BUILTIN_SHELF")
-        for p, ch, v in (("stump", "official", "1.0.0-beta.48"), ("stump", "sandbox", "1.0.0-beta.86"),
-                         ("firefly", "official", "0.8.1"), ("firefly", "sandbox", "0.9.8"),
-                         ("handheld", "official", "2.0.0-r36max"), ("handheld", "sandbox", "2.5.4-b.86")):
+        for p, ch, v in (("stump", "official", "1.0.0-beta.48"), ("stump", "sandbox", "1.0.0-beta.86")):
             c = shelf.best(p, ch, env=self.env)
             self.assertEqual((c["version"], c["where"]), (v, "built-in"), (p, ch))
             with open(shelf.main_file(c), "rb") as f:
@@ -200,17 +203,6 @@ class Installers(unittest.TestCase):
             f.write(data)
         return {"product": product, "channel": "sandbox", "version": version, "files": {name: p}, "tag": "v" + version}
 
-    def test_firefly(self):
-        c = self.copy("firefly", "FireFly-RK3326-0.9.0.zip", firefly_zip("0.9.0"), "0.9.0")
-        lines, steps = [], []
-        ok, msg = installers.firefly_install(c, lines.append, steps.append, home=self.home)
-        self.assertTrue(ok, lines)
-        self.assertIn("1/5 Packages", steps)
-        c = self.copy("firefly", "FireFly-RK3326-0.9.1.zip",
-                      firefly_zip("0.9.1", "#!/bin/bash\necho 'ERROR: pygame 2 is required'\nexit 1\n"), "0.9.1")
-        ok, msg = installers.firefly_install(c, lines.append, steps.append, home=self.home)
-        self.assertEqual((ok, msg), (False, "ERROR: pygame 2 is required"))
-
     def test_the_provisioner_replaces_itself_and_goes_back(self):
         app = os.path.join(self.home, "rk3326_provisioner")
         os.makedirs(app)
@@ -230,11 +222,6 @@ class Installers(unittest.TestCase):
         self.assertEqual(installers.version_in(installers.previous_dir(app)), "0.3.0-beta.8")   # to swap back
         os.makedirs(os.path.join(app, ".git"))
         self.assertIn("git clone", installers.self_update_why(app))
-
-    def test_marks(self):
-        self.assertEqual(installers.marks(self.home), {})
-        installers.mark("firefly", {"version": "0.9.0", "channel": "sandbox"}, home=self.home)
-        self.assertEqual(installers.marks(self.home)["firefly"]["version"], "0.9.0")
 
 
 if __name__ == "__main__":

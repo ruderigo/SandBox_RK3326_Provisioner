@@ -46,12 +46,9 @@ class Base(unittest.TestCase):
         self.ports = ports
         a = A.App(display(), version="0.2.0", ports_fn=lambda: [dict(p) for p in self.ports],
                   users_fn=lambda p: (users or {}).get(p, []))
-        a.here_fn = None
         a.adapter_fn = None             # no S3 adapter unless a test plugs in the pretend one
-        a.handheld_fn = None            # no "This handheld's Stump" row unless a test gives one
         a.sudo_ok_fn = lambda: True     # sudo asks no password unless a test says it does
         a.self_update_pw_fn = lambda c, app: False
-        a.here = {"release": "1.0.0-beta.47", "name": "R36MAX", "chain": "chain member"}
         a.scan()
         return a
 
@@ -75,7 +72,9 @@ class Screens(Base):
     def test_nothing_plugged_in(self):
         a = self.app([])
         self.shot(a, "01-empty")
-        a.handle("a")
+        a.handle("a")                                   # A: the Provisioner's own page (its updates)
+        self.assertEqual((a.screen, a.prod), ("product", "provisioner"))
+        a.handle("b")
         self.assertEqual(a.screen, "boards")
 
     def test_identify_then_flash_wled_on_a_classic_esp32(self):
@@ -265,38 +264,6 @@ class Screens(Base):
         a.handle("b")
         self.assertIsNone(a.log)
 
-    def test_this_handhelds_stump_from_its_own_pages(self):
-        import http.server
-        import json as J
-        import threading as T
-
-        class H(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):
-                body = {"/node.json": {"release": "1.0.0-beta.47", "name": "R36MAX"},
-                        "/chain.json": {"enabled": True, "role": "member"}}.get(self.path)
-                self.send_response(200 if body else 404)
-                self.end_headers()
-                self.wfile.write(J.dumps(body or {}).encode())
-
-            def log_message(self, *a):
-                pass
-        srv = http.server.HTTPServer(("127.0.0.1", 0), H)
-        T.Thread(target=srv.serve_forever, daemon=True).start()
-        try:
-            import urllib.request
-            real = urllib.request.OpenerDirector.open
-            port = srv.server_address[1]
-            urllib.request.OpenerDirector.open = lambda self, url, *a, **k: real(
-                self, url.replace("127.0.0.1:80/", "127.0.0.1:%d/" % port), *a, **k)
-            try:
-                h = A.here_status()
-            finally:
-                urllib.request.OpenerDirector.open = real
-        finally:
-            srv.shutdown()
-            srv.server_close()
-        self.assertEqual(h, {"release": "1.0.0-beta.47", "name": "R36MAX", "chain": "chain member"})
-
     def test_quit(self):
         a = self.app([])
         a.handle("quit")
@@ -472,7 +439,7 @@ class TheWifiAdapter(Base):
 
     def test_it_shows_on_the_boards_screen_first(self):
         a = self.plugged([port("/dev/ttyUSB0", "10c4:ea60", "CP210x USB-serial")])
-        self.assertEqual(len(a.rows()), 2)                 # its control port isn't a board
+        self.assertEqual(len(a.rows()), 3)                 # its control port isn't a board (then the Provisioner's row)
         self.assertTrue(a.rows()[0].get("adapter"))
         self.assertEqual([p["port"] for p in a.ports], ["/dev/ttyUSB0"])
         self.shot(a, "30-boards-with-the-adapter")
@@ -484,7 +451,7 @@ class TheWifiAdapter(Base):
     def test_no_adapter_no_row(self):
         a = self.app([port("/dev/ttyACM0", "303a:1001", "ESP32-S3/C3 native USB")])   # an S3 in download mode
         self.assertIsNone(a.adapter_port)
-        self.assertEqual(len(a.rows()), 1)
+        self.assertEqual(len(a.rows()), 2)                 # the board, the Provisioner's row
 
     def test_pick_a_network_type_its_password_and_join(self):
         a = self.plugged()
@@ -893,9 +860,11 @@ class FromFileAndPacks(Base):
         self.assertIn("changed since it was hashed", a.toast_text)
 
 
-class ThisHandheld(Base):
-    """This handheld's page: the Provisioner, its Stump, FireFly, the CAM's
-    Stump, each from Official, Sandbox (the shelf, updated online) or a file."""
+class TheShelf(Base):
+    """The Provisioner's own row and page (its updates), and the Stump the
+    boards get: each from Official, Sandbox (the shelf, updated online) or a
+    file. The handheld's own Stump and FireFly aren't here: they install and
+    update themselves."""
 
     def setUp(self):
         super().setUp()
@@ -906,35 +875,9 @@ class ThisHandheld(Base):
         self.home = tempfile.mkdtemp(prefix="home-")
         self.addCleanup(shutil.rmtree, self.home, True)
 
-    def handheld_app(self, installed=False, why="", online=None, offline=False, port=False):
+    def shelf_app(self, online=None, offline=False):
         a = self.app([])
-        a.handheld_fn = lambda: {"installer": None, "why": why, "folder": "/home/ark/Stump", "installed": installed,
-                                 "port": port}
-        a.clones = False
-        self.runs, self.fetched, self.passwords = [], [], []
-
-        def run(inst, ans, line, step, password=None):
-            self.runs.append((inst, ans))
-            self.passwords.append(password)
-            step("1/6 Packages")
-            return True, "The Stump is up: R36-Test 1.0.0-beta.60 on :80, no chain."
-        a.handheld_run = run
-        a.here = {"none": True} if not installed else {"release": "1.0.0-beta.60", "name": "LaBuche-R36",
-                                                       "chain": "chain member"}
-        a.here_fn = lambda: a.here
-        a.firefly_fn = lambda: ""
-        self.pw_state = "SET"
-        a.password_state_fn = lambda folder, key="AUTH_ADMIN_PASSWORD": self.pw_state
-        self.pw_set, self.cleared = [], 0
-        a.set_password_fn = lambda folder, key, pw, line: self.pw_set.append((key, pw)) or (True, "set")
-        a.access_state_fn = lambda folder: self.pw_state
-        a.current_passwords_fn = lambda folder: {"pw": "kept-pw", "apw": ""}
-
-        def clear(folder, line):
-            self.cleared += 1
-            return False, ""
-        a.clear_repo_admin_fn = clear
-        a.marks_fn = lambda: {}
+        self.fetched = []
         online = online or {}
 
         def on(p, ch):
@@ -954,18 +897,19 @@ class ThisHandheld(Base):
         return {"tag": "v" + version, "version": version, "prerelease": True, "url": "", "repo": "x", "assets": []}
 
     def test_the_page_and_whats_newer_online(self):
-        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.87")})
-        self.assertEqual(a.rows(), [{"handheld": True}])
-        self.shot(a, "70-boards-handheld")
+        a = self.shelf_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.87")})
+        self.assertEqual(a.rows(), [{"self": True}])       # no board: the Provisioner's own row
+        self.shot(a, "70-boards-provisioner")
         a.handle("a")
-        self.assertEqual((a.screen, a.net), ("handheld", "online"))
+        self.assertEqual((a.screen, a.prod, a.prod_back, a.net), ("product", "provisioner", "boards", "online"))
         self.assertIn("1 newer", a.net_line()[0])
         self.assertIn("Sandbox 1.0.0-beta.86 (online: 1.0.0-beta.87)", a.shelf_line("stump")[0])
         self.assertIn("Official 1.0.0-beta.48", a.shelf_line("stump")[0])
         self.assertEqual(a.shelf_line("provisioner")[0], "Shelf: Sandbox none")   # no official Provisioner yet
-        self.shot(a, "71-handheld")
-        a.hsel = A.shelf.ORDER.index("stump")
-        a.handle("a")
+        self.shot(a, "71-provisioner")
+        a.handle("b")
+        self.assertEqual(a.screen, "boards")
+        a.open_product("stump", back="library")
         self.assertEqual(a.screen, "product")
         a.psel = 1                                      # Sandbox
         self.shot(a, "72-product-stump")
@@ -980,28 +924,9 @@ class ThisHandheld(Base):
         self.assertEqual(a.bundle().release, "1.0.0-beta.86")
         self.assertIn("now", a.toast_text)
 
-    def test_a_stump_that_runs_from_its_port(self):
-        """R36MAX-Stump 2.5.0: the Stump runs only while its Port is open, so
-        never beside the Provisioner: not running is how it should be."""
-        a = self.handheld_app(installed=True, port=True)
-        a.here = {"none": True}
-        text, colour = a.installed_line("handheld")
-        self.assertIn("runs while its Port is open", text)
-        self.assertNotEqual(colour, A.ERROR)
-        a.open_product("handheld")
-        a.psel = [r["kind"] for r in a.product_rows()].index("hh_check")
-        a.handle("a")
-        self.wait(a)
-        self.assertTrue(a.task.ok, a.task.msg)
-        self.assertIn("Ports -> LaBuche_Stump", a.task.msg)
-        self.shot(a, "77-handheld-port")
-        b = self.handheld_app(installed=True, port=False)      # 2.4 and earlier: a boot service
-        b.here = {"none": True}
-        self.assertEqual(b.installed_line("handheld")[1], A.ERROR)
-
     def test_offline_the_shelf_and_a_file(self):
-        a = self.handheld_app(offline=True)
-        a.open_handheld()
+        a = self.shelf_app(offline=True)
+        a.open_product("provisioner")
         self.assertEqual(a.net, "offline")
         self.assertIn("Offline", a.net_line()[0])
         a.open_product("stump")
@@ -1022,22 +947,22 @@ class ThisHandheld(Base):
         self.assertIn("Not used", a.toast_text)
 
     def test_the_library(self):
-        a = self.handheld_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.87"),
-                                      ("firefly", "official"): self.rel("0.8.1"),
+        a = self.shelf_app(online={("stump", "sandbox"): self.rel("1.0.0-beta.87"),
+                                      ("stump", "official"): self.rel("1.0.0-beta.48"),
                                       ("provisioner", "sandbox"): self.rel("0.3.0-beta.11")})
-        a.handle("y")                                   # Y on the handheld row: the Library
+        a.handle("y")                                   # Y on the Provisioner's row: the Library
         self.assertEqual(a.screen, "library")
         rows = a.library_rows()
         keys = [r["key"] for r in rows]
-        self.assertEqual(keys[:2], [("provisioner", "sandbox"), ("handheld", "official")])
+        self.assertEqual(keys[:3], [("provisioner", "sandbox"), ("stump", "official"), ("stump", "sandbox")])
         self.assertIn(("fw", "wled-16.0.1-esp32"), keys)      # the catalogue too
         self.assertEqual(sorted(a.library_newer()), [("provisioner", "sandbox"), ("stump", "sandbox")])
-        # Check two: the Stump's Sandbox (newer online) and FireFly's Official (already the newest).
+        # Check two: the Stump's Sandbox (newer online) and its Official (already the newest).
         a.lib["sel"] = keys.index(("stump", "sandbox"))
         a.handle("a")
-        a.lib["sel"] = keys.index(("firefly", "official"))
+        a.lib["sel"] = keys.index(("stump", "official"))
         a.handle("a")
-        self.assertEqual(a.lib["checked"], {("stump", "sandbox"), ("firefly", "official")})
+        self.assertEqual(a.lib["checked"], {("stump", "sandbox"), ("stump", "official")})
         self.shot(a, "77-library")
         a.lib["sel"] = keys.index(("fw", "wled-16.0.1-esp32"))
         a.handle("a")                                   # built in: no check mark
@@ -1047,7 +972,7 @@ class ThisHandheld(Base):
         self.wait(a)
         self.assertTrue(a.task.ok, a.task.msg)
         self.assertEqual(self.fetched, [("stump", "sandbox", "v1.0.0-beta.87")])
-        self.assertIn("FireFly Official: has 0.8.1 already", a.task.msg)
+        self.assertIn("Stump Official: has 1.0.0-beta.48 already", a.task.msg)
         self.shot(a, "78-library-refreshed")
         a.handle("a")
         self.assertEqual((a.screen, a.lib["checked"]), ("library", set()))
@@ -1057,13 +982,13 @@ class ThisHandheld(Base):
                                             ("stump", "sandbox", "v1.0.0-beta.87")])   # the pretend fetch keeps nothing
         a.handle("a")
         a.handle("l")                                   # all / none
-        self.assertEqual(len(a.lib["checked"]), 7)      # every shelf pair (no official Provisioner)
+        self.assertEqual(len(a.lib["checked"]), 3)      # every shelf pair (no official Provisioner)
         a.handle("l")
         self.assertEqual(a.lib["checked"], set())
         a.handle("b")
         self.assertEqual(a.screen, "boards")
         # From a board's row, L (X and Y are the board's); offline, X says so.
-        a = self.handheld_app(offline=True)
+        a = self.shelf_app(offline=True)
         a.ports_fn = lambda: [port("/dev/ttyUSB0", "10c4:ea60", "CP210x USB-serial")]
         a.next_scan = 0
         a.scan()
@@ -1076,7 +1001,7 @@ class ThisHandheld(Base):
 
     def test_the_cams_source_row(self):
         os.environ["FAKE_BOARD"] = "s3"
-        a = self.handheld_app()
+        a = self.shelf_app()
         a.ports_fn = lambda: [port("/dev/ttyACM0", "303a:1001", "ESP32-S3/C3 native USB")]
         a.next_scan = 0
         a.scan()
@@ -1097,24 +1022,6 @@ class ThisHandheld(Base):
         a.handle("b")
         self.assertEqual(a.screen, "jobs")
 
-    def test_firefly(self):
-        a = self.handheld_app()
-        calls = []
-        real = A.installers.firefly_install
-        A.installers.firefly_install = lambda c, line, step, password=None: calls.append(c["version"]) or (True, "installed")
-        self.addCleanup(setattr, A.installers, "firefly_install", real)
-        a.open_product("firefly")
-        a.handle("a")                                   # Official 0.8.1
-        self.assertEqual(a.confirm["title"], "Install FireFly 0.8.1 (Official)?")
-        a.handle("a")
-        self.wait(a)
-        self.assertEqual(calls, ["0.8.1"])
-        a = self.handheld_app(why="Runs as root here (AmberELEC, ROCKNIX?): ...")
-        a.open_product("firefly")
-        a.handle("a")
-        self.assertIsNone(a.confirm)
-        self.assertIn("root", a.toast_text)
-
     def fake_tarball(self, name, top, files):
         import io
         import tarfile
@@ -1127,237 +1034,6 @@ class ThisHandheld(Base):
                 t.addfile(ti, io.BytesIO(data))
         return path
 
-    def test_the_handhelds_stump(self):
-        a = self.handheld_app()
-        a.open_product("handheld")
-        self.assertEqual([r["kind"] for r in a.product_rows()], ["src", "src", "fromfile", "hh_check"])
-        self.shot(a, "74-product-handheld")
-        a.handle("a")                                   # Official 2.0.0-r36max: takes no answers
-        self.assertIsNone(a.form)
-        self.assertIn("can't take answers", a.toast_text)
-        path = self.fake_tarball("R36MAX-Stump-handheld-2.3.0-r36max.tar.gz", "R36MAX-Stump-2.3.0-r36max",
-                                 {"handheld/VERSION": "2.3.0-r36max\n",
-                                  "handheld/install.sh": "#!/bin/bash\n# --answers FILE.json\n"})
-        a.open_files(product="handheld")
-        a.choose_file(path)
-        self.assertEqual((a.screen, a.form["mode"]), ("form", "handheld"))
-        self.assertEqual(a.hh_inst["version"], "2.3.0-r36max")
-        self.assertEqual([r["key"] for r in a.form_rows()][:3], ["name", "pw", "apw"])
-        # A switch for each pack the wizard will find (no clone here yet: the shelf's Sandbox copy), off.
-        packs = [r["key"] for r in a.form_rows() if r["key"].startswith("pack:")]
-        self.assertEqual(packs, ["pack:" + p["name"] for p in A.handheld.packs_offered(
-            "/nonexistent", A.shelf.best("stump", "sandbox")["dir"])])
-        self.assertGreaterEqual(len(packs), 5)
-        self.assertTrue(all(a.form["a"][k] == "no" for k in packs))
-        a.form["sel"] = [r["key"] for r in a.form_rows()].index("pack:bavard")
-        a.handle("right")
-        self.shot(a, "75b-handheld-packs")
-        a.form["a"].update(name="R36-Test", chain="member", parent="192.168.1.20", secret="s3cret-test")
-        a.form["sel"] = len(a.form_rows()) - 1
-        a.handle("a")
-        self.assertIn("password is needed", a.toast_text)
-        a.form["a"].update(pw="one-pw-1")
-        a.form["sel"] = len(a.form_rows()) - 1
-        a.handle("a")
-        self.assertEqual(a.confirm["title"], "Install this handheld's Stump?")
-        a.handle("a")
-        self.wait(a)
-        self.assertTrue(a.task.ok)
-        inst, ans = self.runs[0]
-        self.assertTrue(inst["path"].endswith("handheld/install.sh"))
-        self.assertEqual((ans["node name"], ans["that stump's address"]), ("R36-Test", "192.168.1.20"))
-        self.assertEqual((ans["fserv bot operator password"], ans["admin password for /admin"]), ("one-pw-1", ""))
-        self.assertEqual((ans["install bavard"], ans["install tavern"], ans["talk from the start"]), (True, False, "off"))
-        self.assertNotIn("name the tavern speaks as", ans)                 # a pack not chosen: none of its settings
-        self.assertEqual(self.cleared, 1)               # the repo's /admin password looked for after it
-        a.handle("a")
-        self.assertEqual(a.screen, "product")
-
-    def test_its_packs(self):
-        """Its packs page: every pack its wizard offers, those it has marked; the
-        checked ones added by an Update (their own settings at their defaults)."""
-        import shutil
-        a = self.handheld_app(installed=True)
-        folder = tempfile.mkdtemp(prefix="Stump-")
-        self.addCleanup(shutil.rmtree, folder, True)
-        os.makedirs(os.path.join(folder, "tavern"))
-        open(os.path.join(folder, "tavern", "install.py"), "w").close()
-        a.handheld_fn = lambda: {"installer": None, "why": "", "folder": folder, "installed": True, "port": True}
-        a.handheld = a.handheld_fn()
-        offered = A.handheld.packs_offered("/nonexistent", A.shelf.best("stump", "sandbox")["dir"])
-        a.handheld_packs_fn = lambda shelf_dir=None: offered
-        a.hh_team_fn = lambda do, folder, **job: {"old": "1.0.0-beta.75"}     # its clone before --packs
-        a.open_product("handheld")
-        kinds = [r["kind"] for r in a.product_rows()]
-        self.assertIn("hh_packs", kinds)
-        a.psel = kinds.index("hh_packs")
-        self.shot(a, "77b-handheld-packs-row")
-        a.handle("a")
-        self.wait(a)
-        self.assertIn("older than 1.0.0-beta.75", a.task.msg)
-        a.handle("a")
-        self.assertEqual(a.screen, "packs")
-        names = [p["name"] for p in a.pk["offered"]]
-        self.assertEqual(a.pk["have"], {"tavern"})
-        a.pk["sel"] = names.index("tavern")
-        a.handle("a")                                   # installed: stays checked
-        self.assertIn("tavern", a.pk["checked"])
-        a.handle("x")
-        self.assertIn("Check a pack first", a.toast_text)
-        a.pk["sel"] = names.index("bavard")
-        a.handle("a")
-        self.shot(a, "77c-handheld-packs")
-        a.handle("x")
-        self.assertEqual(a.confirm["title"], "Add this pack to this handheld's Stump?")
-        a.handle("a")
-        self.wait(a)
-        self.assertTrue(a.task.ok, a.task.msg)
-        ans = self.runs[-1][1]
-        self.assertEqual((ans["install bavard"], ans["talk from the start"], ans["change something"]), (True, "off", ""))
-        self.assertNotIn("install simple", ans)
-
-    def test_its_packs_by_team_stumps_code(self):
-        """From 1.0.0-beta.75: its packs page is Team Stump's (its clone's
-        provisioner.py, as --packs FOLDER): install, update, remove, asking
-        whether what a pack keeps goes too."""
-        a = self.handheld_app(installed=True)
-        a.handheld_fn = lambda: {"installer": None, "why": "", "folder": "/home/ark/Stump", "installed": True,
-                                 "port": True}
-        a.handheld = a.handheld_fn()
-        rows = [{"name": "bavard", "here": None, "state": "new", "plugins": ["bavard"], "version": "1.3",
-                 "about": "A test bot. More.", "keeps": {"tools": 1, "home": 0, "theme": None}},
-                {"name": "tavern", "here": "1.1", "state": "update", "plugins": ["tavern"], "version": "1.2",
-                 "about": "The reference pack.", "keeps": {"tools": 0, "home": 0, "theme": "tavern"}},
-                {"name": "oldbot", "here": "", "state": "yours", "plugins": ["oldbot"], "version": None,
-                 "about": "", "keeps": {}}]
-        calls = []
-
-        def team(do, folder, **job):
-            calls.append((do, folder, job))
-            return {"rows": rows, "ok": True}
-        a.hh_team_fn = team
-        a.open_product("handheld")
-        a.psel = [r["kind"] for r in a.product_rows()].index("hh_packs")
-        a.handle("a")
-        self.wait(a)
-        self.assertEqual(a.task.msg, "2 packs on this handheld's Stump.")   # tavern, and oldbot (version not recorded)
-        a.handle("a")
-        self.assertEqual(a.screen, "spacks")
-        self.assertEqual(calls[-1], ("packs", "/home/ark/Stump", {}))
-        self.assertEqual([(r["name"], r["state"]) for r in a.spack_rows()],
-                         [("bavard", "new"), ("tavern", "update"), ("oldbot", "yours")])
-        a.sp["sel"] = 1
-        self.shot(a, "77e-handheld-packs-team")
-        a.handle("a")
-        self.assertEqual(a.confirm["title"], "Update tavern 1.2 on this handheld's Stump?")
-        a.handle("a")
-        self.wait(a)
-        self.assertTrue(a.task.ok, a.task.msg)
-        self.assertEqual(calls[-1][0::2], ("install", {"name": "tavern"}))
-        self.assertIn("next time its Port opens", a.task.msg)
-        a.handle("a")
-        self.assertEqual((a.screen, a.sp["sel"]), ("spacks", 1))
-        a.handle("x")
-        self.assertEqual(a.confirm["title"], "Remove tavern from this handheld's Stump?")
-        a.handle("right")
-        a.handle("a")
-        self.assertEqual(a.confirm["lines"][0], "Its saved data, its theme (tavern).")
-        a.handle("left")                                 # keep them
-        a.handle("a")
-        self.wait(a)
-        self.assertEqual(calls[-1][0::2], ("remove", {"name": "tavern", "also": False}))
-        a.handle("a")
-        a.sp["sel"] = 2
-        a.handle("a")
-        self.assertIn("isn't among the packs here", a.toast_text)
-        a.handle("b")
-        self.assertEqual(a.screen, "product")
-
-    def test_its_identity(self):
-        """1.0.0-beta.76: its identity saved into a file, and one brought back
-        (a keepsake chosen in the file browser), by Team Stump's code."""
-        from provisioner import identity as I
-        a = self.handheld_app(installed=True)
-        a.handheld_fn = lambda: {"installer": None, "why": "", "folder": "/home/ark/Stump", "installed": True,
-                                 "port": False}
-        a.handheld = a.handheld_fn()
-        calls = []
-
-        def team(do, folder, **job):
-            calls.append((do, job))
-            if do == "save":
-                return {"path": os.path.join(job["dir"], "Hazel.stump-identity"), "fingerprint": "aaaa bbbb cccc dddd"}
-            return {"name": "Elm", "fingerprint": "1111 2222 3333 4444", "kept": "/home/ark/Hazel (replaced).stump-identity"}
-        a.hh_team_fn = team
-        a.identity_dir = lambda: self.home
-        a.open_product("handheld")
-        kinds = [r["kind"] for r in a.product_rows()]
-        a.psel = kinds.index("hh_id_save")
-        self.shot(a, "77f-handheld-identity")
-        a.handle("a")
-        self.assertEqual(a.confirm["title"], "Save this handheld's Stump's identity?")
-        a.handle("a")
-        self.wait(a)
-        self.assertTrue(a.task.ok, a.task.msg)
-        self.assertEqual(calls[-1], ("save", {"dir": self.home}))
-        self.assertIn("keep it safe", a.task.msg)
-        a.handle("a")
-        self.assertEqual(a.screen, "product")
-        keep = I.save({"rns/identity": bytes(64)}, "Elm", self.home)
-        a.psel = kinds.index("hh_id_restore")
-        a.handle("a")
-        self.assertEqual(a.screen, "files")
-        self.assertEqual(a.fb["exts"], (".stump-identity",))
-        a.choose_file(os.path.join(self.home, "nothing.stump-identity"))
-        self.assertIn("Not used", a.toast_text)
-        a.open_files(exts=(I.EXT,))
-        a.fb.update(identity=True, handheld=True)
-        a.choose_file(keep)
-        self.assertEqual(a.confirm["title"], "Bring back Elm?")
-        self.assertIn(I.fingerprint({"rns/identity": bytes(64)}), a.confirm["lines"][0])
-        a.handle("a")
-        self.wait(a)
-        self.assertTrue(a.task.ok, a.task.msg)
-        self.assertEqual(calls[-1], ("restore", {"src": keep, "keep": self.home}))
-        self.assertIn("saved: /home/ark/Hazel (replaced)", a.task.msg)
-        a.hh_team_fn = lambda do, folder, **job: {"old": "1.0.0-beta.76"}
-        a.handle("a")
-        a.psel = kinds.index("hh_id_save")
-        a.handle("a")
-        a.handle("a")
-        self.wait(a)
-        self.assertFalse(a.task.ok)
-        self.assertIn("older than 1.0.0-beta.76", a.task.msg)
-
-    def test_its_announce_stamps(self):
-        a = self.handheld_app(installed=True)
-        a.handheld_fn = lambda: {"installer": None, "why": "", "folder": "/home/ark/Stump", "installed": True,
-                                 "port": True}
-        a.handheld = a.handheld_fn()
-        answers = [{"total": 0, "todo": 0, "ok": False}, {"total": 2, "todo": 1, "ok": True}, {"old": "1.0.0-beta.86"}]
-        calls = []
-
-        def team(do, folder, **job):
-            calls.append((do, job))
-            return answers[len(calls) - 1]
-        a.hh_team_fn = team
-        a.open_product("handheld")
-        kinds = [r["kind"] for r in a.product_rows()]
-        msgs = []
-        for _ in answers:
-            a.psel = kinds.index("hh_stamps")
-            a.handle("a")
-            self.assertEqual(a.confirm["title"], "Work out its announce stamps?")
-            a.handle("a")
-            self.wait(a)
-            msgs.append((a.task.ok, a.task.msg))
-            a.handle("a")
-        self.assertEqual(calls[0], ("stamps", {"timeout": 3600}))
-        self.assertFalse(msgs[0][0])
-        self.assertIn("Announce stamps", msgs[0][1])
-        self.assertEqual(msgs[1], (True, "1 announce stamp(s) worked out: it announces stamped within a minute."))
-        self.assertEqual(msgs[2], (False, "Its SandBox_Stump_On is older than 1.0.0-beta.86: Update its Stump first."))
-
     def test_a_provisioner_newer_than_the_shelf(self):
         """Run from main (untagged): the shelf's copy is older; A goes back to it, said so."""
         path = self.fake_tarball("RK3326-Provisioner-0.3.0-beta.15.tar.gz", "RK3326-Provisioner-0.3.0-beta.15",
@@ -1368,7 +1044,7 @@ class ThisHandheld(Base):
         real = A.shelf.best
         A.shelf.best = lambda p, ch, **kw: c if p == "provisioner" else real(p, ch, **kw)
         self.addCleanup(setattr, A.shelf, "best", real)
-        a = self.handheld_app()
+        a = self.shelf_app()
         a.version = "0.3.0-beta.16"
         a.app_dir = tempfile.mkdtemp(prefix="app-")                     # not a git clone: it may replace itself
         self.addCleanup(lambda: __import__("shutil").rmtree(a.app_dir, True))
@@ -1378,57 +1054,8 @@ class ThisHandheld(Base):
         a.handle("a")
         self.assertTrue(a.confirm["title"].startswith("Go back to the Provisioner %s" % c["version"]), a.confirm)
 
-    def test_its_passwords(self):
-        a = self.handheld_app(installed=True)
-        self.pw_state = "DEFAULT"
-        self.assertIn("isn't its own", a.installed_line("handheld")[0])
-        a.open_product("handheld")
-        kinds = [r["kind"] for r in a.product_rows()]
-        self.assertEqual(kinds.count("hh_pw"), 2)
-        a.psel = kinds.index("hh_pw")                   # its password: /admin and the fserv bot
-        self.shot(a, "76-handheld-passwords")
-        a.handle("a")
-        self.assertEqual(a.kb.title, "Its password")
-        a.handle(("text", "new-one"))
-        a.handle("start")
-        a.handle(("text", "new-one"))
-        a.handle("start")
-        self.assertEqual(a.confirm["title"], "Set its password?")
-        a.handle("a")
-        self.wait(a)
-        self.assertEqual(self.pw_set, [("FSERVBOT_OP_PASSWORD", "new-one")])
-        a.handle("a")
-        a.psel = kinds.index("hh_pw") + 1                # a separate /admin one: typed differently twice
-        a.handle("a")
-        a.handle(("text", "oper-1"))
-        a.handle("start")
-        a.handle(("text", "oper-2"))
-        a.handle("start")
-        self.assertIsNone(a.confirm)
-        self.assertIn("differ", a.toast_text)
-        # Install again with its admin password still the repo's: it's asked for.
-        a.psel = 0
-        self.pw_state = "DEFAULT"
-
-    def test_the_handhelds_stump_update_and_check(self):
-        a = self.handheld_app(installed=True)
-        a.open_product("handheld")
-        path = self.fake_tarball("h.tar.gz", "R36MAX-Stump-2.3.0-r36max",
-                                 {"handheld/VERSION": "2.3.0-r36max\n", "handheld/install.sh": "--answers\n"})
-        a.open_files(product="handheld")
-        a.choose_file(path)
-        self.assertEqual(a.confirm["title"], "Update this handheld's Stump?")
-        a.handle("a")
-        self.wait(a)
-        self.assertEqual(self.runs[0][1]["change something"], "")
-        a.handle("a")
-        a.psel = [r["kind"] for r in a.product_rows()].index("hh_check")
-        a.handle("a")
-        self.wait(a)
-        self.assertIn("LaBuche-R36", a.task.msg)
-
     def test_the_provisioner_itself(self):
-        a = self.handheld_app()
+        a = self.shelf_app()
         app = os.path.join(self.home, "rk3326_provisioner")
         os.makedirs(app)
         with open(os.path.join(app, "VERSION"), "w") as f:
@@ -1584,7 +1211,7 @@ class EveryScreenSize(Base):
                 d = self.display_for(screen, rot)
                 self.assertEqual(d.size, canvas)
                 a = A.App(d, version="0.3.0", ports_fn=lambda: [], users_fn=lambda p: [])
-                a.here_fn = a.adapter_fn = None
+                a.adapter_fn = None
                 a.unbound_fn = lambda: [{"usb": "1a86:7523", "usb_chip": "CH340 USB-serial", "driver": "ch341"}]
                 a.scan()
                 self.assertEqual((A.W, A.H), canvas)

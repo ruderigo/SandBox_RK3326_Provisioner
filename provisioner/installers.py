@@ -1,9 +1,8 @@
-"""Installing from a shelf copy (or a chosen file) on this handheld:
-FireFly, the handheld's Stump's installer, and the Provisioner itself.
+"""Installing the Provisioner itself from a shelf copy (or a chosen file):
+its own install.sh, as its README says to over SSH, with nothing read from
+the keyboard, its lines shown as it goes; and going back to the one before.
 
-Each runs the product's own installer, as its README says to over SSH
-(FireFly: firefly/deploy/install.sh; the Provisioner: install.sh), with
-nothing read from the keyboard, its lines shown as it goes.
+(The handheld's Stump and FireFly install and update themselves.)
 """
 
 import contextlib
@@ -13,7 +12,6 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
-import zipfile
 
 from . import shelf
 
@@ -60,23 +58,12 @@ def _extract_tar(path, dest):
     return os.path.join(dest, tops[0]) if len(tops) == 1 else dest
 
 
-def _extract_zip(path, dest):
-    shutil.rmtree(dest, ignore_errors=True)
-    os.makedirs(dest)
-    with zipfile.ZipFile(path) as z:
-        for n in z.namelist():
-            if n.startswith("/") or ".." in n.split("/"):
-                raise shelf.ShelfError("a path that climbs out in the zip: %s" % n)
-        z.extractall(dest)
-    return dest
-
-
 # -- sudo ----------------------------------------------------------------------
-# The installers use sudo (packages, the serial rule, the Ports entry). Over
-# SSH it asks in the terminal; from here nobody could answer, so the password
-# is typed on the Provisioner's screen and given to sudo through its askpass
-# helper (`sudo -A`): a script printing a file only this user can read, both in
-# a folder of their own, removed when the installer ends. Never piped into
+# Its installer uses sudo (the serial rule, the Ports entry). Over SSH it asks
+# in the terminal; from here nobody could answer, so the password is typed on
+# the Provisioner's screen and given to sudo through its askpass helper
+# (`sudo -A`): a script printing a file only this user can read, both in a
+# folder of their own, removed when the installer ends. Never piped into
 # sudo -S, never logged, never on a command line.
 ASKPASS_SCRIPT = '#!/bin/sh\ncat "$PROVISIONER_ASKPASS_FILE"\n'
 
@@ -114,55 +101,7 @@ def askpass(password, home=None):
         shutil.rmtree(d, ignore_errors=True)
 
 
-# -- FireFly -------------------------------------------------------------------
-def firefly_installed(home=None):
-    """FireFly's version on this handheld (~/firefly), or ''."""
-    p = os.path.join(home or os.path.expanduser("~"), "firefly", "firefly", "__init__.py")
-    try:
-        with open(p, encoding="utf-8") as f:
-            m = re.search(r'__version__\s*=\s*"([^"]+)"', f.read())
-        return m.group(1) if m else "?"
-    except OSError:
-        return ""
-
-
-def firefly_install(copy, line, step, home=None, password=None):
-    """FireFly's own installer from its zip (an update keeps its identity,
-    contacts, messages and settings: ~/.firefly). (ok, message)."""
-    z = shelf.main_file(copy)
-    dest = os.path.join(cache(home), "firefly-new")
-    try:
-        root = _extract_zip(z, dest)
-    except (shelf.ShelfError, zipfile.BadZipFile, OSError) as e:
-        return False, "Couldn't unpack it: %s" % e
-    inst = os.path.join(root, "firefly", "deploy", "install.sh")
-    if not os.path.isfile(inst):
-        return False, "No firefly/deploy/install.sh in it"
-    step("FireFly's installer")
-    with askpass(password, home) as env:
-        rc, tail = stream(["bash", inst], line, step, cwd=os.path.dirname(inst), env=dict(os.environ, **env))
-    shutil.rmtree(dest, ignore_errors=True)
-    if rc == 0:
-        return True, ("FireFly %s is installed (Ports -> FireFly). Its identity, contacts and messages stay. "
-                      "A first install: reboot once for the serial port." % copy["version"])
-    err = next((s for s in reversed(tail) if s.startswith("ERROR")), "")
-    return False, err or ("FireFly's installer stopped (%d): %s" % (rc, " / ".join(tail[-2:])))
-
-
-# -- the handheld's Stump --------------------------------------------------------
-def handheld_installer(copy, home=None):
-    """R36MAX-Stump's handheld/install.sh from a shelf copy (or a file),
-    unpacked: {path, repo, version, answers}."""
-    name = {"official": "Official", "sandbox": "Sandbox"}.get(copy["channel"], "the file's")
-    dest = os.path.join(cache(home), "handheld-%s" % copy["channel"])
-    root = _extract_tar(shelf.main_file(copy), dest)
-    path = os.path.join(root, "handheld", "install.sh")
-    with open(path, encoding="utf-8", errors="replace") as f:
-        text = f.read()
-    return {"path": path, "repo": "%s R36MAX-Stump" % name, "version": copy["version"], "answers": "--answers" in text}
-
-
-# -- the Provisioner itself ------------------------------------------------------
+# -- the Provisioner itself --------------------------------------------------------
 def app_dir():
     return shelf.HERE
 
@@ -228,7 +167,7 @@ def self_update(copy, line, step, app=None, home=None, password=None):
         rc, tail = stream(["bash", os.path.join(root, "install.sh")], line, step, env=env, cwd=root)
     shutil.rmtree(dest, ignore_errors=True)
     if rc == 0 and version_in(app) == copy["version"]:
-        return True, ("The Provisioner v%s is installed. Close this one (A) and open it again from Ports. "
+        return True, ("The Provisioner v%s is installed. Close this one (A) and open it again (Ports, or the dock). "
                       "The one before stays, to go back to." % copy["version"])
     return False, "Its installer stopped (%d): %s. Go back puts v%s back." % (
         rc, " / ".join(tail[-2:]), version_in(prev))
@@ -249,34 +188,4 @@ def rollback(app=None):
     os.rename(prev, app)
     os.rename(swap, prev)
     return True, "The Provisioner v%s is back (v%s is kept as the previous one). Close this one and open it again " \
-                 "from Ports." % (version_in(app), version_in(prev))
-
-
-# -- what was installed from here --------------------------------------------------
-def marks_path(home=None):
-    return os.path.join(home or os.path.expanduser("~"), ".config", "rk3326-provisioner", "installed.json")
-
-
-def marks(home=None):
-    """{product: {version, channel, when}} of what the Provisioner installed here."""
-    import json
-    try:
-        with open(marks_path(home), encoding="utf-8") as f:
-            d = json.load(f)
-        return d if isinstance(d, dict) else {}
-    except (OSError, ValueError):
-        return {}
-
-
-def mark(product, copy, home=None):
-    import json
-    import time
-    d = marks(home)
-    d[product] = {"version": copy["version"], "channel": copy["channel"], "when": time.strftime("%Y-%m-%d %H:%M")}
-    p = marks_path(home)
-    try:
-        os.makedirs(os.path.dirname(p), exist_ok=True)
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(d, f, indent=1, sort_keys=True)
-    except OSError:
-        pass
+                 "(Ports, or the dock)." % (version_in(app), version_in(prev))

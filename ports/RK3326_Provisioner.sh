@@ -8,6 +8,8 @@
 #
 # ArkOS / dArkOS (as ark, sudo -n for the device files), AmberELEC (root,
 # KMSDRM), ROCKNIX (root, EmulationStation under sway: Wayland first).
+# RK3326 Linux: its dock runs this (install.sh copies it into the app's folder)
+# with the screen already set up (SDL_VIDEODRIVER, the GPU's SDL2): taken as is.
 # =============================================================================
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 export PYTHONUNBUFFERED=1 SDL_NOMOUSE=1
@@ -36,24 +38,32 @@ if [ -z "${WAYLAND_DISPLAY:-}" ]; then
     done
   done
 fi
+DOCK=""; [ -d /usr/share/rk/apps ] && [ -n "${SDL_VIDEODRIVER:-}" ] && DOCK=1   # RK3326 Linux's dock
 drivers="kmsdrm"
 [ -n "${WAYLAND_DISPLAY:-}" ] && drivers="wayland kmsdrm"
-echo "display: trying ${drivers} then SDL's own choice${WAYLAND_DISPLAY:+ (Wayland: $XDG_RUNTIME_DIR/$WAYLAND_DISPLAY)}" >> "$LOG"
+[ -n "$DOCK" ] && echo "display: the dock's ($SDL_VIDEODRIVER)" >> "$LOG"
+[ -z "$DOCK" ] && echo "display: trying ${drivers} then SDL's own choice${WAYLAND_DISPLAY:+ (Wayland: $XDG_RUNTIME_DIR/$WAYLAND_DISPLAY)}" >> "$LOG"
 
 # The screen and the gamepad.
-$SUDO chmod 666 /dev/tty1 /dev/dri/card* /dev/dri/render* /dev/input/event* 2>/dev/null
-[ -z "${WAYLAND_DISPLAY:-}" ] && printf '\033[?25l' | $SUDO tee /dev/tty1 >/dev/null 2>&1
+if [ -z "$DOCK" ]; then                  # the dock's own system has given ark the screen and the pad
+  $SUDO chmod 666 /dev/tty1 /dev/dri/card* /dev/dri/render* /dev/input/event* 2>/dev/null
+  [ -z "${WAYLAND_DISPLAY:-}" ] && printf '\033[?25l' | $SUDO tee /dev/tty1 >/dev/null 2>&1
+fi
 
 cd "$APP" || exit 1
-for driver in $drivers ""; do
-  if [ -n "$driver" ]; then
-    SDL_VIDEODRIVER="$driver" python3 -m provisioner >> "$LOG" 2>&1 && break
-  else
-    python3 -m provisioner >> "$LOG" 2>&1 && break
-  fi
-  echo "display driver '${driver:-default}' didn't work; trying the next" >> "$LOG"
-done
+if [ -n "$DOCK" ]; then                  # under the dock: its screen setup, nothing else
+  python3 -m provisioner >> "$LOG" 2>&1
+else
+  for driver in $drivers ""; do
+    if [ -n "$driver" ]; then
+      SDL_VIDEODRIVER="$driver" python3 -m provisioner >> "$LOG" 2>&1 && break
+    else
+      python3 -m provisioner >> "$LOG" 2>&1 && break
+    fi
+    echo "display driver '${driver:-default}' didn't work; trying the next" >> "$LOG"
+  done
+fi
 
 sync
-[ -z "${WAYLAND_DISPLAY:-}" ] && printf '\033c' | $SUDO tee /dev/tty1 >/dev/null 2>&1
+[ -z "$DOCK" ] && [ -z "${WAYLAND_DISPLAY:-}" ] && printf '\033c' | $SUDO tee /dev/tty1 >/dev/null 2>&1
 echo "=== closed $(date) ===" >> "$LOG"

@@ -1,10 +1,10 @@
 # RK3326 Provisioner quick start
 
 The Provisioner turns an RK3326 handheld (R36MAX, R36S...) into the mesh's
-workbench, offline and from the gamepad: plug an ESP32 board into the hub
-and it's recognised, flashed and checked; the handheld's own Stump, FireFly
-and the Provisioner itself install and update from here too. This page gets
-you going; the [README](README.md) has everything.
+ESP32 board bench, offline and from the gamepad: plug an ESP32 board into
+the hub and it's recognised, flashed and checked. (The handheld's own Stump
+and FireFly install and update themselves.) This page gets you going; the
+[README](README.md) has everything.
 
 ## Install
 
@@ -15,7 +15,8 @@ ssh -t ark@r36max.local 'git clone https://github.com/ruderigo/SandBox_RK3326_Pr
 ```
 
 Then **EmulationStation → Ports → RK3326_Provisioner** (restart
-EmulationStation if it isn't listed). The version is at the top right.
+EmulationStation if it isn't listed); on **RK3326 Linux**, the dock:
+**Workshop → Provisioner**. The version is at the top right.
 
 No internet on the handheld: copy a release's
 `RK3326-Provisioner-<version>.tar.gz` over, then on the handheld:
@@ -30,7 +31,7 @@ tar xzf RK3326-Provisioner-*.tar.gz && bash RK3326-Provisioner-*/install.sh
 |---|---|
 | Boards | Every board on the hub; A opens one, Y its serial log, L the Library |
 | A board | Make a Stump, flash, packs, + From File, its log, erase (asks first) |
-| This handheld (last row of Boards) | The Provisioner, this handheld's Stump, FireFly |
+| The Provisioner (last row of Boards) | Its own updates, and going back to the one before |
 | Library (L) | Everything on the shelf, newer versions online |
 
 SELECT + START closes it. B is back everywhere.
@@ -51,21 +52,9 @@ program) or your own build zipped (ESP-IDF's `build` folder, PlatformIO's
 checked first, then the board erased and written. More: the README's
 [Your own firmware](README.md#your-own-firmware).
 
-## The handheld's apps
-
-**This handheld** installs and updates FireFly and the handheld's own
-Stump (Official, Sandbox, or + From File). An update keeps their identity,
-messages and settings.
-
 ## Sound
 
-- **The Provisioner plays none**, and neither do the Stump boards it makes.
-- **FireFly**: voice notes, and a message sound when a message arrives
-  (SETUP → SOUND → *Message sound*).
-- **The handheld's Stump**: button chimes and a message chime for DMs
-  (OWNER → *Button chimes*, *Message chime*).
-- Both play on USB-C headphones when plugged in, otherwise the speaker.
-  Details: the [Sound](README.md#sound) section.
+**The Provisioner plays none**, and neither do the Stump boards it makes.
 
 ## It works offline
 
