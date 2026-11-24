@@ -237,6 +237,7 @@ class Refused(MakeAStump):
             n = 0
 
             def run(self, code, secs=30.0):
+                assert code.startswith(stump.PACED_PRINT)       # a long answer comes in small pieces
                 self.n += 1
                 if self.n == 1:
                     return 'HAVE{"files": {"a.py": ["ab", 3]I (5123) wifi:mode : softAP\r\n, "free": 100}\r\n'
@@ -567,6 +568,11 @@ class Rules(unittest.TestCase):
                                "[web] serving on 192.168.4.1:80\r\nTraceback (most recent call last):\r\n")
         self.assertEqual((b["release"], b["micropython"], b["serving"]), ("1.0.0-beta.47", "v1.28.0", True))
         self.assertTrue(b["problems"])
+        # It says itself it's fine (a WROVER has no battery pin, 2026-11-24): a note, not a problem.
+        b = stump.boot_summary("Project Stump -- Beta A (1.0.0-beta.88)\r\n[adc_reader] battery init failed "
+                               "(non-fatal, continuing without it): invalid pin\r\n[web] serving on port 80\r\n")
+        self.assertEqual(b["problems"], [])
+        self.assertIn("non-fatal", b["notes"][0])
 
     def test_passwords_as_beta58(self):
         v = stump.settings_from(answers())["values"]                          # the bot takes the same one

@@ -426,6 +426,16 @@ def asked(repl, code, pat, tries=3, secs=30.0):
     raise StumpError(NO_ANSWER)
 
 
+# A long answer printed in small pieces with a pause between them: a WROVER's
+# USB-serial chip (CH340) on the RK3326's USB lost bytes from long answers
+# sent at full speed (a file list "Expecting ',' delimiter: column 1342", the
+# Stump image's list of modules, a pack list never read whole; short answers
+# fine; R36MAX, 2026-11-24). 64 bytes every 8 ms: about 8 KB/s, under the
+# line's 11.5.
+PACED_PRINT = ("def print(*a, end='\\n'):\n import sys, time\n s=' '.join(str(x) for x in a)+end\n"
+               " for i in range(0, len(s), 64):\n  sys.stdout.write(s[i:i+64])\n  time.sleep_ms(8)\n")
+
+
 def asked_json(repl, code, tag, secs=30.0, tries=3, empty=r"\{.*\}"):
     """A question whose answer is one JSON line after tag (TAG{...}): the
     value, asked again when it doesn't come through or doesn't read whole (a
@@ -433,7 +443,7 @@ def asked_json(repl, code, tag, secs=30.0, tries=3, empty=r"\{.*\}"):
     a WROVER, 2026-11-24). Never a guess: NO_ANSWER when it never reads."""
     out = ""
     for _ in range(tries):
-        out = repl.run(code, secs)
+        out = repl.run(PACED_PRINT + code, secs)
         m = re.search(re.escape(tag) + "(" + empty + ")", out)
         if m:
             try:
@@ -986,7 +996,10 @@ def boot_summary(text):
         m = re.search(r"WiFi Serial (?:initial )?connect failed: ([^\n]+)", text)
         out["heltec"]["fail"] = m.group(1).strip() if m else None
     for line in text.replace("\r", "").split("\n"):
-        if re.search(r"Traceback|Error|FAILED|rescue start|couldn't|not armed", line, re.I):
+        if re.search(r"non-fatal|continuing without", line, re.I):    # it says itself it's fine (a WROVER's battery pin)
+            if len(out["notes"]) < 12:
+                out["notes"].append(line.strip())
+        elif re.search(r"Traceback|Error|FAILED|rescue start|couldn't|not armed", line, re.I):
             if len(out["problems"]) < 12:
                 out["problems"].append(line.strip())
         elif re.search(r"WiFi unavailable|\[watchdog\] armed|\[chain\]|\[radio\]|\[sd\]", line, re.I):
@@ -1323,11 +1336,17 @@ def check_job(open_link, step, log, secs=60.0, report=None):
     repl = ready_repl(open_link, log)
     links = [repl.link]
     try:
+        try:                                  # its MicroPython, in case its start banner is missed
+            mpy = board_info(repl)["release"]
+        except StumpError:
+            mpy = None
         b, more = listen(repl, open_link, log, secs, lambda s: s["serving"])
         links += more
     finally:
         for link in links:
             link.close()
+    if not b["micropython"] and mpy:
+        b["micropython"] = mpy
     if report is not None:
         report.append(("Stump", b["release"] or "didn't say", "" if b["release"] else "warn"))
         report.append(("Its pages", "up" if b["serving"] else "not up within %d s" % secs, "ok" if b["serving"] else "err"))

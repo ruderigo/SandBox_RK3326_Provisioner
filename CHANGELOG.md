@@ -46,6 +46,16 @@ its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
   empty would have had its defaults written over the board's, its themes
   read back empty would have written the others away. And ESP-IDF's own log
   is turned off while the Provisioner talks to the board.
+- **Long answers in small pieces.** A WROVER's USB-serial chip (CH340) on
+  the RK3326's USB lost bytes from long answers sent at full speed: its file
+  list, the Stump image's list of modules (*Make a Stump* stopping right
+  after the flash), its pack list; short ones came whole. The board now
+  sends them 64 bytes at a time with a short pause, under the line's speed.
+- **"Checking it starts" took a harmless line for a failure.** "[adc_reader]
+  battery init failed (non-fatal, continuing without it)" (a WROVER has no
+  battery pin) made a Stump that started fine read "It didn't work". A line
+  that says it's non-fatal is a note now. And "MicroPython ?" there: the
+  version the board gave is used when its start banner is missed.
 
 
 
