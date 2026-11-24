@@ -476,21 +476,46 @@ def whole_lines(out):
     return good
 
 
+LAST_ANSWER = os.path.join(tempfile.gettempdir(), "provisioner-last-answer.txt")
+
+
 def asked(repl, code, pat, tries=4, secs=30.0):
     """A question to the board: the match of pat in a line that came whole,
-    asked again (slower) when none did, or StumpError (NO_ANSWER)."""
-    out = ""
+    asked again (slower) when none did, or StumpError (NO_ANSWER). What came
+    each time is then kept, whole, in LAST_ANSWER (for the team)."""
+    out, came = "", []
     for n in range(tries):
-        out = repl.run(paced_print(*PACES[min(n, len(PACES) - 1)]) + code, secs)
+        pace = PACES[min(n, len(PACES) - 1)]
+        try:
+            out = repl.run(paced_print(*pace) + code, secs)
+        except StumpError as e:
+            came.append((pace, "stopped: %s" % e))
+            _keep(repl, code, came)
+            raise
         for line in whole_lines(out):
             m = re.search(pat, line)
             if m:
                 return m
+        came.append((pace, out))
         time.sleep(0.3)
     log = getattr(repl, "log", None)
     if log:                                   # what came instead, for the log screen
         log("its answer didn't come through whole; it said: %r" % out.strip()[-160:])
+        log("all of it is kept in %s" % LAST_ANSWER)
+    _keep(repl, code, came)
     raise StumpError(NO_ANSWER)
+
+
+def _keep(repl, code, came):
+    try:
+        chip = getattr(getattr(getattr(repl, "link", None), "s", None), "chip", None)
+        with open(LAST_ANSWER, "w") as f:
+            f.write("%s\nreader: %s\nasked:\n%s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"),
+                    getattr(chip, "streaming", "not a ch340:// port"), code))
+            for pace, out in came:
+                f.write("\n%d bytes every %d ms, %d chars came:\n%r\n" % (pace[0], pace[1], len(out), out))
+    except Exception:
+        pass
 
 
 def asked_json(repl, code, tag, secs=30.0, tries=4, empty=r"\{.*\}"):

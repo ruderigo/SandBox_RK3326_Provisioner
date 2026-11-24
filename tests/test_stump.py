@@ -229,6 +229,11 @@ class Refused(MakeAStump):
             stump.board_info(Silent())
         with self.assertRaisesRegex(stump.StumpError, "didn't come through whole"):
             stump.board_image(Silent())
+        with open(stump.LAST_ANSWER) as f:                 # all of what came, every try, kept for the team
+            kept = f.read()
+        self.assertIn("import stump_image", kept)
+        self.assertEqual(kept.count("chars came:\n'I (5123) wifi:mode : softAP\\r\\n'"), 4)
+        self.assertIn("16 bytes every 40 ms", kept)
 
     def test_only_an_answer_that_came_whole_is_one(self):
         """Its length and checksum with every line (a WROVER's USB lost bytes,
