@@ -8,11 +8,11 @@ USABLE = (".bin", ".zip", ".stump-identity")
 
 
 def roots(home=None):
-    """[(label, path)] that exist: the games partitions, the home folder, USB
-    drives and other mounted cards."""
+    """[(label, path)] that exist: the games partitions, RK3326 Linux's data
+    partition, the home folder, USB drives and other mounted cards."""
     home = home or os.path.expanduser("~")
     cands = [("Games card", "/roms"), ("Second card", "/roms2"), ("Games card", "/storage/roms"),
-             ("Home", home)]
+             ("Data", "/data/ark"), ("Home", home)]
     for pat, label in (("/media/*", "Drive"), ("/run/media/*/*", "Drive"), ("/mnt/*", "Mounted"),
                        ("/storage/*", "Storage")):
         for p in sorted(glob.glob(pat)):

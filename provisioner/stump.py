@@ -1069,7 +1069,7 @@ def make(bundle, answers, open_link, flash, step, progress, log, update=False, c
             ok, msg = flash(img, offset, True)
         elif chip != "esp32s3":
             return False, ("Stump %s has no image for %s: it takes a Stump image (1.0.0-beta.57 on). A newer Stump "
-                           "onto the shelf: This handheld -> The Stump." % (bundle.release, IMAGE_FOR["wrover"]["board"]))
+                           "onto the shelf: the Library (L)." % (bundle.release, IMAGE_FOR["wrover"]["board"]))
         else:
             step("Erasing the board, writing MicroPython %s" % bundle.micropython)
             with tempfile.TemporaryDirectory(prefix="provisioner-mp-") as tmp:

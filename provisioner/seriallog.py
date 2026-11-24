@@ -13,8 +13,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 def export_dir():
     """Where exported logs go: a folder on the card's games partition when
     there is one (reachable from a computer by card reader, and over SSH),
-    else the home folder."""
-    for roms in ("/roms", "/storage/roms", "/roms2"):
+    RK3326 Linux's data partition, else the home folder."""
+    for roms in ("/roms", "/storage/roms", "/roms2", "/data/ark"):   # /data/ark: RK3326 Linux's data
         if os.path.isdir(roms) and os.access(roms, os.W_OK):
             return os.path.join(roms, "provisioner-logs")
     return os.path.join(os.path.expanduser("~"), "provisioner-logs")

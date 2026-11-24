@@ -15,6 +15,10 @@
 #     /storage/rk3326_provisioner/         the app
 #     /storage/roms/ports                  the Ports entry
 #     /storage/.config/udev.rules.d        serial access (the system itself is read-only)
+#   RK3326 Linux (its own desktop and dock)   as ark; asks for sudo once
+#     ~/rk3326_provisioner/                the app (and its launcher, RK3326_Provisioner.sh)
+#     /data/ark/apps/provisioner.json      its dock icon (Workshop), unless the image has one
+#     /etc/udev/rules.d                    serial access
 #
 # PROVISIONER_TEST_ROOT=DIR puts every system path under DIR (the tests).
 # =============================================================================
@@ -47,14 +51,17 @@ OS="$(. "$R/etc/os-release" 2>/dev/null; echo "${PRETTY_NAME:-${NAME:-this syste
 [ "$(uname -s)" = "Linux" ] || die "This installs on the handheld (it's $(uname -s) here): run it there, over SSH:
     ssh -t ark@r36max.local 'cd ~/SandBox_RK3326_Provisioner && git pull && bash install.sh'
 On this computer, use it from this folder instead: python3 -m provisioner"
+# RK3326 Linux (github.com/ruderigo/RK3326_Linux): its dock reads apps from
+# /usr/share/rk/apps; there it's a dock icon, with or without a roms/ports folder.
+RKLINUX=""; [ -d "$R/usr/share/rk/apps" ] && RKLINUX=1
 PORTS_FOUND=""
 for ports in "$R/roms/ports" "$R/roms2/ports" "$R/storage/roms/ports"; do [ -d "$ports" ] && PORTS_FOUND=1; done
-[ -n "$PORTS_FOUND" ] || die "No roms/ports folder here (/roms/ports, /storage/roms/ports): this isn't the handheld. Nothing was changed."
+[ -n "$PORTS_FOUND$RKLINUX" ] || die "No roms/ports folder here (/roms/ports, /storage/roms/ports) and no RK3326 Linux dock: this isn't the handheld. Nothing was changed."
 command -v python3 >/dev/null || die "python3 is needed"
 python3 -c 'import sys; sys.exit(sys.version_info < (3, 6))' || die "python3 is $(python3 -V 2>&1); 3.6 or newer is needed"
 if [ -z "$R" ]; then
   python3 -c "import ctypes, ctypes.util; ctypes.CDLL(ctypes.util.find_library('SDL2') or 'libSDL2-2.0.so.0')" 2>/dev/null \
-    || die "SDL2 (libSDL2-2.0.so.0) is needed: it's EmulationStation's, so this isn't the handheld's system?"
+    || die "SDL2 (libSDL2-2.0.so.0) is needed: the handheld's system has it, so this isn't the handheld?"
 fi
 # A git clone: update it first, then run the new copy of this script.
 if [ -z "${PROVISIONER_PULLED:-}" ] && [ -d "$HERE/.git" ] && [ -z "$R" ]; then
@@ -129,6 +136,32 @@ if [ "$ME" != root ] && [ -z "$R" ]; then
   id -nG "$ME" | grep -qw dialout || { $SUDO "$USERMOD" -aG dialout "$ME" && ok "$ME added to dialout (from the next login)"; }
 fi
 
+if [ -n "$RKLINUX" ]; then
+  echo ">>> The dock (RK3326 Linux)"
+  launcher > "$APP/RK3326_Provisioner.sh" && chmod 0755 "$APP/RK3326_Provisioner.sh"
+  [ "$(id -u)" -eq 0 ] && [ "$ME" != root ] && chown "$ME": "$APP/RK3326_Provisioner.sh" 2>/dev/null
+  DOCK="$R/data/ark/apps"
+  if [ -f "$R/usr/share/rk/apps/provisioner.json" ]; then
+    ok "on the dock already (the image's own entry)"
+    if [ -f "$DOCK/provisioner.json" ] && grep -q '"written_by": "install.sh"' "$DOCK/provisioner.json"; then
+      rm -f "$DOCK/provisioner.json"               # ours from before: the image's wins
+    fi
+  else
+    entry="{\"name\": \"Provisioner\", \"icon\": \"chip\", \"group\": \"Workshop\",
+ \"about\": \"Flash ESP32 boards: Stumps, packs, your own builds\",
+ \"exec\": [\"$APP/RK3326_Provisioner.sh\"], \"mouse\": false, \"written_by\": \"install.sh\"}"
+    if [ -f "$DOCK/provisioner.json" ] && [ "$(cat "$DOCK/provisioner.json")" = "$entry" ]; then
+      ok "$DOCK/provisioner.json (unchanged)"
+    elif mkdir -p "$DOCK" 2>/dev/null && printf '%s\n' "$entry" > "$DOCK/provisioner.json"; then
+      [ "$(id -u)" -eq 0 ] && [ "$ME" != root ] && chown "$ME": "$DOCK/provisioner.json" 2>/dev/null
+      ok "$DOCK/provisioner.json: the Provisioner on the dock (Workshop)"
+    else
+      warn "couldn't write $DOCK/provisioner.json: open it with $APP/RK3326_Provisioner.sh"
+    fi
+  fi
+fi
+
+if [ -n "$PORTS_FOUND" ]; then
 echo ">>> EmulationStation (Ports)"
 n=0; seen=" "
 for ports in "$R/roms/ports" "$R/roms2/ports" "$R/storage/roms/ports"; do
@@ -145,8 +178,13 @@ for ports in "$R/roms/ports" "$R/roms2/ports" "$R/storage/roms/ports"; do
   rm -f "$tmp"
 done
 [ "$n" -gt 0 ] || warn "no roms/ports folder here (/roms/ports, /storage/roms/ports): is this the handheld?"
+fi
 
 echo
-echo "Done. EmulationStation -> Ports -> RK3326_Provisioner (restart EmulationStation if it isn't listed)."
+if [ -n "$RKLINUX" ]; then
+  echo "Done. The dock -> Workshop -> Provisioner."
+else
+  echo "Done. EmulationStation -> Ports -> RK3326_Provisioner (restart EmulationStation if it isn't listed)."
+fi
 echo "Over SSH: cd $APP && python3 -m provisioner controls   (the buttons it found)"
 echo "On a computer instead: python3 -m provisioner (needs SDL2), or 'list' / 'catalog' / 'flash PORT ID'."

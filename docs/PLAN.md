@@ -99,6 +99,12 @@ Making a Stump is the Provisioner's main job (2026-11-02): it comes first.
 - [x] **CH340 through libusb** (0.3.0-beta.14): `ch340://`, no kernel driver
 - [ ] Bench beta.14: the WROVER's CH340 on the R36MAX (identify, its image,
       the Stump's serial link, the serial log)
+- [x] **The board bench only** (beta.23): *This handheld* gone; the
+      handheld's Stump and FireFly install and update themselves (their
+      installers, RK3326 Linux's Apps window), the handheld Stump's packs,
+      password and identity go to its cockpit
+- [x] **RK3326 Linux**: a dock icon (Workshop), no /roms/ports needed,
+      /data/ark for files (beta.23); **to test on the handheld**
 - [ ] An official repo for the Provisioner (low priority)
 - [ ] FireFly Android from here (another sprint)
 - [ ] Run it on another RK3326 (R36S, an OGA-class 480x320, ROCKNIX) and

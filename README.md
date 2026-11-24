@@ -1,12 +1,16 @@
 # RK3326 Provisioner
 
-An RK3326 handheld (R36MAX, R36S and the others) as the workbench of the
-Stump/FireFly mesh, **offline and from the gamepad**: plug an ESP32 board into
-the hub and it's recognised, given the firmware that fits, flashed and checked;
-the handheld's own Stump, FireFly and the Provisioner itself install and
-update from here too. It's an EmulationStation **Ports** entry.
+An RK3326 handheld (R36MAX, R36S and the others) as the **ESP32 board bench**
+of the Stump/FireFly mesh, **offline and from the gamepad**: plug an ESP32
+board into the hub and it's recognised, given the firmware that fits, flashed
+and checked. It's an EmulationStation **Ports** entry, or a **dock** icon on
+[RK3326 Linux](https://github.com/ruderigo/RK3326_Linux).
 
-> **Sandbox, v0.3.0-beta.22.** Tested on an R36MAX (dArkOS); other RK3326
+The handheld's own apps aren't installed from here any more (beta.23): the
+handheld's Stump and FireFly install and update themselves, with their own
+installers (and, on RK3326 Linux, its Apps window and Stump setup).
+
+> **Sandbox, v0.3.0-beta.23.** Tested on an R36MAX (dArkOS); other RK3326
 > handhelds and systems in CI only ([docs/HANDHELDS.md](docs/HANDHELDS.md)).
 > Plan and next steps: [docs/PLAN.md](docs/PLAN.md).
 
@@ -21,9 +25,7 @@ update from here too. It's an EmulationStation **Ports** entry.
 | **Heltec V3** | RNode for a CAM, set for the mesh | | *coming* |
 | **Any board** | the serial log (pause, a block, export); erase the flash | | tested on the R36MAX |
 | | **your own firmware build** (ESP-IDF, PlatformIO, Arduino): every file at its address, in one go ([below](#your-own-firmware)) | + From File (a build's `.zip`) | **to test** (beta.22) |
-| **This handheld** | **its own Stump**: install (a form, with every pack the Stump offers), update (everything kept, its packs brought up to date), its password, check | Official / Sandbox / + From File (a `.tar.gz`) | tested on the R36MAX with 2.3.0; **2.5.0 with SandBox_Stump_On b60: to test** (beta.13) |
-| | **FireFly**: install, update (its identity and messages kept) | Official / Sandbox / + From File (a `.zip`) | tested on the R36MAX |
-| | **the Provisioner itself**: update, go back to the one before | Sandbox / + From File (a `.tar.gz`) | tested on the R36MAX |
+| **The Provisioner** | **itself**: update, go back to the one before (the last row of Boards) | Sandbox / + From File (a `.tar.gz`) | tested on the R36MAX |
 
 **Official** is a project's public repo's newest release, **Sandbox** its
 sandbox's newest (pre-releases included), **+ From File** a file from a card or
@@ -32,12 +34,10 @@ a USB drive:
 | | Official | Sandbox |
 |---|---|---|
 | The Stump (CAM boards) | LaBuche-Stump | SandBox_Stump_On |
-| This handheld's Stump | R36MAX-Stump | SandBox_RK3326_Stump |
-| FireFly (RK3326) | FireFly_RK3326_R36MAX_R36S | SandBox_FireFly_RK3326 |
 | The Provisioner | *(none yet)* | SandBox_RK3326_Provisioner |
 
 **It works offline**: a copy of each, *the shelf*, comes with the Provisioner.
-**When EmulationStation has the handheld on a network**, it says what's newer
+**When the handheld is on a network**, it says what's newer
 on GitHub, and **X** takes it onto the shelf (`provisioner-shelf/` on the games
 card), once every file matches the SHA-256 GitHub records for it and the
 release's `SHA256SUMS`, and reads as what it should be. Offline from then on.
@@ -64,7 +64,14 @@ On AmberELEC or ROCKNIX, as `root@` (it lands in `/storage`).
 Then **EmulationStation → Ports → RK3326_Provisioner** (restart
 EmulationStation if it isn't listed). The version is at the top right.
 
-**Updating**: from the Provisioner itself (*This handheld → The Provisioner*:
+**On RK3326 Linux** the same command puts it on the dock instead:
+**Workshop → Provisioner** (`/data/ark/apps/provisioner.json`, `chip` icon;
+an image that carries its own entry keeps that one). No `/roms/ports` is
+needed there; the dock gives it the screen as it gives every app, + From File
+also looks in `/data/ark` (*Data*), and the shelf and exported logs go there
+when there's no games card to write to.
+
+**Updating**: from the Provisioner itself (the last row of Boards, *The Provisioner*:
 Sandbox, or a file; the one before is kept, *Go back* swaps them), or the
 same command again with `cd ~/SandBox_RK3326_Provisioner && git pull && bash install.sh`.
 
@@ -72,10 +79,9 @@ same command again with `cd ~/SandBox_RK3326_Provisioner && git pull && bash ins
 
 | Screen | Buttons |
 |---|---|
-| Boards | ↑↓ · A open (identifies it: the board resets) · X identify again · Y serial log · L the Library. The last row is **This handheld** (there, Y is the Library) |
+| Boards | ↑↓ · A open (identifies it: the board resets) · X identify again · Y serial log · L the Library. The last row is **The Provisioner**, its updates (there, Y is the Library) |
 | A board | ↑↓ · A make a Stump / flash / pack / + From File / log / erase (asks first) · B back. On a CAM, the first row is the Stump it gets: ◀ ▶ Official / Sandbox, A its page |
-| This handheld | ↑↓ the Provisioner, its Stump, FireFly, the Stump for CAMs · A open · Y look online · B back |
-| A product's page | ↑↓ Official / Sandbox / + From File / its own jobs · A install (or use) · X get the newest online · Y new answers (its Stump) or look online · B back |
+| The Provisioner, the CAMs' Stump | ↑↓ Official / Sandbox / + From File · A install (or use, for the Stump the boards get) · X get the newest online · Y look online · B back |
 | A form | ↑↓ · A type (the keyboard) or next choice · ←→ choice · B back |
 | The keyboard | A type · B delete · START OK · SELECT cancel · Y shift · X space · L/R page; or a USB keyboard |
 | Asking | ←→ No / Yes · A accept · B cancel. Erasing defaults to **No** |
@@ -155,26 +161,21 @@ written in one go, then read back.
 Two builds in one zip (say an `esp32` and an `esp32s3` folder): the one for
 the board's chip is used.
 
-## This handheld's Stump
+## The handheld's own apps
 
-*This handheld → This handheld's Stump.* **Install** asks its name, **its
-password** (for `/admin` and the fserv bot; a separate `/admin` one is
-optional), its Wi-Fi's name, storage, the chain (first, or joining another
-by its address) and its secret, the Heltec (USB, Bluetooth, none) and the
-packs, then runs R36MAX-Stump's installer with those answers: Team Stump's own
-wizard, the walk-up extras and the cockpit (Ports → LaBuche_Stump). Once it's
-there, **A updates it** (everything kept; **Y**: new answers), **Its
-password** changes it, **Its packs** installs, updates and removes them
-(Team Stump's own code, from SandBox_Stump_On beta.75), **Save its identity**
-and **Bring back a saved identity** as for a CAM, **Check it** asks it what
-it runs. The first install
-needs internet (packages, SandBox_Stump_On, the Stump's Python). From
-R36MAX-Stump 2.5.0 the Stump runs only while its Port is open (Ports →
-LaBuche_Stump), like a ROM, so never beside the Provisioner: its page says
-so, and a new password applies when its Port opens next.
+Not from here any more (beta.23). Each app installs, sets up and updates
+itself:
 
-ArkOS / dArkOS, as `ark` (apt and sudo): the same for **FireFly**, whose
-own installer keeps its identity, contacts and messages on an update.
+- **The handheld's Stump**: R36MAX-Stump's installer (its
+  [quick start](https://github.com/ruderigo/SandBox_RK3326_Stump/blob/main/QUICKSTART.md));
+  its packs, password and identity are its cockpit's (OWNER).
+- **FireFly**: its own installer
+  ([INSTALL.md](https://github.com/ruderigo/SandBox_FireFly_RK3326/blob/main/INSTALL.md)).
+- **On RK3326 Linux**: its Apps window (`rk-apps`, stable or sandbox) and its
+  Stump setup run those same installers.
+
+A Stump that was installed from an earlier Provisioner keeps everything:
+its installer updates it in place.
 
 ## The S3 as the handheld's Wi-Fi card
 
@@ -206,18 +207,10 @@ python3 -m provisioner flash /dev/ttyUSB0 wled-16.0.1-esp32
 sound device another app needs. **The Stump boards it makes are silent
 too**: the Stump firmware has no buzzer or sound.
 
-What the apps it installs on the handheld play, and what they need:
-
-| App | Plays | Where | Turn it off / change it | Its docs |
-|---|---|---|---|---|
-| **FireFly** | Voice notes (when you play them); a message sound (two short notes) when a message from a person or a DM through a Stump arrives | USB-C headphones when plugged in, else the speaker | SETUP → SOUND → *Message sound*: people and DMs, everything, off | [Sound](https://github.com/ruderigo/SandBox_FireFly_RK3326#sound) |
-| **This handheld's Stump** (its cockpit) | Short chimes as you press buttons; a message chime (two notes) when a DM arrives. The Stump itself plays nothing | USB-C headphones when plugged in, else the speaker | OWNER → *Button chimes*, *Message chime* | [Sound](https://github.com/ruderigo/SandBox_RK3326_Stump/blob/main/handheld/README.md#sound) |
-
-FireFly records voice notes too, from a USB mic or headset when one is
-plugged in. Its installer adds the sound tools it uses (`alsa-utils`,
-`opus-tools`, `codec2`); the Stump's installer needs none (its cockpit
-talks to ALSA itself). Only one of them runs at a time (each is a Port),
-so they never compete for the sound device.
+The handheld's own apps (FireFly, the handheld's Stump) have their own
+sound and say so in their docs:
+[FireFly](https://github.com/ruderigo/SandBox_FireFly_RK3326#sound),
+[the handheld's Stump](https://github.com/ruderigo/SandBox_RK3326_Stump/blob/main/handheld/README.md#sound).
 
 ## Tests and releases
 

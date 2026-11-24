@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Packages
         run: sudo apt-get update -q && sudo apt-get install -y -q libsdl2-2.0-0 shellcheck pyflakes3 && pipx install -q vermin
-      - name: Team Stump's SandBox_Stump_On (the handheld's Stump's wizard, for its answers)
+      - name: Team Stump's SandBox_Stump_On (its code reading our identity files and stamps)
         uses: actions/checkout@v4
         with:
           repository: ruderigo/SandBox_Stump_On

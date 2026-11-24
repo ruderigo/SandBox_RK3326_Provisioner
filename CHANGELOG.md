@@ -10,7 +10,27 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
-## v0.3.0-beta.22
+## v0.3.0-beta.23
+
+- **The board bench only.** The Provisioner is now about ESP32 boards:
+  identifying, making a Stump, packs on a board, a board's identity, + From
+  File (a `.bin`, your own build's `.zip`), the serial log, erase, the S3 as
+  a USB Wi-Fi card, and the Library of board firmware. *This handheld* is
+  gone: the handheld's own Stump and FireFly install, set up and update
+  themselves (their own installers; on RK3326 Linux its Apps window and
+  Stump setup), and the handheld Stump's packs, password and identity move
+  to its cockpit (OWNER). Its last row on Boards is **The Provisioner**: its
+  own updates and going back to the one before, as before. Smaller too: the
+  handheld Stump's and FireFly's copies are off its shelf.
+- **RK3326 Linux**: `install.sh` puts it on the dock (Workshop, `chip`
+  icon: `/data/ark/apps/provisioner.json`, unless the image carries its
+  own), with no `/roms/ports` needed. Under the dock its launcher takes the
+  screen as the dock gives it (no driver of its own, no tty). + From File
+  also looks in `/data/ark` (*Data*), and the shelf and exported logs go
+  there when there's no games card to write to. The gamepad needs no
+  EmulationStation config (its table for these pads, as before).
+
+
 
 - **Your own firmware build, from a `.zip`** (+ From File on a board's page):
   what ESP-IDF, PlatformIO and the Arduino IDE make, several files each with
