@@ -12,6 +12,21 @@ its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
 ## v0.3.0-beta.24
 
+- **A CH340 read without a gap** (a Freenove WROVER, on the systems with no
+  kernel driver for it). The Provisioner's own driver asked the chip for
+  bytes one transfer at a time; between two, nothing was reading, and a
+  CH340 holds only a few dozen bytes, so a long answer lost some whenever
+  the program was busy for a few milliseconds (the screen redrawing): "its
+  answer didn't come through whole" at the end of *Make a Stump*, the pack
+  list cut, the module list short. Now 32 transfers wait in the kernel at
+  once, each one packet, as Linux's own driver does. Should this libusb not
+  allow it, it reads as before; `PROVISIONER_CH340_ONE_AT_A_TIME=1` forces
+  that. Not yet run against a real CH340: tested with libusb's calls by hand.
+- **A newer Stump online is said on the board's page.** Its first row turns
+  to "Sandbox 1.0.0-beta.89 is online: X gets it" when GitHub has a release
+  newer than every one on the shelf; X fetches it and comes back to the
+  page, and the board gets that one.
+- **The built-in Sandbox Stump is 1.0.0-beta.88** (was beta.86).
 - **What a board prints by itself isn't taken for its answer.** A Stump
   turns its Wi-Fi on as it starts, and ESP-IDF says so on the same serial
   line; arriving while the Provisioner asked its MicroPython version, it

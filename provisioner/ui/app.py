@@ -364,6 +364,18 @@ class App:
     def open_jobs(self):
         self.jsel = 1 if self.jobs()[:1] == [{"kind": "src_stump"}] else 0     # on Make a Stump, under its source
         self.screen = "jobs"
+        if self.jobs()[:1] == [{"kind": "src_stump"}]:
+            self.look_online()                         # a newer Stump online is said on its first row
+
+    def stump_newer(self):
+        """(channel, release) of a Stump online newer than every one on the
+        shelf (the copy in use's channel first), or None."""
+        cur = self.stump_copy()
+        have = [shelf.version_key(c["version"]) for c in self.stump_choices()]
+        chans = sorted(shelf.CHANNELS, key=lambda ch: not (cur and cur["channel"] == ch))
+        found = [(ch, self.newer_online("stump", ch)) for ch in chans]
+        found = [(ch, o) for ch, o in found if o and all(shelf.version_key(o["version"]) > h for h in have)]
+        return max(found, key=lambda x: shelf.version_key(x[1]["version"])) if found else None
 
     def on_jobs(self, act):
         rows = self.jobs()
@@ -380,6 +392,10 @@ class App:
             self.screen = "boards"
         elif act == "y":
             self.open_log()
+        elif act == "x" and rows[:1] == [{"kind": "src_stump"}] and self.stump_newer():
+            ch, o = self.stump_newer()
+            self.stump_src = None                      # the board gets the one fetched
+            self.get_online("stump", ch, after="jobs")
         elif act == "a":
             r = rows[self.jsel]
             if r["kind"] == "src_stump":
@@ -1661,7 +1677,7 @@ class App:
                          "Go back", lambda: self.run_task("Going back to v%s" % prev,
                                                           lambda t: installers.rollback(self.app_dir), after="quit"))
 
-    def get_online(self, p, ch):
+    def get_online(self, p, ch, after="product"):
         if self.net != "online":
             self.toast("Offline: the handheld has no network (Y looks again)" if self.net != "checking"
                        else "Still looking online…", 4)
@@ -1675,7 +1691,7 @@ class App:
             self.toast("The shelf has %s already" % o["version"], 3)
             return
         self.run_task("Getting %s %s %s" % (shelf.PRODUCTS[p]["short"], shelf.CHANNEL_NAMES[ch], o["version"]),
-                      lambda t: self._fetched(p, ch, o, t), after="product")
+                      lambda t: self._fetched(p, ch, o, t), after=after)
 
     def _fetched(self, p, ch, o, t):
         t.step, t.pct = "Downloading and checking (SHA-256)", 0
@@ -1868,6 +1884,11 @@ class App:
                 about = ("◀ ▶ Official / Sandbox%s · A: + From File, get the newest online" %
                          (" / the file" if self.stump_src and self.stump_src["channel"] == "file" else ""))
                 tag, tc, ready = ("◀ ▶" if sel else ""), MUTED, True
+                newer = self.stump_newer()
+                if newer:
+                    about = "%s %s is online: X gets it · ◀ ▶ the ones here" % (
+                        shelf.CHANNEL_NAMES[newer[0]], newer[1]["version"])
+                    tag, tc = "newer online", EMBER_BRIGHT
             elif r["kind"].startswith("stump_"):
                 rel = b.release if b else "?"
                 title, about, tag, tc = {
@@ -1916,8 +1937,9 @@ class App:
             d.text(F24, 26, y + 6, title, (EMBER_BRIGHT if sel else TEXT) if ready else MUTED, W - 80 - tw)
             if tag:
                 d.text(F16, W - 28 - tw, y + 12, tag, tc)
-            d.text(F16, 26, y + 38, about, MUTED, W - 52)
-        self.hints([("A", "choose"), ("B", "boards"), ("Y", "serial log"), ("↑↓", "move")])
+            d.text(F16, 26, y + 38, about, EMBER_BRIGHT if tag == "newer online" else MUTED, W - 52)
+        self.hints([("A", "choose"), ("B", "boards"), ("Y", "serial log"), ("↑↓", "move")] +
+                   ([("X", "get the newer Stump")] if rows[:1] == [{"kind": "src_stump"}] and self.stump_newer() else []))
 
     def draw_run(self):
         d, t = self.d, self.task

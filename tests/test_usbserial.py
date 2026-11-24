@@ -168,6 +168,69 @@ class TheChip(unittest.TestCase):
                              env=dict(os.environ, PYTHONPATH=os.pathsep.join([os.path.join(ROOT, "vendor"), ROOT])))
         self.assertIn("4.8.1", out.stdout)
 
+    def test_reading_without_a_gap(self):
+        """Stream: 32 transfers wait at once; what arrives comes in order; one
+        that ends is sent back to wait; all taken back before closing."""
+        import ctypes
+
+        class Lib:                                                     # libusb's transfer calls, by hand
+            def __init__(self):
+                self.kept, self.waiting, self.freed, self.cancelled, self.ready = [], [], [], [], []
+
+            def libusb_alloc_transfer(self, n):
+                self.kept.append(U._Transfer())
+                return ctypes.addressof(self.kept[-1])
+
+            def libusb_submit_transfer(self, t):
+                self.waiting.append(t)
+                return 0
+
+            def libusb_cancel_transfer(self, t):
+                self.cancelled.append(t)
+                return 0
+
+            def libusb_free_transfer(self, t):
+                self.freed.append(t)
+
+            def arrives(self, data, status=U.DONE):
+                t = self.waiting.pop(0)
+                x = U._Transfer.from_address(t)
+                ctypes.memmove(x.buffer, data, len(data))
+                x.actual_length, x.status = len(data), status
+                self.ready.append(t)
+
+            def libusb_handle_events_timeout_completed(self, ctx, tv, done):
+                for t in self.ready:
+                    ctypes.cast(U._Transfer.from_address(t).callback, U._CALLBACK)(t)
+                for t in self.cancelled:
+                    if t in self.waiting:
+                        self.waiting.remove(t)
+                        x = U._Transfer.from_address(t)
+                        x.actual_length, x.status = 0, U.CANCELLED
+                        ctypes.cast(x.callback, U._CALLBACK)(t)
+                self.ready, self.cancelled = [], []
+                return 0
+        lib, got, lost = Lib(), [], []
+        s = U.Stream(lib, None, 1234, U.EP_IN, got.append, lost.append)
+        self.assertEqual(len(lib.waiting), 32)
+        x = U._Transfer.from_address(lib.waiting[0])
+        self.assertEqual((x.dev_handle, x.endpoint, x.type, x.length, x.timeout), (1234, 0x82, 2, 32, 0))
+        for i in range(40):                                            # more than wait at once, between two pumps
+            if i == 32:
+                self.assertTrue(s.pump(1))
+            lib.arrives(b"%02d," % i)
+        self.assertTrue(s.pump(1))
+        self.assertEqual(b"".join(got), b"".join(b"%02d," % i for i in range(40)))
+        self.assertEqual(len(lib.waiting), 32)                         # each one back to wait
+        lib.arrives(b"last", status=U.NO_DEVICE)                       # unplugged: what it had, then said once
+        lib.arrives(b"", status=U.NO_DEVICE)
+        s.pump(1)
+        self.assertEqual(got[-1], b"last")
+        self.assertEqual([e.code for e in lost], [-4])
+        self.assertEqual(len(lib.waiting), 30)
+        s.close()
+        self.assertEqual((len(lib.waiting), len(s.live), len(lib.freed)), (0, 0, 32))
+
     @unittest.skipUnless(os.path.exists("/lib/x86_64-linux-gnu/libusb-1.0.so.0") or
                          os.path.exists("/lib/aarch64-linux-gnu/libusb-1.0.so.0"), "no libusb-1.0 here")
     def test_the_real_libusb(self):
@@ -176,6 +239,11 @@ class TheChip(unittest.TestCase):
             lib.find(250, 127)
         self.assertEqual(e.exception.code, -4)
         self.assertTrue(U.available())
+        self.assertTrue(lib.streams)                                   # reading without a gap: its calls are there
+        t = lib.lib.libusb_alloc_transfer(0)                           # libusb's own transfer, as _Transfer reads it
+        x = U._Transfer.from_address(t)
+        self.assertEqual((x.dev_handle, x.length, x.buffer, x.num_iso_packets), (None, 0, None, 0))
+        lib.lib.libusb_free_transfer(t)
 
 
 class OverAPretendCH340(unittest.TestCase):
