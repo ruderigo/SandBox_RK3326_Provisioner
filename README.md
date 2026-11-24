@@ -10,7 +10,7 @@ The handheld's own apps aren't installed from here any more (beta.23): the
 handheld's Stump and FireFly install and update themselves, with their own
 installers (and, on RK3326 Linux, its Apps window and Stump setup).
 
-> **Sandbox, v0.3.0-beta.23.** Tested on an R36MAX (dArkOS); other RK3326
+> **Sandbox, v0.3.0-beta.24.** Tested on an R36MAX (dArkOS); other RK3326
 > handhelds and systems in CI only ([docs/HANDHELDS.md](docs/HANDHELDS.md)).
 > Plan and next steps: [docs/PLAN.md](docs/PLAN.md).
 

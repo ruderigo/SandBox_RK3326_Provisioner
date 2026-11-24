@@ -10,7 +10,20 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
-## v0.3.0-beta.23
+## v0.3.0-beta.24
+
+- **What a board prints by itself isn't taken for its answer.** A Stump
+  turns its Wi-Fi on as it starts, and ESP-IDF says so on the same serial
+  line; arriving while the Provisioner asked its MicroPython version, it
+  read an empty answer ("MicroPython , .mpy , ?") and *Update the Stump*
+  then refused with "needs 1.28.0" (R36MAX, WROVER, beta.23). Now what it
+  printed in between is cleared before each question and skipped when it
+  comes with the answer, the question is asked again when the answer
+  doesn't come through, and if it never does it says so ("its answers
+  didn't come through: unplug it, plug it back in, try again") instead of
+  a wrong reason.
+
+
 
 - **The board bench only.** The Provisioner is now about ESP32 boards:
   identifying, making a Stump, packs on a board, a board's identity, + From

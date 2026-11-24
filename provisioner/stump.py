@@ -330,6 +330,23 @@ class Repl:
         self.write(b"\x04")
         self.read_until(b"\x04", 10)
 
+    def paste_reply(self, secs=3.0):
+        """Its answer to the raw-paste request (R\\x01 yes, R\\x00 no), past
+        anything it printed by itself meanwhile (ESP-IDF's log): those two
+        bytes, or the first two it said when neither came."""
+        seen = b""
+        end = time.time() + secs
+        while time.time() < end and len(seen) < 4096:
+            try:
+                seen += self.read_n(1, max(0.1, end - time.time()))
+            except StumpError:
+                if self._dead() or not seen:
+                    raise
+                break
+            if seen[-2:] in (b"R\x01", b"R\x00"):
+                return seen[-2:]
+        return seen[:2]
+
     def exec(self, code, secs=30.0):
         """(out, err) of code run on the board (err: the traceback, or "")."""
         data = code.encode() if isinstance(code, str) else code
@@ -337,7 +354,7 @@ class Repl:
         plain = self.raw_paste is False
         if not plain:
             self.write(b"\x05A\x01")
-            r = self.read_n(2, 3)
+            r = self.paste_reply()
             if r == b"R\x01":
                 self.raw_paste = True
                 self._paste(data)
