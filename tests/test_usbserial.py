@@ -7,6 +7,7 @@ serial link to Team Stump's pretend board over a pretend CH340.
     python3 tests/test_usbserial.py
 """
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -271,6 +272,18 @@ class OverAPretendCH340(unittest.TestCase):
             self.assertEqual(lib.lines()[0], (False, False))           # held low from the start: no reset
             repl.link.close()
             self.assertEqual(lib.released, 1)
+            from provisioner import linktest                           # the same line, shown as it is
+            said = []
+            self.assertEqual(linktest.main(["ch340://1-4"], out=said.append), 0)
+            text = "\n".join(said)
+            self.assertIn("its reader: one transfer at a time", text)  # this pretend libusb has no more
+            for n in ("1.", "2.", "3."):
+                self.assertRegex(text, r"(?m)^%s .*: 100 of 100 whole" % re.escape(n))
+            self.assertRegex(text, r"(?m)^5\. .*: whole")
+            self.assertEqual(linktest.counted("000:abcdefghijklmnopqrstuvwxyz0123456789\n001:abcdefghijklmnopqrstuvwxyz0123456789\n"
+                                              "002:abcdefghijklmnopqrstuvwxyz0123456789\n", False)[0], 3)
+            self.assertEqual(linktest.counted("000:abcdefghijklmnopqrstuvwxyz0123456789\n001:abcdefz0123456789\n", False),
+                             (1, ["001:abcdefz0123456789"]))
         finally:
             U._LIB[:] = []
             p.kill()

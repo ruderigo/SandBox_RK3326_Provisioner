@@ -22,6 +22,10 @@ its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
   once, each one packet, as Linux's own driver does. Should this libusb not
   allow it, it reads as before; `PROVISIONER_CH340_ONE_AT_A_TIME=1` forces
   that. Not yet run against a real CH340: tested with libusb's calls by hand.
+- **`python3 -m provisioner linktest`** shows what a board's serial line
+  loses: it prints numbered lines at once and in small pieces, then its
+  Stump image's list, and every line that didn't arrive as sent is printed
+  with what came instead (`--one-at-a-time` for the CH340's old reading).
 - **A newer Stump online is said on the board's page.** Its first row turns
   to "Sandbox 1.0.0-beta.89 is online: X gets it" when GitHub has a release
   newer than every one on the shelf; X fetches it and comes back to the

@@ -341,9 +341,11 @@ class CH340:
         """Reading without a gap (Stream), or None: read() one at a time."""
         make = getattr(self.lib, "stream", None)
         try:
-            return make(self.h, EP_IN, on_data, on_error) if make else None
+            got = make(self.h, EP_IN, on_data, on_error) if make else None
         except LibusbError:
-            return None
+            got = None
+        self.streaming = got is not None
+        return got
 
     def close(self):
         if self.h:
