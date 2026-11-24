@@ -399,14 +399,17 @@ class StumpImages(unittest.TestCase):
                 link.close()
                 for k in env:
                     os.environ.pop(k, None)
-        self.assertEqual(up(), {"written": 2, "skipped": 0})
-        self.assertEqual(up(), {"written": 0, "skipped": 2})          # the same: nothing written
+        def counts(r):
+            return r["written"], r["skipped"], r["in_place"]
+        self.assertEqual(counts(up()), (2, 0, False))
+        self.assertEqual(counts(up()), (0, 2, False))                  # the same: nothing written
         files[1] = ("app/y.mpy", b"Y" * 20000, hashlib.sha256(b"Y" * 20000).hexdigest())
         with open(os.path.join(self.root, "app", "z.py.part"), "w") as f:
             f.write("a write cut short")
         with self.assertRaises(stump.StumpError) as e:
-            up(FAKE_FREE="20000")                                     # needs 20 KB + 16 KB: short
+            up(FAKE_FREE="12000")                                     # 16 KB even written in place: short
         self.assertIn("storage is full", str(e.exception))
+        self.assertIn("To write: 1 changed (20 KB)", str(e.exception))
         self.assertIn("Nothing was written", str(e.exception))
         self.assertIn("(after removing 1 leftovers)", str(e.exception))
         self.assertIn("app/", str(e.exception))                       # what takes the room
@@ -417,7 +420,14 @@ class StumpImages(unittest.TestCase):
         self.assertIn("filled up while writing app/y.mpy", str(e.exception))
         with open(os.path.join(self.root, "app", "y.mpy"), "rb") as f:
             self.assertEqual(f.read(), b"y" * 20000)                  # the old one kept
-        self.assertEqual(up(), {"written": 1, "skipped": 1})          # room again: only the changed one
+        # Room for what it adds, not for a copy beside the old one (a WROVER with
+        # its packs, R36MAX 2026-11-24: "needs 843 KB, it has 48 KB"): written in place.
+        r = up(FAKE_FREE="24000")
+        self.assertEqual(counts(r), (1, 1, True))
+        self.assertEqual(r["what"], "1 changed (20 KB)")
+        with open(os.path.join(self.root, "app", "y.mpy"), "rb") as f:
+            self.assertEqual(f.read(), b"Y" * 20000)
+        self.assertEqual(counts(up()), (0, 2, False))
 
     def test_a_board_on_an_image_and_a_release_without_one(self):
         """The release chosen has no image (an older one): its files would hide the

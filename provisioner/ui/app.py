@@ -1914,7 +1914,9 @@ class App:
             d.fill_rrect(22 + x, bar_y + 2, 96, 22, 7, EMBER)
         y = TOP + 104
         if t.done:
-            msg = wrap(d, F20, t.msg, W - 80)[:4]
+            msg = wrap(d, F20, t.msg, W - 80)
+            if len(msg) > 4:                    # a long one (what takes the board's room): smaller, all of it
+                msg = wrap(d, F16, t.msg, W - 80)[:8]
             d.fill_rrect(20, y, W - 40, 20 + 28 * len(msg), 8, PANEL)
             for i, s in enumerate(msg):
                 d.text(F20, 36, y + 10 + i * 28, s, OK if t.ok else ERROR, W - 72)

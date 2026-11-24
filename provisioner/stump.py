@@ -521,6 +521,7 @@ def upload_plan(files, have, free):
     written goes beside the old one before the swap, so the biggest needs its
     room on top of what the update adds. {write, skip, need, free, short}."""
     write, skip, grow, biggest = [], [], 0, 0
+    new, changed = [0, 0], [0, 0]                # [how many, bytes]
     for f in files:
         h = have.get(f[0])
         if h and h[0] == f[2] and h[1] == len(f[1]):
@@ -529,8 +530,29 @@ def upload_plan(files, have, free):
         write.append(f)
         grow += len(f[1]) - (h[1] if h else 0)
         biggest = max(biggest, len(f[1]))
+        c = changed if h else new
+        c[0] += 1
+        c[1] += len(f[1])
     need = max(0, grow) + biggest + SPACE_MARGIN if write else 0
-    return {"write": write, "skip": skip, "need": need, "free": free, "short": free is not None and need > free}
+    # Written over the old ones (not beside them): only what the update adds.
+    in_place = max(0, grow) + SPACE_MARGIN if write else 0
+    return {"write": write, "skip": skip, "need": need, "free": free, "short": free is not None and need > free,
+            "in_place": in_place, "new": tuple(new), "changed": tuple(changed)}
+
+
+# Never written over in place, whatever the room: its settings and identity
+# (a cut cable mid-file would lose them); the board's own stamps too.
+KEEP_BESIDE = re.compile(r"^(config\.py|rns/)")
+
+
+def what_it_writes(plan):
+    """In words: how many files are new to the board, how many changed."""
+    parts = []
+    if plan["new"][0]:
+        parts.append("%d new to it (%s)" % (plan["new"][0], _kb(plan["new"][1])))
+    if plan["changed"][0]:
+        parts.append("%d changed (%s)" % (plan["changed"][0], _kb(plan["changed"][1])))
+    return ", ".join(parts) or "nothing"
 
 
 def clear_leftovers(repl):
@@ -583,17 +605,24 @@ def upload(repl, files, progress=None, chunk=3072):
     everything = files
     have, free = have_on_board(repl, [p for p, _, _ in files])
     plan = upload_plan(files, have, free)
+    in_place = False
     if plan["short"]:
         gone = clear_leftovers(repl)
         have, free = have_on_board(repl, [p for p, _, _ in files])
         plan = upload_plan(files, have, free)
-        if plan["short"]:
+        if plan["short"] and plan["in_place"] <= plan["free"]:
+            # No room for a new file beside its old one, but room for what the
+            # update adds: each written over the old one instead (a cut cable
+            # mid-file leaves that one file broken; writing again mends it).
+            in_place = True
+        elif plan["short"]:
             use = [] if files and files[0][0].startswith(CARD_ROOT + "/") else flash_use(repl)
             raise StumpError(
-                "The board's storage is full: this needs about %s free, it has %s%s. Nothing was written.%s An "
-                "installed pack can be removed to make room, or the Stump made again as new (it erases the board)."
-                % (_kb(plan["need"]), _kb(plan["free"]), " (after removing %d leftovers)" % gone if gone else "",
-                   " What takes the room: %s." % ", ".join("%s %s" % (k, _kb(v)) for k, v in use[:6]) if use else ""))
+                "The board's storage is full: this needs about %s free, it has %s%s. Nothing was written. To write: "
+                "%s.%s Remove an installed pack to make room, or make the Stump again as new (it erases the board)."
+                % (_kb(plan["in_place"]), _kb(plan["free"]), " (after removing %d leftovers)" % gone if gone else "",
+                   what_it_writes(plan),
+                   " Taking the room: %s." % ", ".join("%s %s" % (k, _kb(v)) for k, v in use[:4]) if use else ""))
     files = plan["write"]
     total = sum(len(d) for _, d, _ in files)
     dirs = set()
@@ -608,6 +637,8 @@ def upload(repl, files, progress=None, chunk=3072):
     for path, data, sha in files:
         tmp = path + ".part"
         progress(done, total, path)
+        if in_place and path in have and not KEEP_BESIDE.search(path):
+            repl.run("import os\ntry:\n os.remove(%s)\nexcept OSError:\n pass\n" % py(path))
         if not data:
             repl.run("open(%s,'wb').close()\n" % py(tmp))
         for off in range(0, len(data), chunk):
@@ -642,7 +673,8 @@ def upload(repl, files, progress=None, chunk=3072):
     if gone:
         repl.run("import os\nfor p in %s:\n try:\n  os.remove(p)\n except OSError:\n  pass\n" % json.dumps(gone))
     progress(total, total, "")
-    return {"written": len(plan["write"]), "skipped": len(plan["skip"])}
+    return {"written": len(plan["write"]), "skipped": len(plan["skip"]), "in_place": in_place,
+            "what": what_it_writes(plan)}
 
 
 # -- settings (config.py), by the Stump's own settings.py ---------------------
@@ -1189,7 +1221,10 @@ def make(bundle, answers, open_link, flash, step, progress, log, update=False, c
                 left = int((total - done) / (done / sec))
                 log("%d of %d KB · about %s left · %s" % (done // 1024, total // 1024,
                                                            "%d min" % (left // 60) if left > 90 else "%d s" % left, path))
-        upload(repl, files, prog)
+        up = upload(repl, files, prog)
+        log("written: %s; %d already there and the same" % (up["what"], up["skipped"]))
+        if up["in_place"]:
+            log("little room on it: each file written over the old one")
         if update and bundle.retired:
             old = remove_retired(repl, bundle.retired, bundle.builtins)
             if old:

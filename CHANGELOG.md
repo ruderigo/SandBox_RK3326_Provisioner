@@ -22,6 +22,15 @@ its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
   doesn't come through, and if it never does it says so ("its answers
   didn't come through: unplug it, plug it back in, try again") instead of
   a wrong reason.
+- **A nearly full board can still be updated.** Each file used to be
+  written beside the old one before the swap, so the biggest needed its
+  room on top (a WROVER with its packs: "needs 843 KB, it has 48 KB",
+  updating the Stump and its packs alike). When only that copy doesn't fit,
+  each file is now written over the old one: the room needed is only what
+  the update adds. Its settings and identity (`config.py`, `rns/`) are
+  never written that way. Still short: it says how many files are new and
+  how many changed, and what takes the room; the message shows whole now
+  (a long one used to be cut after four lines).
 
 
 
