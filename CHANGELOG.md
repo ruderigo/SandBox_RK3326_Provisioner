@@ -31,6 +31,12 @@ its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
   never written that way. Still short: it says how many files are new and
   how many changed, and what takes the room; the message shows whole now
   (a long one used to be cut after four lines).
+- **A pack's list read again.** After a pack is copied (each file checked),
+  its list of packs is asked for again when the answer doesn't come
+  through; if it never does, the pack still counts as installed, noted in
+  the log ("couldn't read its packs" after 100 % on a WROVER, 2026-11-24).
+  When an answer doesn't come through, the log shows what the board said
+  instead.
 
 
 

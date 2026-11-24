@@ -342,7 +342,12 @@ def install(plan, open_link, step, progress, log, answers=None, builtins=None, r
                 step("Its settings")
                 stump.write_settings(repl, values)
                 written = sorted(values)
-        installed = board_packs(repl, builtins) if builtins is not None else None
+        installed = None
+        if builtins is not None:
+            try:
+                installed = board_packs(repl, builtins)
+            except stump.StumpError as e:     # it's on the board (each file checked): only the list is missing
+                log("its packs couldn't be listed after: %s" % e)
         step("Restarting it")
         stump.restart(repl)
     finally:
@@ -405,15 +410,16 @@ def board_packs(repl, builtins):
     """{plugin: its record, or None (installed before 1.0.0-beta.75, or by
     hand)} for the board's plugins that aren't built in."""
     skip = list(builtins or []) + NOT_PACKS
-    out = repl.run(
+    m = stump.asked(repl,
         "import os,json\nout={}\nfor n in os.listdir():\n if n in %s:\n  continue\n ok=False\n"
         " for f in ('/install.py','/install.mpy'):\n  try:\n   os.stat(n+f)\n   ok=True\n  except OSError:\n   pass\n"
         " if not ok:\n  continue\n r=None\n try:\n  with open(n+'/%s') as f:\n   r=json.loads(f.read())\n"
-        " except Exception:\n  pass\n out[n]=r\nprint('PACKS'+json.dumps(out))\n" % (json.dumps(skip), PACK_MARK), 30)
-    m = re.search(r"PACKS(\{.*\})", out)
-    if not m:
-        raise stump.StumpError("couldn't read its packs")
-    found = json.loads(m.group(1))
+        " except Exception:\n  pass\n out[n]=r\nprint('PACKS'+json.dumps(out))\n" % (json.dumps(skip), PACK_MARK),
+        r"PACKS(\{.*\})", secs=30)
+    try:
+        found = json.loads(m.group(1))
+    except ValueError:
+        raise stump.StumpError("couldn't read its packs (its answer came back cut)")
     return dict((k, v if isinstance(v, dict) else None) for k, v in found.items())
 
 

@@ -405,15 +405,20 @@ NO_ANSWER = ("The board's answers didn't come through: it printed something of i
              "USB connection dropped. Unplug it, plug it back in and try again.")
 
 
-def asked(repl, code, pat, tries=3):
+def asked(repl, code, pat, tries=3, secs=30.0):
     """A question to the board, asked again when its answer doesn't come
     through (something it printed by itself mixed in): the match, or
     StumpError (NO_ANSWER)."""
+    out = ""
     for _ in range(tries):
-        m = re.search(pat, repl.run(code))
+        out = repl.run(code, secs)
+        m = re.search(pat, out)
         if m:
             return m
         time.sleep(0.3)
+    log = getattr(repl, "log", None)
+    if log:                                   # what came instead, for the log screen
+        log("its answer didn't come through; it said: %r" % out.strip()[-160:])
     raise StumpError(NO_ANSWER)
 
 
