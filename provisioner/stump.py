@@ -433,7 +433,7 @@ def asked(repl, code, pat, tries=3, secs=30.0):
 # fine; R36MAX, 2026-11-24). 64 bytes every 8 ms: about 8 KB/s, under the
 # line's 11.5.
 PACED_PRINT = ("def print(*a, end='\\n'):\n import sys, time\n s=' '.join(str(x) for x in a)+end\n"
-               " for i in range(0, len(s), 64):\n  sys.stdout.write(s[i:i+64])\n  time.sleep_ms(8)\n")
+               " for i in range(0, len(s), 64):\n  sys.stdout.write(s[i:i+64])\n  time.sleep(0.008)\n")
 
 
 def asked_json(repl, code, tag, secs=30.0, tries=3, empty=r"\{.*\}"):
