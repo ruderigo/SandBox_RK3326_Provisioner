@@ -210,6 +210,66 @@ class Refused(MakeAStump):
         self.assertEqual(self.flashed, [])
         self.assertEqual(self.links, [])
 
+    def test_what_it_prints_by_itself_isnt_an_answer(self):
+        """ESP-IDF's Wi-Fi log after the soft reboot (boot.py turned the Wi-Fi
+        on): it used to read as the board's answer ("MicroPython , .mpy , ?",
+        then "needs 1.28.0" on an update)."""
+        self.flags = ["--idf-log"]
+        with open(os.path.join(self.root, "config.py"), "w") as f:
+            f.write("NODE_NAME = 'x'\n")
+        ok, msg = self.make(update=True)
+        self.assertNotIn("MicroPython ,", " ".join(self.log))
+        self.assertTrue(any(l.startswith("MicroPython 1.") for l in self.log), self.log)
+
+    def test_no_answer_said_as_it_is(self):
+        class Silent:
+            def run(self, code, secs=30.0):
+                return "I (5123) wifi:mode : softAP\r\n"
+        with self.assertRaisesRegex(stump.StumpError, "didn't come through whole"):
+            stump.board_info(Silent())
+        with self.assertRaisesRegex(stump.StumpError, "didn't come through whole"):
+            stump.board_image(Silent())
+        with open(stump.LAST_ANSWER) as f:                 # all of what came, every try, kept for the team
+            kept = f.read()
+        self.assertIn("import stump_image", kept)
+        self.assertEqual(kept.count("chars came:\n'I (5123) wifi:mode : softAP\\r\\n'"), 4)
+        self.assertIn("16 bytes every 40 ms", kept)
+
+    def test_only_an_answer_that_came_whole_is_one(self):
+        """Its length and checksum with every line (a WROVER's USB lost bytes,
+        2026-11-24): cut by a line it printed ("Expecting ',' delimiter: column
+        1342"), or short of a piece and still JSON (the image's module list a
+        few names short: a built-in module copied beside the image, "no module
+        named 'urns.mem'" at its start), it's asked again, slower."""
+        whole = 'HAVE{"files": {"a.py": ["ab", 3], "urns/lxmf.py": ["cd", 4]}, "free": 100}'
+        sealed = stump.seal(whole)
+
+        class Board:
+            n, codes = 0, []
+
+            def run(self, code, secs=30.0):
+                self.codes.append(code)
+                self.n += 1
+                if self.n == 1:                      # a line of its own in the middle
+                    return sealed[:30] + "I (5123) wifi:mode : softAP\r\n" + sealed[30:] + "\r\n"
+                if self.n == 2:                      # a piece lost: still JSON, not what it sent
+                    return sealed.replace('"a.py": ["ab", 3], ', "") + "\r\n"
+                return "I (77) boot: x\r\n" + sealed + "\r\n"
+        b = Board()
+        self.assertEqual(stump.have_on_board(b, ["a.py"]), ({"a.py": ("ab", 3), "urns/lxmf.py": ("cd", 4)}, 100))
+        self.assertEqual(b.n, 3)
+        self.assertTrue(b.codes[0].startswith(stump.paced_print(64, 8)))      # slower each time
+        self.assertTrue(b.codes[2].startswith(stump.paced_print(16, 20)))
+        self.assertEqual(stump.whole_lines(sealed + "\r\n" + sealed[:-1] + "\r\nplain\r\n"), [whole])
+
+    def test_the_modules_built_in_are_the_releases_own_list(self):
+        class B:
+            image_head = {"release": "1.0.0-beta.88", "partitions": "stump-1", "frozen": ["urns/mem.py", "rrc.py"]}
+        said = {"release": "1.0.0-beta.88", "partitions": "stump-1", "frozen": ["rrc.py"]}       # a name short
+        self.assertEqual(stump.frozen_of(said, B), ["urns/mem.py", "rrc.py"])
+        self.assertEqual(stump.frozen_of(dict(said, release="1.0.0-beta.86"), B), ["rrc.py"])   # another image: its own word
+        self.assertEqual(stump.frozen_of(None, B), [])
+
     def test_a_running_stump_is_stopped_first_and_plain_raw_mode_works(self):
         global BUNDLE
         self.flags = ["--running", "--no-paste"]
@@ -379,14 +439,17 @@ class StumpImages(unittest.TestCase):
                 link.close()
                 for k in env:
                     os.environ.pop(k, None)
-        self.assertEqual(up(), {"written": 2, "skipped": 0})
-        self.assertEqual(up(), {"written": 0, "skipped": 2})          # the same: nothing written
+        def counts(r):
+            return r["written"], r["skipped"], r["in_place"]
+        self.assertEqual(counts(up()), (2, 0, False))
+        self.assertEqual(counts(up()), (0, 2, False))                  # the same: nothing written
         files[1] = ("app/y.mpy", b"Y" * 20000, hashlib.sha256(b"Y" * 20000).hexdigest())
         with open(os.path.join(self.root, "app", "z.py.part"), "w") as f:
             f.write("a write cut short")
         with self.assertRaises(stump.StumpError) as e:
-            up(FAKE_FREE="20000")                                     # needs 20 KB + 16 KB: short
+            up(FAKE_FREE="12000")                                     # 16 KB even written in place: short
         self.assertIn("storage is full", str(e.exception))
+        self.assertIn("To write: 1 changed (20 KB)", str(e.exception))
         self.assertIn("Nothing was written", str(e.exception))
         self.assertIn("(after removing 1 leftovers)", str(e.exception))
         self.assertIn("app/", str(e.exception))                       # what takes the room
@@ -397,7 +460,14 @@ class StumpImages(unittest.TestCase):
         self.assertIn("filled up while writing app/y.mpy", str(e.exception))
         with open(os.path.join(self.root, "app", "y.mpy"), "rb") as f:
             self.assertEqual(f.read(), b"y" * 20000)                  # the old one kept
-        self.assertEqual(up(), {"written": 1, "skipped": 1})          # room again: only the changed one
+        # Room for what it adds, not for a copy beside the old one (a WROVER with
+        # its packs, R36MAX 2026-11-24: "needs 843 KB, it has 48 KB"): written in place.
+        r = up(FAKE_FREE="24000")
+        self.assertEqual(counts(r), (1, 1, True))
+        self.assertEqual(r["what"], "1 changed (20 KB)")
+        with open(os.path.join(self.root, "app", "y.mpy"), "rb") as f:
+            self.assertEqual(f.read(), b"Y" * 20000)
+        self.assertEqual(counts(up()), (0, 2, False))
 
     def test_a_board_on_an_image_and_a_release_without_one(self):
         """The release chosen has no image (an older one): its files would hide the
@@ -522,6 +592,11 @@ class Rules(unittest.TestCase):
                                "[web] serving on 192.168.4.1:80\r\nTraceback (most recent call last):\r\n")
         self.assertEqual((b["release"], b["micropython"], b["serving"]), ("1.0.0-beta.47", "v1.28.0", True))
         self.assertTrue(b["problems"])
+        # It says itself it's fine (a WROVER has no battery pin, 2026-11-24): a note, not a problem.
+        b = stump.boot_summary("Project Stump -- Beta A (1.0.0-beta.88)\r\n[adc_reader] battery init failed "
+                               "(non-fatal, continuing without it): invalid pin\r\n[web] serving on port 80\r\n")
+        self.assertEqual(b["problems"], [])
+        self.assertIn("non-fatal", b["notes"][0])
 
     def test_passwords_as_beta58(self):
         v = stump.settings_from(answers())["values"]                          # the bot takes the same one

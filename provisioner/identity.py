@@ -123,13 +123,13 @@ def board_read(repl, tries=2):
             "  d[p]=[binascii.b2a_base64(b).decode().strip(),len(b),binascii.hexlify(hashlib.sha256(b).digest()).decode()]\n"
             " except OSError:\n  pass\nprint('ID'+json.dumps(d))\n" % json.dumps(list(IDENTITY_FILES)))
     for n in range(tries):
-        out = repl.run(code, 30)
-        m = re.search(r"ID(\{.*\})", out)
+        try:                                  # whole (its length and checksum), or asked again
+            got = stump.asked_json(repl, code, "ID", 30)
+        except stump.StumpError:
+            continue
         try:
-            if not m:
-                raise ValueError
             files = {}
-            for k, (v, size, digest) in json.loads(m.group(1)).items():
+            for k, (v, size, digest) in got.items():
                 if k in IDENTITY_FILES:
                     b = base64.b64decode(v)
                     if len(b) != size or hashlib.sha256(b).hexdigest() != digest:
@@ -152,12 +152,11 @@ def board_put(repl, files):
 
 
 def _name(repl):
-    out = repl.run("import json\ntry:\n import config\n n=getattr(config,'NODE_NAME','')\nexcept Exception:\n n=''\n"
-                   "print('NAME'+json.dumps(n if isinstance(n,str) else ''))\n", 20)
-    m = re.search(r"NAME(\".*\")", out)
     try:
-        return (json.loads(m.group(1)) or None) if m else None
-    except ValueError:
+        return stump.asked_json(repl, "import json\ntry:\n import config\n n=getattr(config,'NODE_NAME','')\n"
+                                      "except Exception:\n n=''\nprint('NAME'+json.dumps(n if isinstance(n,str) else ''))\n",
+                                "NAME", 20, empty=r'".*"') or None
+    except stump.StumpError:
         return None
 
 

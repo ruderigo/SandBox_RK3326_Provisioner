@@ -25,6 +25,7 @@ control when the board has it, as mpremote and Arborist do.
 """
 
 import base64
+import binascii
 import gzip
 import hashlib
 import json
@@ -39,6 +40,9 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "vendor"))
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW_BANNER = b"raw REPL; CTRL-B to exit\r\n>"
+# ESP-IDF's own log (the Wi-Fi's, as a Stump's boot.py turns it on) off while
+# we talk to it: it shares the serial line and lands in the middle of answers.
+QUIET_LOG = "try:\n import esp\n esp.osdebug(None)\nexcept Exception:\n pass\n"
 QUIET_WATCHDOG = "try:\n import machine\n machine.WDT(timeout=7200000).feed()\nexcept Exception:\n pass\n"
 FEATURES = ["chat", "billboard", "files", "about"]
 THEMES = ["paper", "amber", "phosphor", "oled"]
@@ -92,6 +96,17 @@ def images_in(d, release=None):
         if m and (release is None or m.group(1) == release):
             out[m.group(2)] = os.path.join(d, n)
     return out
+
+
+def frozen_of(image, bundle):
+    """The modules built into the image a board runs: the release's own list
+    (stump_image.py, on the shelf with it) when the board runs that release's
+    image, else what the board says."""
+    head = getattr(bundle, "image_head", None) or {}
+    if image and head.get("frozen") and image.get("release") == head.get("release") \
+            and image.get("partitions") == head.get("partitions"):
+        return head["frozen"]
+    return (image or {}).get("frozen") or []
 
 
 def not_frozen(files, frozen):
@@ -330,13 +345,31 @@ class Repl:
         self.write(b"\x04")
         self.read_until(b"\x04", 10)
 
+    def paste_reply(self, secs=3.0):
+        """Its answer to the raw-paste request (R\\x01 yes, R\\x00 no), past
+        anything it printed by itself meanwhile (ESP-IDF's log): those two
+        bytes, or the first two it said when neither came."""
+        seen = b""
+        end = time.time() + secs
+        while time.time() < end and len(seen) < 4096:
+            try:
+                seen += self.read_n(1, max(0.1, end - time.time()))
+            except StumpError:
+                if self._dead() or not seen:
+                    raise
+                break
+            if seen[-2:] in (b"R\x01", b"R\x00"):
+                return seen[-2:]
+        return seen[:2]
+
     def exec(self, code, secs=30.0):
         """(out, err) of code run on the board (err: the traceback, or "")."""
         data = code.encode() if isinstance(code, str) else code
+        self.drain()          # what it printed by itself since (ESP-IDF's Wi-Fi log, a boot.py): not an answer
         plain = self.raw_paste is False
         if not plain:
             self.write(b"\x05A\x01")
-            r = self.read_n(2, 3)
+            r = self.paste_reply()
             if r == b"R\x01":
                 self.raw_paste = True
                 self._paste(data)
@@ -373,6 +406,7 @@ def prepare(repl, secs=5.0):
     repl.enter_raw(secs)
     repl.run(QUIET_WATCHDOG)
     repl.soft_reset()
+    repl.run(QUIET_LOG)
 
 
 def restart(repl):
@@ -383,13 +417,140 @@ def restart(repl):
     time.sleep(0.3)
 
 
+NO_ANSWER = ("The board's answers didn't come through whole, asked several times: something on its USB line "
+             "loses or adds bytes (the cable, the hub, its power). Unplug it, plug it back in and try again.")
+
+# Every answer comes with its length and checksum, in small pieces.
+#
+# A WROVER's USB-serial chip (CH340) on the RK3326's USB lost bytes from
+# what the board sent (R36MAX, 2026-11-24). A long answer read "Expecting ','
+# delimiter: column 1342", or worse, still read as JSON with pieces missing:
+# the Stump image's list of built-in modules came back a few names short, a
+# file of the built-in `urns` was copied beside the image for it, and the
+# Stump stopped at its start on "no module named 'urns.mem'" (the copy hid
+# the built-in package). And what the board prints by itself (ESP-IDF's
+# Wi-Fi log) lands in the middle of answers.
+#
+# So the board's print is replaced while we talk to it: each line ends with
+# ~~c<crc32>~<length> and goes out a few bytes at a time with a pause. Only
+# a line whose length and checksum match is an answer; anything else is
+# asked again, slower each time (64 bytes every 8 ms, 32 every 12, 16 every
+# 20). Never a guess: NO_ANSWER when it never comes whole.
+PACES = ((64, 8), (32, 12), (16, 20), (16, 40))
+
+
+def paced_print(chunk=64, ms=8):
+    return ("def print(*a, end='\\n'):\n import sys, time\n s=' '.join(str(x) for x in a)\n b=s.encode()\n"
+            " try:\n  import binascii\n  c=binascii.crc32(b)&0xffffffff\n  k='c'\n"
+            " except Exception:\n  c=0\n  k='f'\n  for x in b:\n   c=(c*31+x)&0xffffffff\n"
+            " s=s+'~~%s%08x~%d' % (k,c,len(b))+end\n"
+            " for i in range(0, len(s), " + str(chunk) + "):\n  sys.stdout.write(s[i:i+" + str(chunk) + "])\n"
+            "  time.sleep(" + str(ms / 1000.0) + ")\n")
+
+
+def _sum(kind, b):
+    if kind == "c":
+        return binascii.crc32(b) & 0xffffffff
+    c = 0
+    for x in b:
+        c = (c * 31 + x) & 0xffffffff
+    return c
+
+
+def seal(s):
+    """A line as the board's print sends it (the tests' pretend boards use it)."""
+    b = s.encode()
+    return "%s~~c%08x~%d" % (s, _sum("c", b), len(b))
+
+
+def whole_lines(out):
+    """The lines of what the board said that came whole: length and checksum right."""
+    good = []
+    for line in out.replace("\r", "").split("\n"):
+        m = re.match(r"^(.*)~~([cf])([0-9a-f]{8})~(\d+)$", line, re.S)
+        if not m:
+            continue
+        b = m.group(1).encode()
+        if len(b) == int(m.group(4)) and _sum(m.group(2), b) == int(m.group(3), 16):
+            good.append(m.group(1))
+    return good
+
+
+LAST_ANSWER = os.path.join(tempfile.gettempdir(), "provisioner-last-answer.txt")
+
+
+def asked(repl, code, pat, tries=4, secs=30.0):
+    """A question to the board: the match of pat in a line that came whole,
+    asked again (slower) when none did, or StumpError (NO_ANSWER). What came
+    each time is then kept, whole, in LAST_ANSWER (for the team)."""
+    out, came = "", []
+    for n in range(tries):
+        pace = PACES[min(n, len(PACES) - 1)]
+        try:
+            out = repl.run(paced_print(*pace) + code, secs)
+        except StumpError as e:
+            came.append((pace, "stopped: %s" % e))
+            _keep(repl, code, came)
+            raise
+        for line in whole_lines(out):
+            m = re.search(pat, line)
+            if m:
+                return m
+        came.append((pace, out))
+        time.sleep(0.3)
+    log = getattr(repl, "log", None)
+    if log:                                   # what came instead, for the log screen
+        log("its answer didn't come through whole; it said: %r" % out.strip()[-160:])
+        log("all of it is kept in %s" % LAST_ANSWER)
+    _keep(repl, code, came)
+    raise StumpError(NO_ANSWER)
+
+
+def _keep(repl, code, came):
+    try:
+        chip = getattr(getattr(getattr(repl, "link", None), "s", None), "chip", None)
+        with open(LAST_ANSWER, "w") as f:
+            f.write("%s\nreader: %s\nasked:\n%s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"),
+                    getattr(chip, "streaming", "not a ch340:// port"), code))
+            for pace, out in came:
+                f.write("\n%d bytes every %d ms, %d chars came:\n%r\n" % (pace[0], pace[1], len(out), out))
+    except Exception:
+        pass
+
+
+def asked_json(repl, code, tag, secs=30.0, tries=4, empty=r"\{.*\}"):
+    """A question whose answer is one JSON line after tag (TAG{...}): the value."""
+    m = asked(repl, code, re.escape(tag) + "(" + empty + ")$", tries, secs)
+    try:
+        return json.loads(m.group(1))
+    except ValueError:                        # whole, and not JSON: the board's own doing
+        raise StumpError("the board's answer isn't what was asked: %r" % m.group(1)[:80])
+
+
+def modules_load(repl, names=("urns.mem", "boot_common")):
+    """Before it restarts: the Stump's mesh code imports, as it will at its
+    start ("ImportError: no module named 'urns.mem'" after Make a Stump on a
+    WROVER, 2026-11-24, with no way to tell why). None, or what's wrong in
+    words: the error, where urns came from, the import path."""
+    if not names:
+        return None
+    m = asked(repl, "import sys\ntry:\n import " + ", ".join(names) + "\n print('MOD'+'OK')\nexcept Exception as e:\n"
+                    " w=''\n try:\n  import urns\n  w=getattr(urns,'__file__','') or str(getattr(urns,'__path__',''))\n"
+                    " except Exception:\n  pass\n print('MOD'+'BAD|%r|%s|%s' % (e, w, sys.path))\n",
+              r"MOD(OK|BAD\|[^\r\n]*)")
+    if m.group(1) == "OK":
+        return None
+    _, err, where, path = (m.group(1).split("|") + ["", "", ""])[:4]
+    return ("Its files are in, but the Stump's code doesn't load: %s. urns comes from %s; it looks in %s. "
+            "Nothing else was changed; send this to the team." % (err, where or "nowhere", path))
+
+
 def board_info(repl):
-    out = repl.run("import sys, os\nv=getattr(sys.implementation,'_mpy',0)\n"
-                   "print('INFO', '.'.join(str(x) for x in sys.implementation.version[:3]), "
-                   "'%d.%d' % (v & 0xff, (v >> 8) & 3), os.uname().machine.replace(' ', '_'))\n")
-    m = re.search(r"INFO (\S+) (\S+) ?(\S*)", out)
-    return {"release": m.group(1), "mpy": m.group(2), "machine": m.group(3).replace("_", " ")} if m else \
-        {"release": "", "mpy": "", "machine": ""}
+    m = asked(repl, "import sys, os\nv=getattr(sys.implementation,'_mpy',0)\n"
+                    "print('INFO', '.'.join(str(x) for x in sys.implementation.version[:3]), "
+                    "'%d.%d' % (v & 0xff, (v >> 8) & 3), os.uname().machine.replace(' ', '_'))\n",
+              r"INFO (\d+\.\d+\.\d+) (\d+\.\d+) ?(\S*)")
+    return {"release": m.group(1), "mpy": m.group(2), "machine": m.group(3).replace("_", " ")}
 
 
 def version_newer(a, b):
@@ -406,19 +567,15 @@ def chip_of(machine):
 def board_image(repl):
     """What a board running a Stump image says of it (stump_image.py, frozen
     in): {release, partitions, frozen}, or None (plain MicroPython)."""
-    out = repl.run("import json\ntry:\n import stump_image as s\n print('IMG'+json.dumps({'release':s.RELEASE,"
-                   "'partitions':s.PARTITIONS,'frozen':s.FROZEN}))\nexcept ImportError:\n print('IMGnone')\n")
-    m = re.search(r"IMG(\{.*\})", out)
-    try:
-        return json.loads(m.group(1)) if m else None
-    except ValueError:
-        return None
+    return asked_json(repl, "import json\ntry:\n import stump_image as s\n print('IMG'+json.dumps({'release':s.RELEASE,"
+                            "'partitions':s.PARTITIONS,'frozen':s.FROZEN}))\nexcept ImportError:\n print('IMGnull')\n",
+                      "IMG", empty=r"null|\{.*\}")
 
 
 def memory(repl):
     """Its memory at the prompt (bytes), or None: PSRAM gives megabytes."""
-    m = re.search(r"MEM(\d+)", repl.run("import gc\ngc.collect()\nprint('MEM%d' % (gc.mem_free() + gc.mem_alloc()))\n"))
-    return int(m.group(1)) if m else None
+    return int(asked(repl, "import gc\ngc.collect()\nprint('MEM%d' % (gc.mem_free() + gc.mem_alloc()))\n",
+                     r"MEM(\d+)$").group(1))
 
 
 def remove_frozen_copies(repl, frozen):
@@ -452,14 +609,14 @@ def remove_retired(repl, paths, builtins):
 
 def config_sha(repl):
     """The SHA-256 of its config.py, or "" (to tell it's the board read earlier)."""
-    out = repl.run("import hashlib,binascii\ntry:\n h=hashlib.sha256(open('config.py','rb').read())\n"
-                   " print('SHA'+binascii.hexlify(h.digest()).decode())\nexcept OSError:\n print('SHA')\n", 30)
-    m = re.search(r"SHA([0-9a-f]{64})", out)
-    return m.group(1) if m else ""
+    return asked(repl, "import hashlib,binascii\ntry:\n h=hashlib.sha256(open('config.py','rb').read())\n"
+                       " print('SHA'+binascii.hexlify(h.digest()).decode())\nexcept OSError:\n print('SHA')\n",
+                 r"SHA([0-9a-f]{64})?$").group(1) or ""
 
 
 def has_stump(repl):
-    return "YES" in repl.run("import os\ntry:\n os.stat('config.py')\n print('YES')\nexcept OSError:\n print('NO')\n")
+    return asked(repl, "import os\ntry:\n os.stat('config.py')\n print('HAS'+'YES')\nexcept OSError:\n print('HAS'+'NO')\n",
+                 r"HAS(YES|NO)").group(1) == "YES"
 
 
 SPACE_MARGIN = 16384
@@ -470,14 +627,12 @@ def have_on_board(repl, paths):
     """What's on the board for these paths: ({path: (sha256, size)}, bytes
     free where they go, or None)."""
     root = CARD_ROOT if paths and paths[0].startswith(CARD_ROOT + "/") else "/"
-    out = repl.run(
+    d = asked_json(repl,
         "import os,hashlib,binascii,json\nr={}\nfor p in %s:\n try:\n  n=os.stat(p)[6]\n"
         "  h=hashlib.sha256()\n  f=open(p,'rb')\n  while 1:\n   b=f.read(2048)\n   if not b:\n    break\n   h.update(b)\n"
         "  f.close()\n  r[p]=[binascii.hexlify(h.digest()).decode(),n]\n except OSError:\n  pass\n"
         "try:\n s=os.statvfs(%s)\n fr=(s[1] or s[0])*s[3]\nexcept (OSError,AttributeError):\n fr=None\n"
-        "print('HAVE'+json.dumps({'files':r,'free':fr}))\n" % (json.dumps(list(paths)), py(root)), 180)
-    m = re.search(r"HAVE(\{.*\})", out)
-    d = json.loads(m.group(1)) if m else {"files": {}, "free": None}
+        "print('HAVE'+json.dumps({'files':r,'free':fr}))\n" % (json.dumps(list(paths)), py(root)), "HAVE", 180)
     return dict((k, tuple(v)) for k, v in d["files"].items()), d["free"]
 
 
@@ -487,6 +642,7 @@ def upload_plan(files, have, free):
     written goes beside the old one before the swap, so the biggest needs its
     room on top of what the update adds. {write, skip, need, free, short}."""
     write, skip, grow, biggest = [], [], 0, 0
+    new, changed = [0, 0], [0, 0]                # [how many, bytes]
     for f in files:
         h = have.get(f[0])
         if h and h[0] == f[2] and h[1] == len(f[1]):
@@ -495,8 +651,29 @@ def upload_plan(files, have, free):
         write.append(f)
         grow += len(f[1]) - (h[1] if h else 0)
         biggest = max(biggest, len(f[1]))
+        c = changed if h else new
+        c[0] += 1
+        c[1] += len(f[1])
     need = max(0, grow) + biggest + SPACE_MARGIN if write else 0
-    return {"write": write, "skip": skip, "need": need, "free": free, "short": free is not None and need > free}
+    # Written over the old ones (not beside them): only what the update adds.
+    in_place = max(0, grow) + SPACE_MARGIN if write else 0
+    return {"write": write, "skip": skip, "need": need, "free": free, "short": free is not None and need > free,
+            "in_place": in_place, "new": tuple(new), "changed": tuple(changed)}
+
+
+# Never written over in place, whatever the room: its settings and identity
+# (a cut cable mid-file would lose them); the board's own stamps too.
+KEEP_BESIDE = re.compile(r"^(config\.py|rns/)")
+
+
+def what_it_writes(plan):
+    """In words: how many files are new to the board, how many changed."""
+    parts = []
+    if plan["new"][0]:
+        parts.append("%d new to it (%s)" % (plan["new"][0], _kb(plan["new"][1])))
+    if plan["changed"][0]:
+        parts.append("%d changed (%s)" % (plan["changed"][0], _kb(plan["changed"][1])))
+    return ", ".join(parts) or "nothing"
 
 
 def clear_leftovers(repl):
@@ -516,14 +693,12 @@ def clear_leftovers(repl):
 
 def flash_use(repl):
     """What takes the room on the board: [(folder, bytes)], the biggest first."""
-    out = repl.run(
+    d = asked_json(repl,
         "import os,json\ndef size(p):\n t=0\n try:\n  es=list(os.ilistdir(p))\n except OSError:\n  return 0\n"
         " for e in es:\n  q=p+'/'+e[0]\n  if e[1]==0x4000:\n   t+=size(q)\n  else:\n   try:\n    t+=os.stat(q)[6]\n"
         "   except OSError:\n    pass\n return t\nd={}\nfor e in os.ilistdir('.'):\n if e[0]=='sd':\n  continue\n"
         " d[e[0]+('/' if e[1]==0x4000 else '')]=size(e[0]) if e[1]==0x4000 else os.stat(e[0])[6]\n"
-        "print('USE'+json.dumps(d))\n", 60)
-    m = re.search(r"USE(\{.*\})", out)
-    d = json.loads(m.group(1)) if m else {}
+        "print('USE'+json.dumps(d))\n", "USE", 60)
     use = [(k, v) for k, v in d.items() if k.endswith("/")]
     top = sum(v for k, v in d.items() if not k.endswith("/"))
     if top:
@@ -549,17 +724,24 @@ def upload(repl, files, progress=None, chunk=3072):
     everything = files
     have, free = have_on_board(repl, [p for p, _, _ in files])
     plan = upload_plan(files, have, free)
+    in_place = False
     if plan["short"]:
         gone = clear_leftovers(repl)
         have, free = have_on_board(repl, [p for p, _, _ in files])
         plan = upload_plan(files, have, free)
-        if plan["short"]:
+        if plan["short"] and plan["in_place"] <= plan["free"]:
+            # No room for a new file beside its old one, but room for what the
+            # update adds: each written over the old one instead (a cut cable
+            # mid-file leaves that one file broken; writing again mends it).
+            in_place = True
+        elif plan["short"]:
             use = [] if files and files[0][0].startswith(CARD_ROOT + "/") else flash_use(repl)
             raise StumpError(
-                "The board's storage is full: this needs about %s free, it has %s%s. Nothing was written.%s An "
-                "installed pack can be removed to make room, or the Stump made again as new (it erases the board)."
-                % (_kb(plan["need"]), _kb(plan["free"]), " (after removing %d leftovers)" % gone if gone else "",
-                   " What takes the room: %s." % ", ".join("%s %s" % (k, _kb(v)) for k, v in use[:6]) if use else ""))
+                "The board's storage is full: this needs about %s free, it has %s%s. Nothing was written. To write: "
+                "%s.%s Remove an installed pack to make room, or make the Stump again as new (it erases the board)."
+                % (_kb(plan["in_place"]), _kb(plan["free"]), " (after removing %d leftovers)" % gone if gone else "",
+                   what_it_writes(plan),
+                   " Taking the room: %s." % ", ".join("%s %s" % (k, _kb(v)) for k, v in use[:4]) if use else ""))
     files = plan["write"]
     total = sum(len(d) for _, d, _ in files)
     dirs = set()
@@ -574,6 +756,8 @@ def upload(repl, files, progress=None, chunk=3072):
     for path, data, sha in files:
         tmp = path + ".part"
         progress(done, total, path)
+        if in_place and path in have and not KEEP_BESIDE.search(path):
+            repl.run("import os\ntry:\n os.remove(%s)\nexcept OSError:\n pass\n" % py(path))
         if not data:
             repl.run("open(%s,'wb').close()\n" % py(tmp))
         for off in range(0, len(data), chunk):
@@ -608,7 +792,8 @@ def upload(repl, files, progress=None, chunk=3072):
     if gone:
         repl.run("import os\nfor p in %s:\n try:\n  os.remove(p)\n except OSError:\n  pass\n" % json.dumps(gone))
     progress(total, total, "")
-    return {"written": len(plan["write"]), "skipped": len(plan["skip"])}
+    return {"written": len(plan["write"]), "skipped": len(plan["skip"]), "in_place": in_place,
+            "what": what_it_writes(plan)}
 
 
 # -- settings (config.py), by the Stump's own settings.py ---------------------
@@ -626,18 +811,14 @@ FROM_WIFI_PASS = "\u0000WIFI_PASS"
 
 
 def read_settings(repl):
-    out = repl.run(
+    return asked_json(repl,
         "import json\nimport config as c\nb=[i for i in c.CONFIG.get('interfaces',[]) if i.get('name')=='Heltec Bridge']\n"
         "b=b[0] if b else {}\nd={}\nfor k in %s:\n d[k]=getattr(c,k,None)\n"
         "d['HAS_ADMIN_PASSWORD']=bool(getattr(c,'AUTH_ADMIN_PASSWORD',''))\n"
         "d['HAS_OP_PASSWORD']=bool(getattr(c,'FSERVBOT_OP_PASSWORD',''))\n"
         "d['HAS_WIFI_PASS']=bool(getattr(c,'WIFI_PASS',''))\n"
         "d['HELTEC']={'there':bool(b),'enabled':bool(b.get('enabled')),'host':b.get('target_host',''),"
-        "'port':b.get('target_port',7633)}\nprint('CFG'+json.dumps(d))\n" % json.dumps(KEYS), 30)
-    m = re.search(r"CFG(\{.*\})", out)
-    if not m:
-        raise StumpError("couldn't read its settings")
-    return json.loads(m.group(1))
+        "'port':b.get('target_port',7633)}\nprint('CFG'+json.dumps(d))\n" % json.dumps(KEYS), "CFG")
 
 
 def write_settings(repl, values):
@@ -667,9 +848,8 @@ def write_settings(repl, values):
 
 
 def read_radio(repl):
-    out = repl.run("import json, store, radio\nprint('RAD'+json.dumps(store.load_json(radio.SETTINGS_FILE, None)))\n")
-    m = re.search(r"RAD(null|\{.*\})", out)
-    return json.loads(m.group(1)) if m and m.group(1) != "null" else None
+    return asked_json(repl, "import json, store, radio\nprint('RAD'+json.dumps(store.load_json(radio.SETTINGS_FILE, None)))\n",
+                      "RAD", empty=r"null|\{.*\}")
 
 
 def write_radio(repl, settings):
@@ -783,7 +963,8 @@ def settings_from(a):
         # A member over the router (chain.py's CHAIN_PARENT_IP, 1.0.0-beta.57): it
         # stays on the home Wi-Fi and links to the first Stump there.
         if a.get("lanOk") is False:
-            return no("This Stump release is older than 1.0.0-beta.57: no chain over the router (a newer one on the shelf).")
+            return no("This Stump release is older than 1.0.0-beta.57: no chain over the router. On the board's page, "
+                      "the first row chooses a newer one (Sandbox).")
         secret = (a.get("secret") or "").strip()
         if not secret:
             return no("Over the home Wi-Fi the first Stump only takes Stumps with the chain secret: type it in.")
@@ -903,7 +1084,10 @@ def boot_summary(text):
         m = re.search(r"WiFi Serial (?:initial )?connect failed: ([^\n]+)", text)
         out["heltec"]["fail"] = m.group(1).strip() if m else None
     for line in text.replace("\r", "").split("\n"):
-        if re.search(r"Traceback|Error|FAILED|rescue start|couldn't|not armed", line, re.I):
+        if re.search(r"non-fatal|continuing without", line, re.I):    # it says itself it's fine (a WROVER's battery pin)
+            if len(out["notes"]) < 12:
+                out["notes"].append(line.strip())
+        elif re.search(r"Traceback|Error|FAILED|rescue start|couldn't|not armed", line, re.I):
             if len(out["problems"]) < 12:
                 out["problems"].append(line.strip())
         elif re.search(r"WiFi unavailable|\[watchdog\] armed|\[chain\]|\[radio\]|\[sd\]", line, re.I):
@@ -1100,8 +1284,8 @@ def make(bundle, answers, open_link, flash, step, progress, log, update=False, c
                                "A Stump needs an ESP32-WROVER or the Freenove ESP32-S3-CAM." % (mem // 1024))
             im = board_image(repl)
             if im:
-                files = not_frozen(files, im.get("frozen"))
-                log("the Stump image %s: %d modules built in" % (im.get("release"), len(im.get("frozen") or [])))
+                files = not_frozen(files, frozen_of(im, bundle))
+                log("the Stump image %s: %d modules built in" % (im.get("release"), len(frozen_of(im, bundle))))
         else:
             if not has_stump(repl):
                 return False, "There's no Stump on this board to update (no config.py): choose Make a Stump."
@@ -1125,8 +1309,8 @@ def make(bundle, answers, open_link, flash, step, progress, log, update=False, c
                     repl = ready_repl(open_link, log)
                     links.append(repl.link)
                 now = board_image(repl) or {}
-                files = not_frozen(files, now.get("frozen"))
-                gone = remove_frozen_copies(repl, now.get("frozen"))
+                files = not_frozen(files, frozen_of(now, bundle))
+                gone = remove_frozen_copies(repl, frozen_of(now, bundle))
                 if gone:
                     log("%d old copies of built-in modules removed" % gone)
             elif cur and img:
@@ -1155,12 +1339,20 @@ def make(bundle, answers, open_link, flash, step, progress, log, update=False, c
                 left = int((total - done) / (done / sec))
                 log("%d of %d KB · about %s left · %s" % (done // 1024, total // 1024,
                                                            "%d min" % (left // 60) if left > 90 else "%d s" % left, path))
-        upload(repl, files, prog)
+        up = upload(repl, files, prog)
+        log("written: %s; %d already there and the same" % (up["what"], up["skipped"]))
+        if up["in_place"]:
+            log("little room on it: each file written over the old one")
         if update and bundle.retired:
             old = remove_retired(repl, bundle.retired, bundle.builtins)
             if old:
                 log("%d file(s) this release no longer has removed: %s" % (len(old), ", ".join(old)))
                 note += " Removed, as this release no longer has them: %s." % ", ".join(old)
+        names = set(re.sub(r"\.(py|mpy)$", "", p).replace("/", ".") for p, _, _ in bundle.app())
+        problem = modules_load(repl, [n for n in ("urns.mem", "boot_common") if n in names])
+        if problem:
+            restart(repl)
+            return False, problem
         if not update:
             step("Its settings")
             tpl = bundle.template.encode()
@@ -1237,11 +1429,17 @@ def check_job(open_link, step, log, secs=60.0, report=None):
     repl = ready_repl(open_link, log)
     links = [repl.link]
     try:
+        try:                                  # its MicroPython, in case its start banner is missed
+            mpy = board_info(repl)["release"]
+        except StumpError:
+            mpy = None
         b, more = listen(repl, open_link, log, secs, lambda s: s["serving"])
         links += more
     finally:
         for link in links:
             link.close()
+    if not b["micropython"] and mpy:
+        b["micropython"] = mpy
     if report is not None:
         report.append(("Stump", b["release"] or "didn't say", "" if b["release"] else "warn"))
         report.append(("Its pages", "up" if b["serving"] else "not up within %d s" % secs, "ok" if b["serving"] else "err"))

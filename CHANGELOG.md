@@ -10,7 +10,98 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
-## v0.3.0-beta.23
+## v0.3.0-beta.24
+
+- **A CH340 read without a gap** (a Freenove WROVER, on the systems with no
+  kernel driver for it). The Provisioner's own driver asked the chip for
+  bytes one transfer at a time; between two, nothing was reading, and a
+  CH340 holds only a few dozen bytes, so a long answer lost some whenever
+  the program was busy for a few milliseconds (the screen redrawing): "its
+  answer didn't come through whole" at the end of *Make a Stump*, the pack
+  list cut, the module list short. Now 32 transfers wait in the kernel at
+  once, each one packet, as Linux's own driver does. Should this libusb not
+  allow it, it reads as before; `PROVISIONER_CH340_ONE_AT_A_TIME=1` forces
+  that. Not yet run against a real CH340: tested with libusb's calls by hand.
+- **`python3 -m provisioner linktest`** shows what a board's serial line
+  loses: it prints numbered lines at once and in small pieces, then its
+  Stump image's list, and every line that didn't arrive as sent is printed
+  with what came instead (`--one-at-a-time` for the CH340's old reading).
+- **An answer that never came whole is kept**: everything the board sent,
+  each try, in `/tmp/provisioner-last-answer.txt` (the log says so).
+- **A newer Stump online is said on the board's page.** Its first row turns
+  to "Sandbox 1.0.0-beta.89 is online: X gets it" when GitHub has a release
+  newer than every one on the shelf; X fetches it and comes back to the
+  page, and the board gets that one.
+- **The built-in Sandbox Stump is 1.0.0-beta.88** (was beta.86).
+- **What a board prints by itself isn't taken for its answer.** A Stump
+  turns its Wi-Fi on as it starts, and ESP-IDF says so on the same serial
+  line; arriving while the Provisioner asked its MicroPython version, it
+  read an empty answer ("MicroPython , .mpy , ?") and *Update the Stump*
+  then refused with "needs 1.28.0" (R36MAX, WROVER, beta.23). Now what it
+  printed in between is cleared before each question and skipped when it
+  comes with the answer, the question is asked again when the answer
+  doesn't come through, and if it never does it says so ("its answers
+  didn't come through: unplug it, plug it back in, try again") instead of
+  a wrong reason.
+- **A nearly full board can still be updated.** Each file used to be
+  written beside the old one before the swap, so the biggest needed its
+  room on top (a WROVER with its packs: "needs 843 KB, it has 48 KB",
+  updating the Stump and its packs alike). When only that copy doesn't fit,
+  each file is now written over the old one: the room needed is only what
+  the update adds. Its settings and identity (`config.py`, `rns/`) are
+  never written that way. Still short: it says how many files are new and
+  how many changed, and what takes the room; the message shows whole now
+  (a long one used to be cut after four lines).
+- **A pack's list read again.** After a pack is copied (each file checked),
+  its list of packs is asked for again when the answer doesn't come
+  through; if it never does, the pack still counts as installed, noted in
+  the log ("couldn't read its packs" after 100 % on a WROVER, 2026-11-24).
+  When an answer doesn't come through, the log shows what the board said
+  instead.
+
+- **Answers read whole, or asked again.** A line the board printed by
+  itself landing in the middle of an answer ("Expecting ',' delimiter: line 1
+  column 1342" updating a WROVER, 2026-11-24): every answer read as JSON
+  (its files, settings, radio, themes, packs, image) is now asked again when
+  it doesn't read whole, and never guessed: a pack's settings read back
+  empty would have had its defaults written over the board's, its themes
+  read back empty would have written the others away. And ESP-IDF's own log
+  is turned off while the Provisioner talks to the board.
+- **Every answer comes with its length and checksum.** A WROVER's
+  USB-serial chip (CH340) on the RK3326's USB lost bytes from what the board
+  sent. Some answers then failed to read; one still read, a few names short:
+  the Stump image's list of built-in modules, so a file of the built-in
+  `urns` was copied beside the image, hid the built-in package, and the new
+  Stump stopped at its start on "no module named 'urns.mem'". The board's
+  `print` is now replaced while the Provisioner talks to it: each line ends
+  with its checksum and length and goes out a few bytes at a time; only a
+  line that matches is an answer, anything else is asked again, slower each
+  time (4 tries), and never guessed. Its settings, files, packs, themes,
+  radio, identity, stamps, memory and SD card are all read that way.
+- **The modules built into an image: the release's own list** (the
+  `stump_image.py` on the shelf with it) when the board runs that release's
+  image, not what came over USB.
+- **"Checking it starts" took a harmless line for a failure.** "[adc_reader]
+  battery init failed (non-fatal, continuing without it)" (a WROVER has no
+  battery pin) made a Stump that started fine read "It didn't work". A line
+  that says it's non-fatal is a note now. And "MicroPython ?" there: the
+  version the board gave is used when its start banner is missed.
+
+- **A WROVER gets the Stump copy that has an image for it.** On a fresh
+  install the boards got Official (1.0.0-beta.48), which has no WROVER image
+  and no chain over the router: *Make a Stump* answered "older than
+  1.0.0-beta.57: no …", cut at one line. A board that only takes a Stump
+  image now starts on the first copy that has one for it (Sandbox today);
+  one chosen by hand stays. Messages at the top of the screen show whole (up
+  to four lines), and that one says where to choose.
+- **Its code checked before it restarts.** After copying, the Provisioner
+  imports the Stump's mesh code on the board (`urns.mem`, `boot_common`, as
+  far as the release has them) before restarting it: a Stump that would stop
+  at its start ("ImportError: no module named 'urns.mem'" after Make a Stump
+  on a WROVER, 2026-11-24) is said there, with where `urns` came from and
+  where it looked, instead of a Stump whose pages never come up.
+
+
 
 - **The board bench only.** The Provisioner is now about ESP32 boards:
   identifying, making a Stump, packs on a board, a board's identity, + From

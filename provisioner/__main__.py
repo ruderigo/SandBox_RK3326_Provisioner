@@ -156,6 +156,9 @@ def main(argv):
         return cmd_catalog()
     if argv[:1] == ["flash"] and len(argv) == 3:
         return cmd_flash(argv[1], argv[2])
+    if argv[:1] == ["linktest"]:                    # what a board's serial line loses, shown as it is
+        from . import linktest
+        return linktest.main(argv[1:])
     if argv[:1] == ["--smoke"]:                     # draws a few frames with no screen (install check, CI)
         return cmd_ui(headless=True, frames=5)
     if not argv:

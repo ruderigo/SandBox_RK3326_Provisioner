@@ -232,14 +232,11 @@ def _current(repl, keys):
     """What the board's config.py has for these keys."""
     if not keys:
         return {}
-    out = repl.run("import json\ntry:\n import config\n c={k:getattr(config,k) for k in json.loads(%s) "
-                   "if hasattr(config,k)}\nexcept Exception:\n c={}\nprint('J'+json.dumps(c))\n"
-                   % stump.py(json.dumps(keys)), 15)
-    m = re.search(r"J(\{.*\})", out)
-    try:
-        return json.loads(m.group(1)) if m else {}
-    except ValueError:
-        return {}
+    # Asked again when it doesn't read whole: an empty answer would have its
+    # settings taken as unset, and the pack's defaults written over them.
+    return stump.asked_json(repl, "import json\ntry:\n import config\n c={k:getattr(config,k) for k in json.loads(%s) "
+                                  "if hasattr(config,k)}\nexcept Exception:\n c={}\nprint('J'+json.dumps(c))\n"
+                            % stump.py(json.dumps(keys)), "J", 15)
 
 
 def plan_file(path, known=None):
@@ -307,9 +304,10 @@ def install(plan, open_link, step, progress, log, answers=None, builtins=None, r
         no_card = False
         if plan["card"]:
             step("Copying its files to the SD card")
-            out = repl.run(CARD_MOUNT + "import os\ntry:\n os.stat(%s)\n print('HASCARD')\nexcept OSError:\n pass\n"
-                           % stump.py(CARD_ROOT), 30)
-            if "HASCARD" in out:
+            card = stump.asked(repl, CARD_MOUNT + "import os\ntry:\n os.stat(%s)\n print('CARD'+'YES')\n"
+                               "except OSError:\n print('CARD'+'NO')\n" % stump.py(CARD_ROOT), r"CARD(YES|NO)$",
+                               secs=30).group(1)
+            if card == "YES":
                 stump.upload(repl, [(CARD_ROOT + "/" + p, d, s) for p, d, s in plan["card"]], prog)
             else:
                 # Best effort, as Team Stump's provisioner: the plugins run without them
@@ -320,13 +318,9 @@ def install(plan, open_link, step, progress, log, answers=None, builtins=None, r
         stump.upload(repl, [(n + "/" + PACK_MARK, rec, sha(rec)) for n in plan["names"]])
         if plan["theme"] and plan["theme"].get("name"):
             step("Adding its theme")
-            out = repl.run("import json\ntry:\n d=json.load(open('themes.json'))\nexcept Exception:\n d={}\n"
-                           "print('TH'+json.dumps(d))\n")
-            m = re.search(r"TH(\{.*\})", out)
-            try:
-                cur = json.loads(m.group(1)) if m else {}
-            except ValueError:
-                cur = {}
+            # Read whole or not at all: {} would write the board's other themes away.
+            cur = stump.asked_json(repl, "import json\ntry:\n d=json.load(open('themes.json'))\nexcept Exception:\n"
+                                         " d={}\nprint('TH'+json.dumps(d))\n", "TH")
             t = plan["theme"]
             cur[t["name"]] = {"label": t.get("label") or t["name"], "colors": t.get("colors") or {}}
             data = json.dumps(cur, ensure_ascii=False).encode("utf-8")
@@ -342,7 +336,12 @@ def install(plan, open_link, step, progress, log, answers=None, builtins=None, r
                 step("Its settings")
                 stump.write_settings(repl, values)
                 written = sorted(values)
-        installed = board_packs(repl, builtins) if builtins is not None else None
+        installed = None
+        if builtins is not None:
+            try:
+                installed = board_packs(repl, builtins)
+            except stump.StumpError as e:     # it's on the board (each file checked): only the list is missing
+                log("its packs couldn't be listed after: %s" % e)
         step("Restarting it")
         stump.restart(repl)
     finally:
@@ -362,10 +361,8 @@ def install(plan, open_link, step, progress, log, answers=None, builtins=None, r
 
 def _plugin_api(repl):
     """The plugin API the board's Stump offers (plugins.API_VERSION), 0 if none."""
-    out = repl.run("try:\n import plugins\n print('API', getattr(plugins, 'API_VERSION', 0))\n"
-                   "except Exception:\n print('API 0')\n")
-    m = re.search(r"API (\d+)", out)
-    return int(m.group(1)) if m else 0
+    return int(stump.asked(repl, "try:\n import plugins\n print('API', getattr(plugins, 'API_VERSION', 0))\n"
+                                 "except Exception:\n print('API 0')\n", r"API (\d+)$").group(1))
 
 
 # -- a board's packs (1.0.0-beta.75) ----------------------------------------------
@@ -405,15 +402,12 @@ def board_packs(repl, builtins):
     """{plugin: its record, or None (installed before 1.0.0-beta.75, or by
     hand)} for the board's plugins that aren't built in."""
     skip = list(builtins or []) + NOT_PACKS
-    out = repl.run(
+    found = stump.asked_json(repl,
         "import os,json\nout={}\nfor n in os.listdir():\n if n in %s:\n  continue\n ok=False\n"
         " for f in ('/install.py','/install.mpy'):\n  try:\n   os.stat(n+f)\n   ok=True\n  except OSError:\n   pass\n"
         " if not ok:\n  continue\n r=None\n try:\n  with open(n+'/%s') as f:\n   r=json.loads(f.read())\n"
-        " except Exception:\n  pass\n out[n]=r\nprint('PACKS'+json.dumps(out))\n" % (json.dumps(skip), PACK_MARK), 30)
-    m = re.search(r"PACKS(\{.*\})", out)
-    if not m:
-        raise stump.StumpError("couldn't read its packs")
-    found = json.loads(m.group(1))
+        " except Exception:\n  pass\n out[n]=r\nprint('PACKS'+json.dumps(out))\n" % (json.dumps(skip), PACK_MARK),
+        "PACKS", 30)
     return dict((k, v if isinstance(v, dict) else None) for k, v in found.items())
 
 

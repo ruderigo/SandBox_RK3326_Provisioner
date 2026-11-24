@@ -118,6 +118,7 @@ class App:
         self.running = True
         self.bundle_dir = None
         self._bundle = False            # loaded on first use (None: there's none)
+        self._copy_for = {}             # the copy a board that needs an image gets, per chip
         self.form = None                # {"mode": "new"|"settings", "a": answers, "sel": row}
         self.kb = None                  # the keyboard, while typing (and the field it fills)
         self.kb_key = None
@@ -225,8 +226,28 @@ class App:
         return rows
 
     def stump_copy(self):
-        """The Stump the boards get: the one chosen, else the shelf's (Official, else Sandbox)."""
-        return self.stump_src or stump.default_copy()
+        """The Stump the boards get: the one chosen, else the shelf's (Official,
+        else Sandbox); for a board that only takes a Stump image (a WROVER),
+        the first of them that has one for it."""
+        if self.stump_src:
+            return self.stump_src
+        chip = self.chip_of(self.cur["port"]) if self.cur else None
+        if chip and chip != "esp32s3":
+            key = (chip, tuple(c["dir"] for c in self.stump_choices()))
+            if self._copy_for.get("key") != key:
+                pick = None
+                for c in self.stump_choices():
+                    try:
+                        b = stump.find_bundle(c["dir"])
+                    except Exception:
+                        b = None
+                    if b and b.image_for(chip)[0]:
+                        pick = c
+                        break
+                self._copy_for = {"key": key, "copy": pick}
+            if self._copy_for["copy"]:
+                return self._copy_for["copy"]
+        return stump.default_copy()
 
     def stump_dir(self):
         c = self.stump_copy()
@@ -309,6 +330,8 @@ class App:
                 self.open_product("provisioner", back="boards")
         elif act in ("a", "x", "y") and n:
             p = rows[self.sel]
+            if self.cur is None or self.cur.get("port") != p["port"]:
+                self._bundle, self._packs = False, None      # another board: maybe another Stump copy (its chip)
             self.cur = p
             go = self.open_log if act == "y" else (self.identify if act == "x" or p["port"] not in self.known
                                                    else self.open_jobs)
@@ -332,6 +355,7 @@ class App:
             info = boards.parse_probe(out)
             board = boards.identify(info["chip"], self.cur["usb"])
             self.known[port] = {"board": dict(board, flash_mb=info["flash_mb"]), "info": info}
+            self._bundle, self._packs = False, None          # its chip is known now: the Stump copy that suits it
             return True, "%s, %s, %g MB flash" % (board["name"], info["chip_text"], info["flash_mb"]), None
         self.task = Task("Identifying %s" % port, work)
         self.task.after = "jobs"
@@ -340,6 +364,18 @@ class App:
     def open_jobs(self):
         self.jsel = 1 if self.jobs()[:1] == [{"kind": "src_stump"}] else 0     # on Make a Stump, under its source
         self.screen = "jobs"
+        if self.jobs()[:1] == [{"kind": "src_stump"}]:
+            self.look_online()                         # a newer Stump online is said on its first row
+
+    def stump_newer(self):
+        """(channel, release) of a Stump online newer than every one on the
+        shelf (the copy in use's channel first), or None."""
+        cur = self.stump_copy()
+        have = [shelf.version_key(c["version"]) for c in self.stump_choices()]
+        chans = sorted(shelf.CHANNELS, key=lambda ch: not (cur and cur["channel"] == ch))
+        found = [(ch, self.newer_online("stump", ch)) for ch in chans]
+        found = [(ch, o) for ch, o in found if o and all(shelf.version_key(o["version"]) > h for h in have)]
+        return max(found, key=lambda x: shelf.version_key(x[1]["version"])) if found else None
 
     def on_jobs(self, act):
         rows = self.jobs()
@@ -356,6 +392,10 @@ class App:
             self.screen = "boards"
         elif act == "y":
             self.open_log()
+        elif act == "x" and rows[:1] == [{"kind": "src_stump"}] and self.stump_newer():
+            ch, o = self.stump_newer()
+            self.stump_src = None                      # the board gets the one fetched
+            self.get_online("stump", ch, after="jobs")
         elif act == "a":
             r = rows[self.jsel]
             if r["kind"] == "src_stump":
@@ -1208,8 +1248,10 @@ class App:
         if self.confirm:
             self.draw_confirm()
         if self.toast_text and time.time() < self.toast_until:
-            d.fill_rrect(30, 100, W - 60, 40, 8, EMBER)
-            d.text(F20, 46, 108, self.toast_text, BG, W - 92)
+            lines = wrap(d, F20, self.toast_text, W - 92)[:4]      # all of it (it used to be cut at one line)
+            d.fill_rrect(30, 100, W - 60, 14 + 26 * len(lines), 8, EMBER)
+            for i, line in enumerate(lines):
+                d.text(F20, 46, 108 + 26 * i, line, BG, W - 92)
         d.present()
 
     def draw_header(self):
@@ -1635,7 +1677,7 @@ class App:
                          "Go back", lambda: self.run_task("Going back to v%s" % prev,
                                                           lambda t: installers.rollback(self.app_dir), after="quit"))
 
-    def get_online(self, p, ch):
+    def get_online(self, p, ch, after="product"):
         if self.net != "online":
             self.toast("Offline: the handheld has no network (Y looks again)" if self.net != "checking"
                        else "Still looking online…", 4)
@@ -1649,7 +1691,7 @@ class App:
             self.toast("The shelf has %s already" % o["version"], 3)
             return
         self.run_task("Getting %s %s %s" % (shelf.PRODUCTS[p]["short"], shelf.CHANNEL_NAMES[ch], o["version"]),
-                      lambda t: self._fetched(p, ch, o, t), after="product")
+                      lambda t: self._fetched(p, ch, o, t), after=after)
 
     def _fetched(self, p, ch, o, t):
         t.step, t.pct = "Downloading and checking (SHA-256)", 0
@@ -1842,6 +1884,11 @@ class App:
                 about = ("◀ ▶ Official / Sandbox%s · A: + From File, get the newest online" %
                          (" / the file" if self.stump_src and self.stump_src["channel"] == "file" else ""))
                 tag, tc, ready = ("◀ ▶" if sel else ""), MUTED, True
+                newer = self.stump_newer()
+                if newer:
+                    about = "%s %s is online: X gets it · ◀ ▶ the ones here" % (
+                        shelf.CHANNEL_NAMES[newer[0]], newer[1]["version"])
+                    tag, tc = "newer online", EMBER_BRIGHT
             elif r["kind"].startswith("stump_"):
                 rel = b.release if b else "?"
                 title, about, tag, tc = {
@@ -1890,8 +1937,9 @@ class App:
             d.text(F24, 26, y + 6, title, (EMBER_BRIGHT if sel else TEXT) if ready else MUTED, W - 80 - tw)
             if tag:
                 d.text(F16, W - 28 - tw, y + 12, tag, tc)
-            d.text(F16, 26, y + 38, about, MUTED, W - 52)
-        self.hints([("A", "choose"), ("B", "boards"), ("Y", "serial log"), ("↑↓", "move")])
+            d.text(F16, 26, y + 38, about, EMBER_BRIGHT if tag == "newer online" else MUTED, W - 52)
+        self.hints([("A", "choose"), ("B", "boards"), ("Y", "serial log"), ("↑↓", "move")] +
+                   ([("X", "get the newer Stump")] if rows[:1] == [{"kind": "src_stump"}] and self.stump_newer() else []))
 
     def draw_run(self):
         d, t = self.d, self.task
@@ -1914,7 +1962,9 @@ class App:
             d.fill_rrect(22 + x, bar_y + 2, 96, 22, 7, EMBER)
         y = TOP + 104
         if t.done:
-            msg = wrap(d, F20, t.msg, W - 80)[:4]
+            msg = wrap(d, F20, t.msg, W - 80)
+            if len(msg) > 4:                    # a long one (what takes the board's room): smaller, all of it
+                msg = wrap(d, F16, t.msg, W - 80)[:8]
             d.fill_rrect(20, y, W - 40, 20 + 28 * len(msg), 8, PANEL)
             for i, s in enumerate(msg):
                 d.text(F20, 36, y + 10 + i * 28, s, OK if t.ok else ERROR, W - 72)

@@ -28,12 +28,32 @@ class Serial(SerialBase):
         except (LibusbError, ValueError) as e:
             raise SerialException("could not open port %s: %s" % (self._port, e))
         self._buf, self._error = bytearray(), None
-        self._stop = threading.Event()
+        self._stop, self._closed = threading.Event(), threading.Event()
         self.is_open = True
         threading.Thread(target=self._reader, daemon=True).start()
 
+    def _got(self, b):
+        with self._cv:
+            self._buf += b
+            self._cv.notify_all()
+
+    def _lost(self, e):
+        with self._cv:
+            self._error = e
+            self._cv.notify_all()
+
     def _reader(self):
         stop, chip = self._stop, self.chip
+        stream = chip.stream(self._got, self._lost)          # several transfers waiting: no byte lost between two
+        if stream:
+            try:
+                while not stop.is_set() and stream.pump(50):
+                    pass
+            finally:
+                stream.close()
+                self._closed.set()
+            return
+        self._closed.set()
         while not stop.is_set():
             try:
                 b = chip.read(256, 50)
@@ -51,6 +71,7 @@ class Serial(SerialBase):
         if self.is_open:
             self.is_open = False
             self._stop.set()
+            self._closed.wait(3)                 # its waiting transfers taken back first
             time.sleep(0.07)                     # the reader's transfer ends within its 50 ms
             try:
                 self.chip.close()

@@ -17,6 +17,7 @@ ap.add_argument("--no-paste", action="store_true")
 ap.add_argument("--window", type=int, default=128)
 ap.add_argument("--running", action="store_true")
 ap.add_argument("--boot-log", default="")
+ap.add_argument("--idf-log", action="store_true")    # ESP-IDF's Wi-Fi log, printed by itself after a soft reboot
 A = ap.parse_args()
 
 OUT = sys.stdout.buffer
@@ -108,6 +109,9 @@ while True:
             elif c == b"\x04":
                 if not code:
                     say(b"OK\r\nMPY: soft reboot\r\n" + BANNER)
+                    if A.idf_log:            # boot.py turned the Wi-Fi on: ESP-IDF says so, after the prompt
+                        time.sleep(0.05)
+                        say(b"I (5123) wifi:mode : softAP (a0:b7:65:00:00:01)\r\n")
                 else:
                     say(b"OK")
                     finish(code)

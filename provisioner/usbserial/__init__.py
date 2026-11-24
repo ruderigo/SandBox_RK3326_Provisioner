@@ -82,6 +82,100 @@ class _Descriptor(ctypes.Structure):
                 ("bNumConfigurations", ctypes.c_uint8)]
 
 
+class _Transfer(ctypes.Structure):                # struct libusb_transfer, up to its buffer
+    _fields_ = [("dev_handle", ctypes.c_void_p), ("flags", ctypes.c_uint8), ("endpoint", ctypes.c_ubyte),
+                ("type", ctypes.c_ubyte), ("timeout", ctypes.c_uint), ("status", ctypes.c_int),
+                ("length", ctypes.c_int), ("actual_length", ctypes.c_int), ("callback", ctypes.c_void_p),
+                ("user_data", ctypes.c_void_p), ("buffer", ctypes.c_void_p), ("num_iso_packets", ctypes.c_int)]
+
+
+class _Timeval(ctypes.Structure):
+    _fields_ = [("sec", ctypes.c_long), ("usec", ctypes.c_long)]
+
+
+_CALLBACK = ctypes.CFUNCTYPE(None, ctypes.c_void_p)
+TYPE_BULK = 2
+DONE, CANCELLED, NO_DEVICE = 0, 3, 5             # libusb_transfer_status
+
+
+class Stream:
+    """What arrives on an IN endpoint, without a gap: several transfers wait
+    in the kernel at once, so the next one takes the bytes while this program
+    is busy with the last (one transfer at a time leaves the chip unread
+    between two, and a CH340 holds only a few dozen bytes: at 115200 baud a
+    5 ms pause loses some). Each transfer is one packet of the endpoint
+    (size), so nothing waits in one for more to come. on_data(bytes) is
+    called in the order received; on_error(LibusbError) once if the board
+    goes away."""
+
+    def __init__(self, lib, ctx, h, ep, on_data, on_error, count=32, size=32):
+        self.lib, self.ctx, self.on_data, self.on_error = lib, ctx, on_data, on_error
+        self.stopping, self.failed, self.live = False, False, {}
+        self._cb = _CALLBACK(self._done)                      # kept: libusb calls it for as long as we run
+        try:
+            for _ in range(count):
+                t = lib.libusb_alloc_transfer(0)
+                if not t:
+                    raise LibusbError(-11, "no memory for a transfer")
+                buf = ctypes.create_string_buffer(size)
+                x = _Transfer.from_address(t)
+                x.dev_handle, x.flags, x.endpoint, x.type, x.timeout = h, 0, ep, TYPE_BULK, 0
+                x.length, x.callback, x.buffer = size, ctypes.cast(self._cb, ctypes.c_void_p).value, ctypes.addressof(buf)
+                x.user_data, x.num_iso_packets = None, 0
+                self.live[t] = buf
+                r = lib.libusb_submit_transfer(t)
+                if r < 0:
+                    del self.live[t]
+                    lib.libusb_free_transfer(t)
+                    raise LibusbError(r, "starting to read the CH340")
+        except Exception:
+            self.close()
+            raise
+
+    def _done(self, t):
+        x = _Transfer.from_address(t)
+        try:
+            if x.actual_length > 0:
+                self.on_data(ctypes.string_at(x.buffer, x.actual_length))
+            if not self.stopping and x.status not in (CANCELLED, NO_DEVICE):
+                r = self.lib.libusb_submit_transfer(t)        # an error or a stall on one: the next try says
+                if r >= 0:
+                    return
+                self._fail(LibusbError(r))
+            elif x.status == NO_DEVICE:
+                self._fail(LibusbError(-4))
+        except Exception:                                     # nothing may leave a libusb callback
+            pass
+        self.live.pop(t, None)
+        self.lib.libusb_free_transfer(t)
+
+    def _fail(self, e):
+        if not self.failed and not self.stopping:
+            self.failed = True
+            self.on_error(e)
+
+    def pump(self, ms=100):
+        """Lets libusb hand over what arrived (waits up to ms). False once
+        there is nothing left to wait for."""
+        tv = _Timeval(ms // 1000, (ms % 1000) * 1000)
+        r = self.lib.libusb_handle_events_timeout_completed(self.ctx, ctypes.byref(tv), None)
+        if r < 0 and r != -10:                                # -10: interrupted, ask again
+            self._fail(LibusbError(r))
+            return False
+        return bool(self.live)
+
+    def close(self):
+        """Every transfer taken back before the device is closed."""
+        self.stopping = True
+        for t in list(self.live):
+            if self.lib.libusb_cancel_transfer(t) < 0:        # not waiting any more: its callback came or comes
+                pass
+        for _ in range(40):
+            if not self.live:
+                break
+            self.pump(50)
+
+
 class Libusb:
     """The few libusb-1.0 calls a CH340 needs."""
 
@@ -105,6 +199,17 @@ class Libusb:
         for name, (res, args) in sig.items():
             f = getattr(lib, name)
             f.restype, f.argtypes = res, args
+        self.streams = True
+        try:                                           # reading without a gap (Stream); without these, one at a time
+            for name, (res, args) in {"libusb_alloc_transfer": (P, [I]), "libusb_free_transfer": (None, [P]),
+                                      "libusb_submit_transfer": (I, [P]), "libusb_cancel_transfer": (I, [P]),
+                                      "libusb_get_device": (P, [P]), "libusb_get_max_packet_size": (I, [P, ctypes.c_ubyte]),
+                                      "libusb_handle_events_timeout_completed":
+                                          (I, [P, ctypes.POINTER(_Timeval), ctypes.POINTER(I)])}.items():
+                f = getattr(lib, name)
+                f.restype, f.argtypes = res, args
+        except AttributeError:
+            self.streams = False
         self.ctx = P()
         r = lib.libusb_init(ctypes.byref(self.ctx))
         if r < 0:
@@ -163,6 +268,13 @@ class Libusb:
         if r < 0 and r != -7:
             raise LibusbError(r)
         return n.value if data is not None else buf.raw[:n.value]
+
+    def stream(self, h, ep, on_data, on_error):
+        """A Stream on this endpoint, or None when this libusb can't."""
+        if not self.streams or os.environ.get("PROVISIONER_CH340_ONE_AT_A_TIME"):
+            return None
+        size = self.lib.libusb_get_max_packet_size(self.lib.libusb_get_device(h), ep)
+        return Stream(self.lib, self.ctx, h, ep, on_data, on_error, size=size if 8 <= size <= 1024 else 32)
 
 
 _LIB = []
@@ -224,6 +336,16 @@ class CH340:
 
     def read(self, size=256, timeout=50):
         return self.lib.bulk(self.h, EP_IN, size=size, timeout=timeout)
+
+    def stream(self, on_data, on_error):
+        """Reading without a gap (Stream), or None: read() one at a time."""
+        make = getattr(self.lib, "stream", None)
+        try:
+            got = make(self.h, EP_IN, on_data, on_error) if make else None
+        except LibusbError:
+            got = None
+        self.streaming = got is not None
+        return got
 
     def close(self):
         if self.h:
