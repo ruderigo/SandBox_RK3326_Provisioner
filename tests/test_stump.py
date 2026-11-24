@@ -210,6 +210,26 @@ class Refused(MakeAStump):
         self.assertEqual(self.flashed, [])
         self.assertEqual(self.links, [])
 
+    def test_what_it_prints_by_itself_isnt_an_answer(self):
+        """ESP-IDF's Wi-Fi log after the soft reboot (boot.py turned the Wi-Fi
+        on): it used to read as the board's answer ("MicroPython , .mpy , ?",
+        then "needs 1.28.0" on an update)."""
+        self.flags = ["--idf-log"]
+        with open(os.path.join(self.root, "config.py"), "w") as f:
+            f.write("NODE_NAME = 'x'\n")
+        ok, msg = self.make(update=True)
+        self.assertNotIn("MicroPython ,", " ".join(self.log))
+        self.assertTrue(any(l.startswith("MicroPython 1.") for l in self.log), self.log)
+
+    def test_no_answer_said_as_it_is(self):
+        class Silent:
+            def run(self, code, secs=30.0):
+                return "I (5123) wifi:mode : softAP\r\n"
+        with self.assertRaisesRegex(stump.StumpError, "didn't come through"):
+            stump.board_info(Silent())
+        with self.assertRaisesRegex(stump.StumpError, "didn't come through"):
+            stump.board_image(Silent())
+
     def test_a_running_stump_is_stopped_first_and_plain_raw_mode_works(self):
         global BUNDLE
         self.flags = ["--running", "--no-paste"]

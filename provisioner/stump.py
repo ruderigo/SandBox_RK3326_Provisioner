@@ -333,6 +333,7 @@ class Repl:
     def exec(self, code, secs=30.0):
         """(out, err) of code run on the board (err: the traceback, or "")."""
         data = code.encode() if isinstance(code, str) else code
+        self.drain()          # what it printed by itself since (ESP-IDF's Wi-Fi log, a boot.py): not an answer
         plain = self.raw_paste is False
         if not plain:
             self.write(b"\x05A\x01")
@@ -383,13 +384,28 @@ def restart(repl):
     time.sleep(0.3)
 
 
+NO_ANSWER = ("The board's answers didn't come through: it printed something of its own while being asked, or its "
+             "USB connection dropped. Unplug it, plug it back in and try again.")
+
+
+def asked(repl, code, pat, tries=3):
+    """A question to the board, asked again when its answer doesn't come
+    through (something it printed by itself mixed in): the match, or
+    StumpError (NO_ANSWER)."""
+    for _ in range(tries):
+        m = re.search(pat, repl.run(code))
+        if m:
+            return m
+        time.sleep(0.3)
+    raise StumpError(NO_ANSWER)
+
+
 def board_info(repl):
-    out = repl.run("import sys, os\nv=getattr(sys.implementation,'_mpy',0)\n"
-                   "print('INFO', '.'.join(str(x) for x in sys.implementation.version[:3]), "
-                   "'%d.%d' % (v & 0xff, (v >> 8) & 3), os.uname().machine.replace(' ', '_'))\n")
-    m = re.search(r"INFO (\S+) (\S+) ?(\S*)", out)
-    return {"release": m.group(1), "mpy": m.group(2), "machine": m.group(3).replace("_", " ")} if m else \
-        {"release": "", "mpy": "", "machine": ""}
+    m = asked(repl, "import sys, os\nv=getattr(sys.implementation,'_mpy',0)\n"
+                    "print('INFO', '.'.join(str(x) for x in sys.implementation.version[:3]), "
+                    "'%d.%d' % (v & 0xff, (v >> 8) & 3), os.uname().machine.replace(' ', '_'))\n",
+              r"INFO (\d+\.\d+\.\d+) (\d+\.\d+) ?(\S*)")
+    return {"release": m.group(1), "mpy": m.group(2), "machine": m.group(3).replace("_", " ")}
 
 
 def version_newer(a, b):
@@ -406,13 +422,13 @@ def chip_of(machine):
 def board_image(repl):
     """What a board running a Stump image says of it (stump_image.py, frozen
     in): {release, partitions, frozen}, or None (plain MicroPython)."""
-    out = repl.run("import json\ntry:\n import stump_image as s\n print('IMG'+json.dumps({'release':s.RELEASE,"
-                   "'partitions':s.PARTITIONS,'frozen':s.FROZEN}))\nexcept ImportError:\n print('IMGnone')\n")
-    m = re.search(r"IMG(\{.*\})", out)
+    m = asked(repl, "import json\ntry:\n import stump_image as s\n print('IMG'+json.dumps({'release':s.RELEASE,"
+                    "'partitions':s.PARTITIONS,'frozen':s.FROZEN}))\nexcept ImportError:\n print('IMGnone')\n",
+              r"IMG(none|\{.*\})")
     try:
-        return json.loads(m.group(1)) if m else None
+        return None if m.group(1) == "none" else json.loads(m.group(1))
     except ValueError:
-        return None
+        raise StumpError(NO_ANSWER)
 
 
 def memory(repl):
@@ -459,7 +475,8 @@ def config_sha(repl):
 
 
 def has_stump(repl):
-    return "YES" in repl.run("import os\ntry:\n os.stat('config.py')\n print('YES')\nexcept OSError:\n print('NO')\n")
+    return asked(repl, "import os\ntry:\n os.stat('config.py')\n print('HAS'+'YES')\nexcept OSError:\n print('HAS'+'NO')\n",
+                 r"HAS(YES|NO)").group(1) == "YES"
 
 
 SPACE_MARGIN = 16384
