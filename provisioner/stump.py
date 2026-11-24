@@ -39,6 +39,9 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "vendor"))
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW_BANNER = b"raw REPL; CTRL-B to exit\r\n>"
+# ESP-IDF's own log (the Wi-Fi's, as a Stump's boot.py turns it on) off while
+# we talk to it: it shares the serial line and lands in the middle of answers.
+QUIET_LOG = "try:\n import esp\n esp.osdebug(None)\nexcept Exception:\n pass\n"
 QUIET_WATCHDOG = "try:\n import machine\n machine.WDT(timeout=7200000).feed()\nexcept Exception:\n pass\n"
 FEATURES = ["chat", "billboard", "files", "about"]
 THEMES = ["paper", "amber", "phosphor", "oled"]
@@ -391,6 +394,7 @@ def prepare(repl, secs=5.0):
     repl.enter_raw(secs)
     repl.run(QUIET_WATCHDOG)
     repl.soft_reset()
+    repl.run(QUIET_LOG)
 
 
 def restart(repl):
@@ -422,6 +426,27 @@ def asked(repl, code, pat, tries=3, secs=30.0):
     raise StumpError(NO_ANSWER)
 
 
+def asked_json(repl, code, tag, secs=30.0, tries=3, empty=r"\{.*\}"):
+    """A question whose answer is one JSON line after tag (TAG{...}): the
+    value, asked again when it doesn't come through or doesn't read whole (a
+    line it printed by itself landed in the middle: "Expecting ',' delimiter",
+    a WROVER, 2026-11-24). Never a guess: NO_ANSWER when it never reads."""
+    out = ""
+    for _ in range(tries):
+        out = repl.run(code, secs)
+        m = re.search(re.escape(tag) + "(" + empty + ")", out)
+        if m:
+            try:
+                return json.loads(m.group(1))
+            except ValueError:
+                pass
+        time.sleep(0.3)
+    log = getattr(repl, "log", None)
+    if log:
+        log("its answer didn't come through whole; it said: %r" % out.strip()[-160:])
+    raise StumpError(NO_ANSWER)
+
+
 def board_info(repl):
     m = asked(repl, "import sys, os\nv=getattr(sys.implementation,'_mpy',0)\n"
                     "print('INFO', '.'.join(str(x) for x in sys.implementation.version[:3]), "
@@ -444,13 +469,9 @@ def chip_of(machine):
 def board_image(repl):
     """What a board running a Stump image says of it (stump_image.py, frozen
     in): {release, partitions, frozen}, or None (plain MicroPython)."""
-    m = asked(repl, "import json\ntry:\n import stump_image as s\n print('IMG'+json.dumps({'release':s.RELEASE,"
-                    "'partitions':s.PARTITIONS,'frozen':s.FROZEN}))\nexcept ImportError:\n print('IMGnone')\n",
-              r"IMG(none|\{.*\})")
-    try:
-        return None if m.group(1) == "none" else json.loads(m.group(1))
-    except ValueError:
-        raise StumpError(NO_ANSWER)
+    return asked_json(repl, "import json\ntry:\n import stump_image as s\n print('IMG'+json.dumps({'release':s.RELEASE,"
+                            "'partitions':s.PARTITIONS,'frozen':s.FROZEN}))\nexcept ImportError:\n print('IMGnull')\n",
+                      "IMG", empty=r"null|\{.*\}")
 
 
 def memory(repl):
@@ -509,14 +530,12 @@ def have_on_board(repl, paths):
     """What's on the board for these paths: ({path: (sha256, size)}, bytes
     free where they go, or None)."""
     root = CARD_ROOT if paths and paths[0].startswith(CARD_ROOT + "/") else "/"
-    out = repl.run(
+    d = asked_json(repl,
         "import os,hashlib,binascii,json\nr={}\nfor p in %s:\n try:\n  n=os.stat(p)[6]\n"
         "  h=hashlib.sha256()\n  f=open(p,'rb')\n  while 1:\n   b=f.read(2048)\n   if not b:\n    break\n   h.update(b)\n"
         "  f.close()\n  r[p]=[binascii.hexlify(h.digest()).decode(),n]\n except OSError:\n  pass\n"
         "try:\n s=os.statvfs(%s)\n fr=(s[1] or s[0])*s[3]\nexcept (OSError,AttributeError):\n fr=None\n"
-        "print('HAVE'+json.dumps({'files':r,'free':fr}))\n" % (json.dumps(list(paths)), py(root)), 180)
-    m = re.search(r"HAVE(\{.*\})", out)
-    d = json.loads(m.group(1)) if m else {"files": {}, "free": None}
+        "print('HAVE'+json.dumps({'files':r,'free':fr}))\n" % (json.dumps(list(paths)), py(root)), "HAVE", 180)
     return dict((k, tuple(v)) for k, v in d["files"].items()), d["free"]
 
 
@@ -577,14 +596,12 @@ def clear_leftovers(repl):
 
 def flash_use(repl):
     """What takes the room on the board: [(folder, bytes)], the biggest first."""
-    out = repl.run(
+    d = asked_json(repl,
         "import os,json\ndef size(p):\n t=0\n try:\n  es=list(os.ilistdir(p))\n except OSError:\n  return 0\n"
         " for e in es:\n  q=p+'/'+e[0]\n  if e[1]==0x4000:\n   t+=size(q)\n  else:\n   try:\n    t+=os.stat(q)[6]\n"
         "   except OSError:\n    pass\n return t\nd={}\nfor e in os.ilistdir('.'):\n if e[0]=='sd':\n  continue\n"
         " d[e[0]+('/' if e[1]==0x4000 else '')]=size(e[0]) if e[1]==0x4000 else os.stat(e[0])[6]\n"
-        "print('USE'+json.dumps(d))\n", 60)
-    m = re.search(r"USE(\{.*\})", out)
-    d = json.loads(m.group(1)) if m else {}
+        "print('USE'+json.dumps(d))\n", "USE", 60)
     use = [(k, v) for k, v in d.items() if k.endswith("/")]
     top = sum(v for k, v in d.items() if not k.endswith("/"))
     if top:
@@ -697,18 +714,14 @@ FROM_WIFI_PASS = "\u0000WIFI_PASS"
 
 
 def read_settings(repl):
-    out = repl.run(
+    return asked_json(repl,
         "import json\nimport config as c\nb=[i for i in c.CONFIG.get('interfaces',[]) if i.get('name')=='Heltec Bridge']\n"
         "b=b[0] if b else {}\nd={}\nfor k in %s:\n d[k]=getattr(c,k,None)\n"
         "d['HAS_ADMIN_PASSWORD']=bool(getattr(c,'AUTH_ADMIN_PASSWORD',''))\n"
         "d['HAS_OP_PASSWORD']=bool(getattr(c,'FSERVBOT_OP_PASSWORD',''))\n"
         "d['HAS_WIFI_PASS']=bool(getattr(c,'WIFI_PASS',''))\n"
         "d['HELTEC']={'there':bool(b),'enabled':bool(b.get('enabled')),'host':b.get('target_host',''),"
-        "'port':b.get('target_port',7633)}\nprint('CFG'+json.dumps(d))\n" % json.dumps(KEYS), 30)
-    m = re.search(r"CFG(\{.*\})", out)
-    if not m:
-        raise StumpError("couldn't read its settings")
-    return json.loads(m.group(1))
+        "'port':b.get('target_port',7633)}\nprint('CFG'+json.dumps(d))\n" % json.dumps(KEYS), "CFG")
 
 
 def write_settings(repl, values):
@@ -738,9 +751,8 @@ def write_settings(repl, values):
 
 
 def read_radio(repl):
-    out = repl.run("import json, store, radio\nprint('RAD'+json.dumps(store.load_json(radio.SETTINGS_FILE, None)))\n")
-    m = re.search(r"RAD(null|\{.*\})", out)
-    return json.loads(m.group(1)) if m and m.group(1) != "null" else None
+    return asked_json(repl, "import json, store, radio\nprint('RAD'+json.dumps(store.load_json(radio.SETTINGS_FILE, None)))\n",
+                      "RAD", empty=r"null|\{.*\}")
 
 
 def write_radio(repl, settings):

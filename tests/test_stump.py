@@ -230,6 +230,21 @@ class Refused(MakeAStump):
         with self.assertRaisesRegex(stump.StumpError, "didn't come through"):
             stump.board_image(Silent())
 
+    def test_an_answer_cut_by_a_line_it_printed_is_asked_again(self):
+        """"Expecting ',' delimiter: line 1 column 1342" (a WROVER updating,
+        2026-11-24): a line of its own landed in the middle of the JSON."""
+        class Once:
+            n = 0
+
+            def run(self, code, secs=30.0):
+                self.n += 1
+                if self.n == 1:
+                    return 'HAVE{"files": {"a.py": ["ab", 3]I (5123) wifi:mode : softAP\r\n, "free": 100}\r\n'
+                return 'HAVE{"files": {"a.py": ["ab", 3]}, "free": 100}\r\n'
+        r = Once()
+        self.assertEqual(stump.have_on_board(r, ["a.py"]), ({"a.py": ("ab", 3)}, 100))
+        self.assertEqual(r.n, 2)
+
     def test_a_running_stump_is_stopped_first_and_plain_raw_mode_works(self):
         global BUNDLE
         self.flags = ["--running", "--no-paste"]

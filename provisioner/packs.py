@@ -232,14 +232,11 @@ def _current(repl, keys):
     """What the board's config.py has for these keys."""
     if not keys:
         return {}
-    out = repl.run("import json\ntry:\n import config\n c={k:getattr(config,k) for k in json.loads(%s) "
-                   "if hasattr(config,k)}\nexcept Exception:\n c={}\nprint('J'+json.dumps(c))\n"
-                   % stump.py(json.dumps(keys)), 15)
-    m = re.search(r"J(\{.*\})", out)
-    try:
-        return json.loads(m.group(1)) if m else {}
-    except ValueError:
-        return {}
+    # Asked again when it doesn't read whole: an empty answer would have its
+    # settings taken as unset, and the pack's defaults written over them.
+    return stump.asked_json(repl, "import json\ntry:\n import config\n c={k:getattr(config,k) for k in json.loads(%s) "
+                                  "if hasattr(config,k)}\nexcept Exception:\n c={}\nprint('J'+json.dumps(c))\n"
+                            % stump.py(json.dumps(keys)), "J", 15)
 
 
 def plan_file(path, known=None):
@@ -320,13 +317,9 @@ def install(plan, open_link, step, progress, log, answers=None, builtins=None, r
         stump.upload(repl, [(n + "/" + PACK_MARK, rec, sha(rec)) for n in plan["names"]])
         if plan["theme"] and plan["theme"].get("name"):
             step("Adding its theme")
-            out = repl.run("import json\ntry:\n d=json.load(open('themes.json'))\nexcept Exception:\n d={}\n"
-                           "print('TH'+json.dumps(d))\n")
-            m = re.search(r"TH(\{.*\})", out)
-            try:
-                cur = json.loads(m.group(1)) if m else {}
-            except ValueError:
-                cur = {}
+            # Read whole or not at all: {} would write the board's other themes away.
+            cur = stump.asked_json(repl, "import json\ntry:\n d=json.load(open('themes.json'))\nexcept Exception:\n"
+                                         " d={}\nprint('TH'+json.dumps(d))\n", "TH")
             t = plan["theme"]
             cur[t["name"]] = {"label": t.get("label") or t["name"], "colors": t.get("colors") or {}}
             data = json.dumps(cur, ensure_ascii=False).encode("utf-8")
@@ -410,16 +403,12 @@ def board_packs(repl, builtins):
     """{plugin: its record, or None (installed before 1.0.0-beta.75, or by
     hand)} for the board's plugins that aren't built in."""
     skip = list(builtins or []) + NOT_PACKS
-    m = stump.asked(repl,
+    found = stump.asked_json(repl,
         "import os,json\nout={}\nfor n in os.listdir():\n if n in %s:\n  continue\n ok=False\n"
         " for f in ('/install.py','/install.mpy'):\n  try:\n   os.stat(n+f)\n   ok=True\n  except OSError:\n   pass\n"
         " if not ok:\n  continue\n r=None\n try:\n  with open(n+'/%s') as f:\n   r=json.loads(f.read())\n"
         " except Exception:\n  pass\n out[n]=r\nprint('PACKS'+json.dumps(out))\n" % (json.dumps(skip), PACK_MARK),
-        r"PACKS(\{.*\})", secs=30)
-    try:
-        found = json.loads(m.group(1))
-    except ValueError:
-        raise stump.StumpError("couldn't read its packs (its answer came back cut)")
+        "PACKS", 30)
     return dict((k, v if isinstance(v, dict) else None) for k, v in found.items())
 
 

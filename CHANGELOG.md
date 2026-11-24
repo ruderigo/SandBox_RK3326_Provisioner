@@ -38,6 +38,15 @@ its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
   When an answer doesn't come through, the log shows what the board said
   instead.
 
+- **Answers read whole, or asked again.** A line the board printed by
+  itself landing in the middle of an answer ("Expecting ',' delimiter: line 1
+  column 1342" updating a WROVER, 2026-11-24): every answer read as JSON
+  (its files, settings, radio, themes, packs, image) is now asked again when
+  it doesn't read whole, and never guessed: a pack's settings read back
+  empty would have had its defaults written over the board's, its themes
+  read back empty would have written the others away. And ESP-IDF's own log
+  is turned off while the Provisioner talks to the board.
+
 
 
 - **The board bench only.** The Provisioner is now about ESP32 boards:
