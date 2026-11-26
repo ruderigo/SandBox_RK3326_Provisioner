@@ -10,6 +10,14 @@ here), so the version at the top right of the screen says what's installed:
 changes the app without changing VERSION. The S3 firmware does the same with
 its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
+## v0.3.0-beta.25
+
+- **+ From File looks on the card's boot partition** ("Boot (what a computer
+  shows)"). An RK3326 Linux card shows a Mac or a Windows computer only that
+  partition, so a `.bin` or `.zip` dropped on the card from a computer had
+  nowhere the file browser could reach. Listed when `/boot` is a mounted
+  partition (arkos4clone and dArkOS too); nothing is written there.
+
 ## v0.3.0-beta.24
 
 - **A CH340 read without a gap** (a Freenove WROVER, on the systems with no

@@ -7,12 +7,16 @@ import os
 USABLE = (".bin", ".zip", ".stump-identity")
 
 
-def roots(home=None):
+def roots(home=None, boot="/boot", ismount=os.path.ismount):
     """[(label, path)] that exist: the games partitions, RK3326 Linux's data
-    partition, the home folder, USB drives and other mounted cards."""
+    partition, the home folder, the card's boot partition (the one part of
+    an RK3326 Linux card a Mac or a Windows computer shows: where a file
+    dropped from a computer lands), USB drives and other mounted cards."""
     home = home or os.path.expanduser("~")
     cands = [("Games card", "/roms"), ("Second card", "/roms2"), ("Games card", "/storage/roms"),
              ("Data", "/data/ark"), ("Home", home)]
+    if ismount(boot):
+        cands.append(("Boot (what a computer shows)", boot))
     for pat, label in (("/media/*", "Drive"), ("/run/media/*/*", "Drive"), ("/mnt/*", "Mounted"),
                        ("/storage/*", "Storage")):
         for p in sorted(glob.glob(pat)):

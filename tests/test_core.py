@@ -251,5 +251,20 @@ class Flash(unittest.TestCase):
         self.assertIn("4.8.1", out)
 
 
+class WhereFromFileLooks(unittest.TestCase):
+    def test_the_boot_partition_when_it_is_one(self):
+        """An RK3326 Linux card shows a computer only its boot partition: a
+        file dropped there is reachable. A plain /boot folder isn't listed."""
+        from provisioner import files
+        home, boot = tempfile.mkdtemp(), tempfile.mkdtemp()
+        with open(os.path.join(boot, "mine.bin"), "wb") as f:
+            f.write(b"\xe9")
+        got = files.roots(home, boot=boot, ismount=lambda p: p == boot)
+        self.assertIn(("Boot (what a computer shows)", boot), got)
+        self.assertLess(got.index(("Home", home)), got.index(("Boot (what a computer shows)", boot)))
+        self.assertEqual([e["name"] for e in files.listdir(boot)], ["mine.bin"])
+        self.assertNotIn(boot, [p for _, p in files.roots(home, boot=boot, ismount=lambda p: False)])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
