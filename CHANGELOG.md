@@ -12,11 +12,15 @@ its own version (`s3_usb_wifi/CMakeLists.txt`, shown on its row).
 
 ## v0.3.0-beta.25
 
-- **+ From File looks on the card's boot partition** ("Boot (what a computer
-  shows)"). An RK3326 Linux card shows a Mac or a Windows computer only that
-  partition, so a `.bin` or `.zip` dropped on the card from a computer had
-  nowhere the file browser could reach. Listed when `/boot` is a mounted
-  partition (arkos4clone and dArkOS too); nothing is written there.
+- **+ From File looks on the part of the card a computer reads.** On RK3326
+  Linux 1.3.0 and later that is RKSHARE (`/share`): "Shared card (what a
+  computer shows)", listed first. Drop a `.bin` or a `.zip` there from a Mac
+  or a PC and pick it on the handheld. A card set up before 1.3.0 has no
+  RKSHARE and shows a computer only its boot partition: that one is listed
+  then ("Boot (what a computer shows)"), and never written to.
+- **Exported serial logs go there too**: `/share/provisioner-logs` when the
+  card has RKSHARE, so they can be read on a computer. On arkos4clone and
+  dArkOS nothing changes (`/roms/provisioner-logs`).
 
 ## v0.3.0-beta.24
 
