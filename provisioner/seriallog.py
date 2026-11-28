@@ -10,13 +10,14 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "vendor"))
 
 
-def export_dir():
-    """Where exported logs go: a folder on the card's games partition when
-    there is one (reachable from a computer by card reader, and over SSH),
-    RK3326 Linux's data partition, else the home folder."""
-    for roms in ("/roms", "/storage/roms", "/roms2", "/data/ark"):   # /data/ark: RK3326 Linux's data
-        if os.path.isdir(roms) and os.access(roms, os.W_OK):
-            return os.path.join(roms, "provisioner-logs")
+def export_dir(share="/share", ismount=os.path.ismount, places=("/roms", "/storage/roms", "/roms2", "/data/ark")):
+    """Where exported logs go, the first that can be written: the part of an
+    RK3326 Linux card a computer reads (RKSHARE, /share), a folder on the
+    card's games partition (reachable by card reader on arkos4clone and
+    dArkOS), RK3326 Linux's data partition, else the home folder."""
+    for d in ((share,) if ismount(share) else ()) + tuple(places):
+        if os.path.isdir(d) and os.access(d, os.W_OK):
+            return os.path.join(d, "provisioner-logs")
     return os.path.join(os.path.expanduser("~"), "provisioner-logs")
 
 

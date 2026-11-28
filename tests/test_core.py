@@ -251,5 +251,49 @@ class Flash(unittest.TestCase):
         self.assertIn("4.8.1", out)
 
 
+class WhatAComputerShows(unittest.TestCase):
+    """An RK3326 Linux card shows a computer RKSHARE (/share), or only its
+    boot partition when it was set up before 1.3.0."""
+
+    def setUp(self):
+        self.home, self.share, self.boot = tempfile.mkdtemp(), tempfile.mkdtemp(), tempfile.mkdtemp()
+
+    def test_from_file_looks_on_the_shared_card_first(self):
+        from provisioner import files
+        with open(os.path.join(self.share, "mine.bin"), "wb") as f:
+            f.write(b"\xe9")
+        got = files.roots(self.home, share=self.share, boot=self.boot, ismount=lambda p: True)
+        self.assertEqual(got[0], (files.SHARED, self.share))
+        self.assertNotIn(self.boot, [p for _, p in got])           # the boot partition isn't needed then
+        self.assertEqual([e["name"] for e in files.listdir(self.share)], ["mine.bin"])
+
+    def test_the_boot_partition_on_a_card_with_no_shared_part(self):
+        from provisioner import files
+        got = files.roots(self.home, share=self.share, boot=self.boot, ismount=lambda p: p == self.boot)
+        self.assertIn((files.BOOT, self.boot), got)
+        self.assertNotIn(self.share, [p for _, p in got])
+        self.assertLess(got.index(("Home", self.home)), got.index((files.BOOT, self.boot)))
+
+    def test_neither_on_the_other_systems(self):
+        from provisioner import files
+        got = files.roots(self.home, share=self.share, boot=self.boot, ismount=lambda p: False)
+        self.assertEqual([p for _, p in got if p in (self.share, self.boot)], [])
+
+    def test_serial_logs_go_where_a_computer_reads_them(self):
+        from provisioner import seriallog
+        roms = tempfile.mkdtemp()
+        self.assertEqual(seriallog.export_dir(share=self.share, ismount=lambda p: True, places=(roms,)),
+                         os.path.join(self.share, "provisioner-logs"))
+        self.assertEqual(seriallog.export_dir(share=self.share, ismount=lambda p: False, places=(roms,)),
+                         os.path.join(roms, "provisioner-logs"))   # arkos4clone, dArkOS: as before
+        os.chmod(self.share, 0o500)
+        try:
+            if not os.access(self.share, os.W_OK):                 # (root writes anywhere)
+                self.assertEqual(seriallog.export_dir(share=self.share, ismount=lambda p: True, places=(roms,)),
+                                 os.path.join(roms, "provisioner-logs"))
+        finally:
+            os.chmod(self.share, 0o700)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

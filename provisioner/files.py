@@ -7,12 +7,23 @@ import os
 USABLE = (".bin", ".zip", ".stump-identity")
 
 
-def roots(home=None):
-    """[(label, path)] that exist: the games partitions, RK3326 Linux's data
-    partition, the home folder, USB drives and other mounted cards."""
+SHARED = "Shared card (what a computer shows)"
+BOOT = "Boot (what a computer shows)"
+
+
+def roots(home=None, share="/share", boot="/boot", ismount=os.path.ismount):
+    """[(label, path)] that exist: the part of an RK3326 Linux card a computer
+    reads (RKSHARE, /share: where a file dropped from a Mac or a PC lands),
+    the games partitions, RK3326 Linux's data partition, the home folder,
+    USB drives and other mounted cards. A card with no RKSHARE (set up before
+    RK3326 Linux 1.3.0) shows a computer only its boot partition: that one is
+    listed then, and only then."""
     home = home or os.path.expanduser("~")
-    cands = [("Games card", "/roms"), ("Second card", "/roms2"), ("Games card", "/storage/roms"),
-             ("Data", "/data/ark"), ("Home", home)]
+    cands = [(SHARED, share)] if ismount(share) else []
+    cands += [("Games card", "/roms"), ("Second card", "/roms2"), ("Games card", "/storage/roms"),
+              ("Data", "/data/ark"), ("Home", home)]
+    if not ismount(share) and ismount(boot):
+        cands.append((BOOT, boot))
     for pat, label in (("/media/*", "Drive"), ("/run/media/*/*", "Drive"), ("/mnt/*", "Mounted"),
                        ("/storage/*", "Storage")):
         for p in sorted(glob.glob(pat)):
